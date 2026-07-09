@@ -34,3 +34,24 @@ Return format:
 - FAILURES: each with constitution point / WCAG criterion, file:line, and
   the observed behavior
 - OBSERVATIONS: non-blocking notes for the lead
+
+## Evidence — write your verdict before returning
+
+Write your verdict to a file the gate reads; keep returning the same summary
+to the lead. You may use Bash to write the file — you still never edit
+project files.
+
+```bash
+mkdir -p .swarm/verdicts
+cat > .swarm/verdicts/<task-id>.<attempt>.checker-a11y.verdict <<EOF
+VERDICT: PASS
+CHECKER: checker-a11y
+FAMILY: anthropic
+TASK: <task-id> ATTEMPT: <attempt>
+---
+<your evidence: per-block result, unified diffs for any FAIL>
+EOF
+```
+
+Use `VERDICT: FAIL` when anything fails. `<task-id>`/`<attempt>` come from the
+task block; if absent, return BLOCKED and ask.

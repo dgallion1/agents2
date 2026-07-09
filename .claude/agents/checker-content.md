@@ -29,3 +29,24 @@ Return format:
 - SCOPE: list of blocks checked and their sources
 
 A worker may dispute your verdict; the lead adjudicates. Report facts only.
+
+## Evidence — write your verdict before returning
+
+Write your verdict to a file the gate reads; keep returning the same summary
+to the lead. You may use Bash to write the file — you still never edit
+project files.
+
+```bash
+mkdir -p .swarm/verdicts
+cat > .swarm/verdicts/<task-id>.<attempt>.checker-content.verdict <<EOF
+VERDICT: PASS
+CHECKER: checker-content
+FAMILY: anthropic
+TASK: <task-id> ATTEMPT: <attempt>
+---
+<your evidence: per-block result, unified diffs for any FAIL>
+EOF
+```
+
+Use `VERDICT: FAIL` when anything fails. `<task-id>`/`<attempt>` come from the
+task block; if absent, return BLOCKED and ask.

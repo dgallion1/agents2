@@ -21,6 +21,15 @@ model_list:
       model: anthropic/claude-haiku-4-5-20251001
       api_key: os.environ/ANTHROPIC_API_KEY
 
+  # ── Checker tier: GLM as an independent second family ────────────────
+  # Same Z.ai endpoint as worker-glm; separate alias so checker economics
+  # and routing stay legible. Used by checker-second and judge-glm.
+  - model_name: checker-glm
+    litellm_params:
+      model: openai/glm-5.2
+      api_base: https://api.z.ai/api/paas/v4
+      api_key: os.environ/GLM_API_KEY
+
   # ── Worker tier: GLM via Z.ai's OpenAI-compatible endpoint ───────────
   # Verify current model ID + base URL in Z.ai docs (GLM ships an
   # Anthropic-compatible endpoint too; either works behind LiteLLM).
