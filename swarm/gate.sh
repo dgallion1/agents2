@@ -85,12 +85,18 @@ has_fail_at() {                                                    # task attemp
   return 1
 }
 overrule_exists() {                                                # task
-  grep -lq '^VERDICT: OVERRULE' "$VERDICTS/$1."*.verdict 2>/dev/null
+  local f
+  for f in "$VERDICTS/$1."*.verdict; do
+    [[ -f "$f" ]] || continue
+    grep -q '^VERDICT: OVERRULE' "$f" && return 0
+  done
+  return 1
 }
 manifest_hits_glob() {                                             # task -> 0 if any path matches any glob
   [[ -f "$GLOBS" ]] || return 1
-  shopt -s nullglob
-  local mans=("$MANIFESTS/$1."*.files); (( ${#mans[@]} )) || return 1
+  local mans=() m
+  for m in "$MANIFESTS/$1."*.files; do [[ -f "$m" ]] && mans+=("$m"); done
+  (( ${#mans[@]} )) || return 1
   python3 - "$GLOBS" "${mans[@]}" <<'PY'
 import sys, fnmatch
 globs=[l.strip() for l in open(sys.argv[1]) if l.strip() and not l.startswith('#')]

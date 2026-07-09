@@ -42,4 +42,16 @@ run_gate "$sd" escalate-scan
 mkverdict "$sd" e5 1 checker-content PASS anthropic   # even a pass can't accept while flagged
 run_gate "$sd" check e5; assert_rc "unresolved flag blocks check" 1 $?
 
+# E6: multi-task ledger with critical.globs must not drop later rows
+# (regression: nullglob leak + overrule_exists reading the ledger via stdin)
+sd=$(newswarm)
+mkledger "$sd" 'a\t1\tcontent\tverifying\t0\tw\t-\nb\t1\tcontent\tverifying\t0\tw\t-\nc\t1\tcontent\tfailed\t1\tw\t-\n'
+printf 'src/payments/**\n' > "$sd/critical.globs"
+printf 'src/payments/x.js\n' > "$sd/manifests/a.0.files"
+mkverdict "$sd" c 0 checker-content FAIL anthropic
+mkverdict "$sd" c 1 checker-content FAIL anthropic
+run_gate "$sd" escalate-scan
+assert_file "multi-task scan flags glob task a" "$sd/flags/a.flag"
+assert_file "multi-task scan still flags later task c (no stdin/nullglob drop)" "$sd/flags/c.flag"
+
 finish
