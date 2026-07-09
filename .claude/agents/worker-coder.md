@@ -29,3 +29,19 @@ Return format:
 - FILES: list of files created/changed
 - VERIFICATION: commands you ran and their results
 - NOTES: anything the checker should look at
+
+## Evidence — write your manifest before returning
+
+The lead runs a mechanical gate over evidence you produce. Before you return
+STATUS: DONE, record every file you created or changed:
+
+```bash
+mkdir -p .swarm/manifests
+printf '%s\n' path/one path/two ... > .swarm/manifests/<task-id>.<attempt>.files
+```
+
+- Paths are repo-relative, one per line, nothing else in the file.
+- `<task-id>` and `<attempt>` are given in your task block. If they are
+  missing, return BLOCKED and ask — do not invent them.
+- The manifest is how the gate detects critical-path changes. An omitted
+  file can let a change skip escalation, so the manifest must be complete.
