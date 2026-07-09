@@ -156,11 +156,28 @@ cmd_escalate_scan() {
   done < "$LEDGER"
 }
 
+cmd_done() {
+  validate_ledger
+  local row task tier status ft missing=0
+  while IFS= read -r row || [[ -n "$row" ]]; do
+    [[ -z "$row" || "$row" == \#* ]] && continue
+    task=$(col "$row" 1); tier=$(col "$row" 2); status=$(col "$row" 4)
+    [[ "$status" == accepted ]] || { echo "pending: $task (status=$status)"; missing=1; }
+    if [[ -f "$FLAGS/$task.flag" ]]; then
+      ft=$(field_of "$FLAGS/$task.flag" TARGET_TIER)
+      (( tier < ft )) && { echo "unresolved flag: $task -> tier $ft"; missing=1; }
+    fi
+  done < "$LEDGER"
+  (( missing == 0 )) || fail "run incomplete"
+  echo "OK: all tasks accepted, no unresolved flags"
+}
+
 main() {
   local cmd="${1:-}"; shift || true
   case "$cmd" in
     check)         cmd_check "$@" ;;
     escalate-scan) cmd_escalate_scan "$@" ;;
+    done)          cmd_done "$@" ;;
     *)             die "usage: gate.sh {check|escalate-scan|done} ..." ;;
   esac
 }
