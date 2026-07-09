@@ -75,6 +75,37 @@ check_tier3() {                                                     # task attem
   check_tier2 "$task" "$attempt"                                    # merged result still needs dual-family PASS
 }
 
+# --- escalation helpers -----------------------------------------------------
+has_fail_at() {                                                    # task attempt
+  local f
+  for f in "$VERDICTS/$1.$2."*.verdict; do
+    [[ -f "$f" ]] || continue
+    [[ "$(field_of "$f" VERDICT)" == FAIL ]] && return 0
+  done
+  return 1
+}
+overrule_exists() {                                                # task
+  grep -lq '^VERDICT: OVERRULE' "$VERDICTS/$1."*.verdict 2>/dev/null
+}
+manifest_hits_glob() {                                             # task -> 0 if any path matches any glob
+  [[ -f "$GLOBS" ]] || return 1
+  shopt -s nullglob
+  local mans=("$MANIFESTS/$1."*.files); (( ${#mans[@]} )) || return 1
+  python3 - "$GLOBS" "${mans[@]}" <<'PY'
+import sys, fnmatch
+globs=[l.strip() for l in open(sys.argv[1]) if l.strip() and not l.startswith('#')]
+paths=[]
+for p in sys.argv[2:]:
+    paths += [l.strip() for l in open(p) if l.strip()]
+for path in paths:
+    for g in globs:
+        # fnmatch treats ** like *, which is the desired "any depth" behaviour here
+        if fnmatch.fnmatch(path, g) or fnmatch.fnmatch(path, g.replace('/**', '/*')):
+            sys.exit(0)
+sys.exit(1)
+PY
+}
+
 # --- subcommands ------------------------------------------------------------
 cmd_check() {
   local task="${1:-}"; [[ -n "$task" ]] || die "usage: gate.sh check <task-id>"
@@ -93,11 +124,38 @@ cmd_check() {
   echo "OK: $task accepted at tier $tier (attempt $attempt)"
 }
 
+cmd_escalate_scan() {
+  validate_ledger
+  mkdir -p "$FLAGS"
+  local row task tier attempt reasons target flag ft
+  while IFS= read -r row || [[ -n "$row" ]]; do
+    [[ -z "$row" || "$row" == \#* ]] && continue
+    task=$(col "$row" 1); tier=$(col "$row" 2); attempt=$(col "$row" 5)
+    reasons=""
+    if (( attempt >= 1 )) && has_fail_at "$task" "$attempt" && has_fail_at "$task" "$((attempt-1))"; then
+      reasons+="two-consecutive-fails "
+    fi
+    overrule_exists "$task"    && reasons+="checker-overruled "
+    manifest_hits_glob "$task" && reasons+="critical-glob "
+    flag="$FLAGS/$task.flag"; target=$(( tier + 1 )); (( target > 3 )) && target=3
+    if [[ -n "$reasons" ]]; then
+      if [[ ! -f "$flag" ]] && (( tier < target )); then
+        printf 'TARGET_TIER: %s\nREASON: %s\n' "$target" "${reasons% }" > "$flag"
+        echo "flag: $task -> tier $target (${reasons% })"
+      fi
+    elif [[ -f "$flag" ]]; then
+      ft=$(field_of "$flag" TARGET_TIER)
+      (( tier >= ft )) && { rm -f "$flag"; echo "resolved: $task"; }
+    fi
+  done < "$LEDGER"
+}
+
 main() {
   local cmd="${1:-}"; shift || true
   case "$cmd" in
-    check) cmd_check "$@" ;;
-    *)     die "usage: gate.sh {check|escalate-scan|done} ..." ;;
+    check)         cmd_check "$@" ;;
+    escalate-scan) cmd_escalate_scan "$@" ;;
+    *)             die "usage: gate.sh {check|escalate-scan|done} ..." ;;
   esac
 }
 main "$@"
