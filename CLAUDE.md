@@ -21,21 +21,70 @@ block to its canonical source.
   pasted into the delegation message. Workers cannot see this conversation.
 - Independent tasks run as parallel background workers.
 
-## Verification rules — no unchecked work
-- Every task that copies/migrates/quotes text is followed by
-  `checker-content` before acceptance.
-- Every task touching markup, CSS, or interaction is followed by
-  `checker-a11y` before acceptance.
-- A FAIL verdict means the worker retries with the checker's evidence
-  appended to the task. Two consecutive fails on the same task: you take
-  over, diagnose, and rewrite the task (or the spec).
+## Verification — tiered and mechanically gated
 
-## Dispute rule — check the checker
-Checkers report facts; they can still be wrong. If a worker returns BLOCKED
-disputing a verdict, or a verdict cites a standard that is not actually in
-ACCESSIBILITY.md / SPEC.md, you adjudicate against the written documents.
-When the checker is wrong, overrule it, record the ruling in SPEC.md under
-"Rulings", and re-run.
+Every task carries a **tier** (see TIERS.md), assigned in Phase 0 and approved
+by the user. Tier decides how it is verified; a mechanical gate decides when it
+is accepted. In Phase 0, also create the run directory and ledger:
+
+```bash
+mkdir -p .swarm/verdicts .swarm/manifests .swarm/flags .swarm/tier3
+# ledger.tsv columns (TAB-separated):
+#   task_id  tier  checks  status  attempt  worker  reason
+```
+
+Add a `Tier` column to SPEC.md's task table and draft `.swarm/critical.globs`.
+
+### The hard rule (do not bypass)
+
+- A task's status may become `accepted` **only after `swarm/gate.sh check
+  <task>` exits 0.** Paste the gate's output into the accepting message.
+- The run may be declared complete **only after `swarm/gate.sh done` exits 0.**
+- After every verdict lands, run `swarm/gate.sh escalate-scan`. If it writes a
+  flag, bump that task's `tier` in the ledger to the flag's `TARGET_TIER`,
+  record the reason, and re-verify at the new tier. The gate refuses
+  acceptance at the old tier while a flag is unresolved.
+
+You never transcribe a verdict. Workers write manifests; checkers and judges
+write verdict files. You read evidence and update ledger status only.
+
+### Tier 1 — one checker
+Worker → the mechanical checker(s) named in the ledger `checks` column
+(`checker-content` and/or `checker-a11y`) → `gate.sh check` → accept.
+
+### Tier 2 — dual family + judge panel on disputes
+Worker builds once. Then two checkers run in parallel from different families:
+the relevant mechanical checker (Anthropic) **and** `checker-second` (GLM).
+Both must PASS. If they disagree (any FAIL), it is a dispute: dispatch all
+three judges — `judge-claude`, `judge-glm`, `judge-local` — each with the task,
+the work, the contested verdict + evidence, and the constitution. Majority
+OVERRULE accepts; majority UPHOLD sends the task back to the worker. Record the
+ruling in SPEC.md "Rulings". The gate enforces the vote count mechanically.
+
+### Tier 3 — blind N-version, then Tier 2
+1. Write **executable acceptance checks** as `.swarm/tier3/<task>/accept.sh`
+   before dispatch — commands plus expected observations. This is the oracle.
+2. `swarm/tier3-setup.sh <task>` creates two isolated worktrees.
+3. Dispatch `worker-coder` (GLM) and `worker-local` (Qwen) with the identical
+   task block, in parallel, blind to each other, one per worktree.
+4. `swarm/tier3-compare.sh <task>` runs `accept.sh` in both and writes
+   `.swarm/tier3/<task>/report.md` (per-check matrix + output diffs).
+5. Review **only the divergences**, pick a winner or synthesize, append a
+   `RESOLUTION:` line to the report, and merge into the main tree.
+6. Run the Tier-2 dual-checker verification on the merged result as a **new
+   attempt** (increment the ledger `attempt`; verdict files use that attempt
+   number). `gate.sh check` requires both the RESOLUTION line and dual-family
+   PASS at that attempt.
+
+### Disputes at Tier 1
+You adjudicate against the written documents (unchanged). Record an overrule by
+writing a verdict file (`VERDICT: OVERRULE`, `CHECKER: boss`, `FAMILY:
+anthropic`); an overrule is itself an escalation trigger, so the re-run happens
+one tier up.
+
+### Hard stop
+Two failed attempts at Tier 3, or three at any tier, halts the task and reports
+to the user. Escalation never silently loops.
 
 ## Final pass — review your own work too
 Before declaring done: run `checker-a11y` across the full site, then do your
