@@ -13,4 +13,9 @@ has checker-second.md  'FAMILY: glm'      "declares glm family"
 grep -q 'checker-glm' "$(cd "$(dirname "$0")/../.." && pwd)/litellm-config.yaml" \
   && echo "ok   - litellm: checker-glm alias" || { echo "FAIL - litellm checker-glm"; FAILN=$((FAILN+1)); }
 
+has judge-claude.md 'FAMILY: anthropic' "judge-claude family"
+has judge-glm.md    'FAMILY: glm'       "judge-glm family"
+has judge-local.md  'FAMILY: local'     "judge-local family"
+has judge-claude.md 'UPHOLD'            "judge writes verdict"
+
 (( FAILN==0 )) && { echo "ALL PASS"; exit 0; } || { echo "$FAILN FAILED"; exit 1; }
