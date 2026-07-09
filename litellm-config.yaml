@@ -1,0 +1,53 @@
+# LiteLLM gateway — single Anthropic-compatible endpoint for the whole swarm.
+# Claude Code talks to this proxy (ANTHROPIC_BASE_URL). Model names below are
+# what you put in each subagent's `model:` frontmatter; the proxy decides
+# which vendor actually serves the call.
+
+model_list:
+  # ── Boss / judgment tier (Anthropic passthrough) ─────────────────────
+  - model_name: claude-fable-5
+    litellm_params:
+      model: anthropic/claude-fable-5
+      api_key: os.environ/ANTHROPIC_API_KEY
+
+  - model_name: claude-opus-4-8
+    litellm_params:
+      model: anthropic/claude-opus-4-8
+      api_key: os.environ/ANTHROPIC_API_KEY
+
+  # ── Checker tier (cheap, mechanical verification) ────────────────────
+  - model_name: checker-haiku
+    litellm_params:
+      model: anthropic/claude-haiku-4-5-20251001
+      api_key: os.environ/ANTHROPIC_API_KEY
+
+  # ── Worker tier: GLM via Z.ai's OpenAI-compatible endpoint ───────────
+  # Verify current model ID + base URL in Z.ai docs (GLM ships an
+  # Anthropic-compatible endpoint too; either works behind LiteLLM).
+  - model_name: worker-glm
+    litellm_params:
+      model: openai/glm-5.2
+      api_base: https://api.z.ai/api/paas/v4
+      api_key: os.environ/GLM_API_KEY
+
+  # ── Worker tier: OpenRouter fallback / alternative vendors ───────────
+  - model_name: worker-openrouter
+    litellm_params:
+      model: openrouter/z-ai/glm-5.2
+      api_key: os.environ/OPENROUTER_API_KEY
+
+  # ── Worker tier: local Qwen on the DGX Spark via vLLM ────────────────
+  # vLLM serving an OpenAI-compatible API on the Spark. Marginal cost: $0.
+  - model_name: worker-local
+    litellm_params:
+      model: hosted_vllm/nvidia/Qwen3-32B-NVFP4
+      api_base: http://spark.local:8000/v1
+      api_key: "unused"
+
+litellm_settings:
+  drop_params: true          # silently drop provider-unsupported params
+  num_retries: 2
+  request_timeout: 600       # long-running coding turns
+
+general_settings:
+  master_key: os.environ/LITELLM_MASTER_KEY

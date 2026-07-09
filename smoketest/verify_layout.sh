@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+# Structural check: base kit + scaffolding present.
+set -u
+root="$(cd "$(dirname "$0")/.." && pwd)"
+fail=0
+for f in README.md CLAUDE.md litellm-config.yaml docker-compose.yaml \
+         .claude/agents/worker-coder.md .claude/agents/worker-local.md \
+         .claude/agents/checker-content.md .claude/agents/checker-a11y.md \
+         .gitignore; do
+  if [[ -f "$root/$f" ]]; then echo "ok   - $f"; else echo "FAIL - $f missing"; fail=1; fi
+done
+grep -q '^\.swarm/' "$root/.gitignore" 2>/dev/null && echo "ok   - .gitignore ignores .swarm/" || { echo "FAIL - .gitignore"; fail=1; }
+for d in swarm smoketest .claude/agents; do
+  [[ -d "$root/$d" ]] && echo "ok   - dir $d" || { echo "FAIL - dir $d"; fail=1; }
+done
+exit $fail

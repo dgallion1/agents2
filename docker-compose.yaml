@@ -1,0 +1,18 @@
+services:
+  litellm:
+    image: ghcr.io/berriai/litellm:main-latest
+    container_name: swarm-gateway
+    ports:
+      - "4000:4000"
+    volumes:
+      - ./litellm-config.yaml:/app/config.yaml:ro
+    command: ["--config", "/app/config.yaml", "--port", "4000"]
+    environment:
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - GLM_API_KEY=${GLM_API_KEY}
+      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY:-}
+      - LITELLM_MASTER_KEY=${LITELLM_MASTER_KEY:-sk-swarm-local}
+    restart: unless-stopped
+    # If the DGX Spark's vLLM endpoint is on your LAN/Tailscale, the
+    # container needs to reach it; host networking is the simple option:
+    # network_mode: host   (then drop the ports: mapping)
