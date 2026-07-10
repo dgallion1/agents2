@@ -15,4 +15,7 @@ has CLAUDE.md "escalate-scan loop"       "escalate-scan"
 has CLAUDE.md "judge panel on disputes"  "judge-claude"
 has CLAUDE.md "tier 3 protocol"          "tier3-setup"
 
+has README.md "documents tiers"          "Verification tiers"
+has README.md "points at gate tests"     "run_tests.sh"
+
 (( FAILN==0 )) && { echo "ALL PASS"; exit 0; } || { echo "$FAILN FAILED"; exit 1; }

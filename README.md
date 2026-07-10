@@ -70,3 +70,29 @@ Claude Code (lead: Fable 5 / Opus 4.8)
   is API-key billing. That's inherent to the multi-vendor trick.
 - Checkers are cheap but not free: keep their checks mechanical (diffs,
   axe-core, explicit constitution points) so a small model can't drift.
+
+## Verification tiers
+
+Rigor is chosen per task, not applied uniformly (see `TIERS.md`):
+
+- **Tier 1** — reversible, oracle-checkable work: worker → one mechanical
+  checker. Same cost as the base kit.
+- **Tier 2** — shared/weak-oracle work: two checkers on different model
+  families must both PASS; disputes go to a 3-judge panel (`judge-claude`,
+  `judge-glm`, `judge-local`).
+- **Tier 3** — irreversible / high blast radius (payments, auth, deploys,
+  migrations, publishing): two workers build blind in separate git worktrees;
+  `swarm/tier3-compare.sh` reports behavioral divergences; the boss adjudicates
+  and the merge still gets Tier 2 checks.
+
+A pure-bash gate enforces it: a task is accepted only when `swarm/gate.sh check
+<task>` exits 0, and the run completes only when `swarm/gate.sh done` does.
+`swarm/gate.sh escalate-scan` raises a task's tier on evidence (two consecutive
+fails, a checker overrule, or a change to a `critical.globs` path). Every agent
+writes its own evidence into `.swarm/`, so the boss cannot fabricate a check.
+
+Run the deterministic gate tests (no API keys, no gateway):
+
+```
+bash smoketest/gate/run_tests.sh
+```
