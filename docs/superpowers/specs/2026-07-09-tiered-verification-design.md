@@ -196,8 +196,9 @@ drafts `critical.globs`; both are covered by the existing user sign-off.
   verdict file, so the gate cannot pass — safe default; boss re-dispatches.
 - **Worker BLOCKED:** unchanged (boss answers or fixes the spec);
   BLOCKED-disputing-a-verdict routes to the dispute path.
-- **Endpoint failures:** LiteLLM retries as configured; `worker-openrouter`
-  is the documented manual fallback. Gateway down = nothing runs (loud).
+- **Endpoint failures:** LiteLLM retries as configured. The GLM family runs
+  through OpenRouter by default; `worker-zai` is the documented manual
+  fallback straight to Z.ai. Gateway down = nothing runs (loud).
 
 ## Validation (`smoketest/`)
 

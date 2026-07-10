@@ -22,28 +22,30 @@ model_list:
       api_key: os.environ/ANTHROPIC_API_KEY
 
   # ── Checker tier: GLM as an independent second family ────────────────
-  # Same Z.ai endpoint as worker-glm; separate alias so checker economics
-  # and routing stay legible. Used by checker-second and judge-glm.
+  # Routed through OpenRouter (the openrouter/ prefix supplies its own base
+  # URL + auth). Separate alias so checker economics and routing stay
+  # legible. Used by checker-second and judge-glm.
   - model_name: checker-glm
-    litellm_params:
-      model: openai/glm-5.2
-      api_base: https://api.z.ai/api/paas/v4
-      api_key: os.environ/GLM_API_KEY
-
-  # ── Worker tier: GLM via Z.ai's OpenAI-compatible endpoint ───────────
-  # Verify current model ID + base URL in Z.ai docs (GLM ships an
-  # Anthropic-compatible endpoint too; either works behind LiteLLM).
-  - model_name: worker-glm
-    litellm_params:
-      model: openai/glm-5.2
-      api_base: https://api.z.ai/api/paas/v4
-      api_key: os.environ/GLM_API_KEY
-
-  # ── Worker tier: OpenRouter fallback / alternative vendors ───────────
-  - model_name: worker-openrouter
     litellm_params:
       model: openrouter/z-ai/glm-5.2
       api_key: os.environ/OPENROUTER_API_KEY
+
+  # ── Worker tier: GLM via OpenRouter ──────────────────────────────────
+  # One vendor relationship + key (OPENROUTER_API_KEY) fronts the whole GLM
+  # family. Verify the model slug against the OpenRouter model list.
+  - model_name: worker-glm
+    litellm_params:
+      model: openrouter/z-ai/glm-5.2
+      api_key: os.environ/OPENROUTER_API_KEY
+
+  # ── Worker tier: direct Z.ai fallback (bypasses OpenRouter) ──────────
+  # Kept so an agent can be pinned straight at Z.ai if OpenRouter degrades.
+  # Requires GLM_API_KEY. Not referenced by any agent by default.
+  - model_name: worker-zai
+    litellm_params:
+      model: openai/glm-5.2
+      api_base: https://api.z.ai/api/paas/v4
+      api_key: os.environ/GLM_API_KEY
 
   # ── Worker tier: local Qwen on the DGX Spark via vLLM ────────────────
   # vLLM serving an OpenAI-compatible API on the Spark. Marginal cost: $0.
