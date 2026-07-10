@@ -1,0 +1,7 @@
+faults/paraphrased-quote	checker-content	FAIL
+faults/hidden-opacity	checker-content	FAIL
+faults/hidden-opacity	checker-a11y	FAIL
+faults/dark-mode-invisible	checker-a11y	FAIL
+clean/paraphrased-quote	checker-content	PASS
+clean/hidden-opacity	checker-content	PASS
+clean/dark-mode-invisible	checker-a11y	PASS
