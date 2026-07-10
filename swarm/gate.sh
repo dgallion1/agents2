@@ -88,7 +88,7 @@ overrule_exists() {                                                # task
   local f
   for f in "$VERDICTS/$1."*.verdict; do
     [[ -f "$f" ]] || continue
-    grep -q '^VERDICT: OVERRULE' "$f" && return 0
+    grep -q '^VERDICT: OVERRULE' "$f" && grep -q '^CHECKER: boss' "$f" && return 0
   done
   return 1
 }

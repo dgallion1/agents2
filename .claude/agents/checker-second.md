@@ -22,7 +22,7 @@ Procedure:
 
 ```bash
 mkdir -p .swarm/verdicts
-cat > .swarm/verdicts/<task-id>.<attempt>.checker-second.verdict <<EOF
+cat > .swarm/verdicts/<task-id>.<attempt>.checker-second.verdict <<'EOF'
 VERDICT: PASS
 CHECKER: checker-second
 FAMILY: glm

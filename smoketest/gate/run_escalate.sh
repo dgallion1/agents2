@@ -63,4 +63,15 @@ printf 'deploy.config.json\nindex.html\n' > "$sd/manifests/e7.0.files"
 run_gate "$sd" escalate-scan
 assert_file "root-level critical file escalates (leading **/ glob)" "$sd/flags/e7.flag"
 
+# E8: a judge-panel OVERRULE (Tier-2 dispute resolution) must NOT escalate — only a boss overrule does
+sd=$(newswarm)
+mkledger "$sd" 'e8\t2\tcontent\tverifying\t0\tw\t-\n'
+mkverdict "$sd" e8 0 checker-content PASS anthropic
+mkverdict "$sd" e8 0 checker-second  FAIL glm
+mkverdict "$sd" e8 0 judge-claude OVERRULE anthropic
+mkverdict "$sd" e8 0 judge-glm    OVERRULE glm
+mkverdict "$sd" e8 0 judge-local  UPHOLD   local
+run_gate "$sd" escalate-scan
+assert_nofile "judge-panel OVERRULE does not escalate (only boss overrule does)" "$sd/flags/e8.flag"
+
 finish

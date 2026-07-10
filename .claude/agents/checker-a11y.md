@@ -43,7 +43,7 @@ project files.
 
 ```bash
 mkdir -p .swarm/verdicts
-cat > .swarm/verdicts/<task-id>.<attempt>.checker-a11y.verdict <<EOF
+cat > .swarm/verdicts/<task-id>.<attempt>.checker-a11y.verdict <<'EOF'
 VERDICT: PASS
 CHECKER: checker-a11y
 FAMILY: anthropic

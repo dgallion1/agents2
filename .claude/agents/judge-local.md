@@ -20,7 +20,7 @@ Procedure:
 
 ```bash
 mkdir -p .swarm/verdicts
-cat > .swarm/verdicts/<task-id>.<attempt>.judge-local.verdict <<EOF
+cat > .swarm/verdicts/<task-id>.<attempt>.judge-local.verdict <<'EOF'
 VERDICT: UPHOLD
 CHECKER: judge-local
 FAMILY: local
