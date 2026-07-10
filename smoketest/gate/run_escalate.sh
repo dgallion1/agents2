@@ -54,4 +54,13 @@ run_gate "$sd" escalate-scan
 assert_file "multi-task scan flags glob task a" "$sd/flags/a.flag"
 assert_file "multi-task scan still flags later task c (no stdin/nullglob drop)" "$sd/flags/c.flag"
 
+# E7: a ROOT-level critical file must escalate under a leading-**/ glob
+# (regression: fnmatch requires a literal '/', so '**/deploy.config.*' missed root files)
+sd=$(newswarm)
+mkledger "$sd" 'e7\t1\tcontent\tverifying\t0\tw\t-\n'
+printf '**/deploy.config.*\n' > "$sd/critical.globs"
+printf 'deploy.config.json\nindex.html\n' > "$sd/manifests/e7.0.files"
+run_gate "$sd" escalate-scan
+assert_file "root-level critical file escalates (leading **/ glob)" "$sd/flags/e7.flag"
+
 finish

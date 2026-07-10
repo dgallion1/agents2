@@ -103,10 +103,16 @@ globs=[l.strip() for l in open(sys.argv[1]) if l.strip() and not l.startswith('#
 paths=[]
 for p in sys.argv[2:]:
     paths += [l.strip() for l in open(p) if l.strip()]
+def matches(path, g):
+    cands = {g}
+    if g.startswith('**/'):
+        cands.add(g[3:])                 # **/X also matches X at the root (zero leading dirs)
+    if '/**' in g:
+        cands.add(g.replace('/**', '/*'))
+    return any(fnmatch.fnmatch(path, c) for c in cands)
 for path in paths:
     for g in globs:
-        # fnmatch treats ** like *, which is the desired "any depth" behaviour here
-        if fnmatch.fnmatch(path, g) or fnmatch.fnmatch(path, g.replace('/**', '/*')):
+        if matches(path, g):
             sys.exit(0)
 sys.exit(1)
 PY
