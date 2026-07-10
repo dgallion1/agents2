@@ -9,35 +9,39 @@ verification on Haiku, all through one LiteLLM gateway.
 Claude Code sends every request — main session and subagents — to
 `ANTHROPIC_BASE_URL`. Point that at the LiteLLM proxy and the proxy becomes
 the switchboard: a subagent's `model:` frontmatter value is just a name the
-proxy resolves, so `worker-glm` lands on Z.ai, `worker-local` lands on your
-DGX Spark's vLLM, and `claude-fable-5` / `checker-haiku` pass through to
-Anthropic. One endpoint, four vendors, per-agent economics.
+proxy resolves. All cloud models (Anthropic and GLM families alike) route
+through OpenRouter under one key; `worker-local` lands on your DGX Spark's
+vLLM at $0. One endpoint, one cloud vendor relationship, per-agent economics.
 
 ```
 Claude Code (lead: Fable 5 / Opus 4.8)
         │  ANTHROPIC_BASE_URL=http://localhost:4000
         ▼
-   LiteLLM gateway ──► anthropic/*          (boss + checkers)
-                   ──► z.ai glm-5.2         (worker-coder)
-                   ──► spark.local vLLM     (worker-local, $0)
-                   ──► openrouter/*         (fallback)
+   LiteLLM gateway ──► openrouter/anthropic/*  (boss + checkers)
+                   ──► openrouter/z-ai/glm-5.2 (worker-coder, checker-glm)
+                   ──► spark.local vLLM        (worker-local, $0)
+                   ──► api.z.ai direct         (worker-zai fallback, unused
+                                                by default)
 ```
 
 ## Setup
 
 1. Env vars (`.env` next to the compose file):
    ```
-   ANTHROPIC_API_KEY=sk-ant-...
-   GLM_API_KEY=...
-   OPENROUTER_API_KEY=...        # optional
-   LITELLM_MASTER_KEY=sk-swarm-local
+   OPENROUTER_API_KEY=sk-or-...      # required — all cloud models route through OpenRouter
+   GLM_API_KEY=...                   # optional — only the worker-zai direct fallback
+   LITELLM_MASTER_KEY=sk-swarm-local # optional — compose defaults to this value
    ```
 
-2. Start the gateway:
+2. Start the gateway and launch the lead session in one step:
    ```
-   docker compose up -d
-   curl http://localhost:4000/health -H "Authorization: Bearer $LITELLM_MASTER_KEY"
+   swarm/start.sh -C your-project/   # dir containing .claude/agents/ + CLAUDE.md
    ```
+   The script brings up the compose stack, waits for `:4000/health`, then
+   `exec`s `claude` in the project dir with `ANTHROPIC_BASE_URL` /
+   `ANTHROPIC_AUTH_TOKEN` set. Pass `--model claude-opus-4-8` for half the
+   price (default is `claude-fable-5`), or `--gateway-only` to start the
+   proxy without launching a session.
 
 3. (Optional, $0 worker) Serve Qwen on the Spark:
    ```
@@ -45,8 +49,10 @@ Claude Code (lead: Fable 5 / Opus 4.8)
    ```
    Adjust `api_base` in `litellm-config.yaml` (Tailscale hostname works).
 
-4. Launch the lead session through the gateway:
+4. Manual equivalent, if you'd rather not use the script:
    ```
+   docker compose up -d
+   curl http://localhost:4000/health -H "Authorization: Bearer $LITELLM_MASTER_KEY"
    export ANTHROPIC_BASE_URL=http://localhost:4000
    export ANTHROPIC_AUTH_TOKEN=$LITELLM_MASTER_KEY
    cd your-project/   # containing the .claude/agents/ + CLAUDE.md from here
@@ -62,8 +68,22 @@ Claude Code (lead: Fable 5 / Opus 4.8)
 - **Verify GLM endpoint + model ID** against current Z.ai docs before first
   run; the values in `litellm-config.yaml` are placeholders in shape.
 - The subagent `model:` field officially expects Claude aliases or model IDs;
-  arbitrary names work **only because the gateway resolves them**. Without
-  `ANTHROPIC_BASE_URL` set, `worker-glm` will error.
+  arbitrary names work **only because the gateway resolves them**. Confirm the
+  session is actually routed through the gateway before a run: `echo
+  $ANTHROPIC_BASE_URL` should point at the proxy, and `curl :4000/health`
+  should answer. If `ANTHROPIC_BASE_URL` is `https://api.anthropic.com` or the
+  proxy is down, the non-Anthropic aliases (`worker-glm`, `worker-local`,
+  `checker-glm`) fail to resolve with an error like "the selected model
+  (worker-local) may not exist or you may not have access". Fallback: either
+  relaunch the session through the gateway (`swarm/start.sh -C <project-dir>`,
+  which starts the proxy and sets the env for you) or run the swarm
+  Anthropic-only
+  by overriding each dispatch's model (haiku/sonnet/opus) and recording a
+  degraded-family ruling. Tier 2's "two families" then holds across two
+  Anthropic model tiers instead of two vendors, and verdict `FAMILY` fields
+  should record what actually ran rather than claiming `glm`/`local`. The
+  mechanical gate enforces the family count on whatever `FAMILY` strings get
+  written either way.
 - If your account is under a managed org policy, an `availableModels`
   allowlist can override frontmatter model choices.
 - Subscription (Max plan) usage does not flow through a proxy — this setup
@@ -96,3 +116,42 @@ Run the deterministic gate tests (no API keys, no gateway):
 ```
 bash smoketest/gate/run_tests.sh
 ```
+
+## Dashboard (mission control)
+
+A zero-dependency Node dashboard (`dashboard/`) reads `.swarm/` and renders a
+running swarm as server-rendered HTML with live reload. It is READ-ONLY — it
+never writes to `.swarm/`, so it cannot become a second path around the gate
+(there is no accept button; status still flows only through verdict files and
+`gate.sh`).
+
+Run it:
+
+```
+node dashboard/server.mjs [SWARM_DIR]   # defaults to .swarm
+# then open http://127.0.0.1:8787  (set PORT to change)
+```
+
+It live-reloads over SSE whenever a file under the watched dir changes.
+
+What it shows: the ledger with tier badges; a per-task drawer with the worker
+manifest and every verdict rendered verbatim; a dispute panel with both
+checker verdicts and the three judge votes plus the mechanical tally; the
+Tier-3 worktree-A/B divergence matrix and RESOLUTION line; and a cost panel.
+
+Anti-lie note: the dashboard computes each task's state from the verdict
+evidence, not from the ledger `status` string — so a task that the ledger
+calls `accepted` but that lacks a real PASS-quorum (or has an open escalation
+flag) renders as a surfaced discrepancy, never as a false `accepted`. It
+agrees with `gate.sh check` by construction.
+
+Demo without a live run: `node dashboard/server.mjs dashboard/fixtures/swarm-demo`
+serves a fixture exercising every state.
+
+Cost data: the cost panel reads `.swarm/spend.jsonl`; if that file is absent
+the panel shows a calm empty state. To populate it, wire
+`dashboard/spend-callback.py` (a LiteLLM custom logger) into the gateway —
+see that file's docstring. That wiring edits `litellm-config.yaml` and is a
+Tier-3 change; it is NOT enabled by default.
+
+See `dashboard/README.md` for endpoint details.

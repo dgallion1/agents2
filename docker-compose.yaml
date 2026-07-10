@@ -8,8 +8,8 @@ services:
       - ./litellm-config.yaml:/app/config.yaml:ro
     command: ["--config", "/app/config.yaml", "--port", "4000"]
     environment:
-      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
-      - GLM_API_KEY=${GLM_API_KEY}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - GLM_API_KEY=${GLM_API_KEY:-}
       - OPENROUTER_API_KEY=${OPENROUTER_API_KEY:-}
       - LITELLM_MASTER_KEY=${LITELLM_MASTER_KEY:-sk-swarm-local}
     restart: unless-stopped
