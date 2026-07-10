@@ -4,22 +4,26 @@
 # which vendor actually serves the call.
 
 model_list:
-  # ── Boss / judgment tier (Anthropic passthrough) ─────────────────────
+  # ── Boss / judgment tier (Anthropic via OpenRouter) ──────────────────
+  # Routed through OpenRouter so every cloud call flows through one vendor
+  # relationship + key (OPENROUTER_API_KEY). Verify each slug against the
+  # OpenRouter model list. NOTE: this puts the Anthropic and GLM checker
+  # families behind a shared vendor — accepted tradeoff, see design spec.
   - model_name: claude-fable-5
     litellm_params:
-      model: anthropic/claude-fable-5
-      api_key: os.environ/ANTHROPIC_API_KEY
+      model: openrouter/anthropic/claude-fable-5
+      api_key: os.environ/OPENROUTER_API_KEY
 
   - model_name: claude-opus-4-8
     litellm_params:
-      model: anthropic/claude-opus-4-8
-      api_key: os.environ/ANTHROPIC_API_KEY
+      model: openrouter/anthropic/claude-opus-4.8
+      api_key: os.environ/OPENROUTER_API_KEY
 
   # ── Checker tier (cheap, mechanical verification) ────────────────────
   - model_name: checker-haiku
     litellm_params:
-      model: anthropic/claude-haiku-4-5-20251001
-      api_key: os.environ/ANTHROPIC_API_KEY
+      model: openrouter/anthropic/claude-haiku-4.5
+      api_key: os.environ/OPENROUTER_API_KEY
 
   # ── Checker tier: GLM as an independent second family ────────────────
   # Routed through OpenRouter (the openrouter/ prefix supplies its own base

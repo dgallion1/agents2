@@ -196,9 +196,12 @@ drafts `critical.globs`; both are covered by the existing user sign-off.
   verdict file, so the gate cannot pass — safe default; boss re-dispatches.
 - **Worker BLOCKED:** unchanged (boss answers or fixes the spec);
   BLOCKED-disputing-a-verdict routes to the dispute path.
-- **Endpoint failures:** LiteLLM retries as configured. The GLM family runs
-  through OpenRouter by default; `worker-zai` is the documented manual
-  fallback straight to Z.ai. Gateway down = nothing runs (loud).
+- **Endpoint failures:** LiteLLM retries as configured. Both cloud families —
+  Anthropic and GLM — run through OpenRouter by default (single vendor + key);
+  `worker-zai` is the documented manual fallback straight to Z.ai, and
+  `worker-local` (Qwen/vLLM) stays off OpenRouter entirely. Note the accepted
+  tradeoff: a shared OpenRouter dependency can fail both checker families at
+  once. Gateway down = nothing runs (loud).
 
 ## Validation (`smoketest/`)
 
