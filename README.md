@@ -26,11 +26,12 @@ Claude Code (lead: Fable 5 / Opus 4.8)
 
 ## Setup
 
-1. Env vars (`.env` next to the compose file):
+1. Env vars — copy the example and fill in real keys (`.env` is gitignored):
    ```
-   OPENROUTER_API_KEY=sk-or-...      # required — all cloud models route through OpenRouter
-   GLM_API_KEY=...                   # optional — only the worker-zai direct fallback
-   LITELLM_MASTER_KEY=sk-swarm-local # optional — compose defaults to this value
+   cp .env.example .env
+   # OPENROUTER_API_KEY=sk-or-...      # required — all cloud models route through OpenRouter
+   # GLM_API_KEY=...                   # optional — only the worker-zai direct fallback
+   # LITELLM_MASTER_KEY=sk-swarm-local # optional — compose defaults to this value
    ```
 
 2. Start the gateway and launch the lead session in one step:
@@ -48,6 +49,24 @@ Claude Code (lead: Fable 5 / Opus 4.8)
    vllm serve nvidia/Qwen3-32B-NVFP4 --host 0.0.0.0 --port 8000
    ```
    Adjust `api_base` in `litellm-config.yaml` (Tailscale hostname works).
+   That command runs in the foreground and dies with the shell — for real
+   runs, keep it alive as a service on the Spark (e.g. a systemd user unit
+   with `Restart=on-failure`, or at minimum `tmux`/`nohup`). If `worker-local`
+   dispatches start failing mid-run, check the endpoint first:
+   `curl http://spark.local:8000/v1/models`.
+
+   To add another local model (any OpenAI-compatible server — vLLM, Ollama's
+   `/v1`, llama.cpp server), append a `model_list` entry to
+   `litellm-config.yaml`:
+   ```yaml
+   - model_name: worker-local-small        # the alias agents will use
+     litellm_params:
+       model: hosted_vllm/<served-model-name>
+       api_base: http://<host>:<port>/v1
+       api_key: "unused"
+   ```
+   then reference the alias in an agent's `model:` frontmatter and restart
+   the gateway (`docker compose restart litellm`).
 
 4. Manual equivalent, if you'd rather not use the script:
    ```
@@ -65,8 +84,10 @@ Claude Code (lead: Fable 5 / Opus 4.8)
 
 ## Caveats
 
-- **Verify GLM endpoint + model ID** against current Z.ai docs before first
-  run; the values in `litellm-config.yaml` are placeholders in shape.
+- **Verify model slugs against the OpenRouter model list** before first run —
+  all cloud entries in `litellm-config.yaml` use `openrouter/...` slugs. The
+  direct Z.ai endpoint + model ID matter only for the `worker-zai` fallback
+  (unused by default); check those against current Z.ai docs if you enable it.
 - The subagent `model:` field officially expects Claude aliases or model IDs;
   arbitrary names work **only because the gateway resolves them**. Confirm the
   session is actually routed through the gateway before a run: `echo
