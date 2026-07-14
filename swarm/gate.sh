@@ -36,31 +36,137 @@ verdict_files() {                                                    # task atte
   shopt -s nullglob; local f=("$VERDICTS/$1.$2."*.verdict); printf '%s\n' "${f[@]}"
 }
 
+# --- verdict schema ---------------------------------------------------------
+# SPEC.md §2a: KEY: value headers (VERDICT, CHECKER, FAMILY, TASK, ATTEMPT),
+# then a `---` separator, then evidence. Filename must agree with headers.
+# VERDICT ∈ {PASS,FAIL,UPHOLD,OVERRULE}; FAMILY ∈ {anthropic,glm,local}.
+#
+# On success sets: _vv _vc _vf _vt _va  and returns 0.
+# On failure sets: _verr and returns 1. Never use command-substitution around
+# this function — globals must land in the caller's shell.
+load_verdict() {                                                     # file [expected_task] [expected_attempt]
+  local f="$1" exp_task="${2:-}" exp_attempt="${3:-}"
+  local base prefix checker_from_name
+  local verdict checker family task attempt
+
+  _verr=""; _vv=""; _vc=""; _vf=""; _vt=""; _va=""
+
+  [[ -f "$f" ]] || { _verr="missing file $f"; return 1; }
+  base=$(basename "$f")
+
+  if [[ -n "$exp_task" && -n "$exp_attempt" ]]; then
+    prefix="${exp_task}.${exp_attempt}."
+    case "$base" in
+      "$prefix"*.verdict) ;;
+      *) _verr="$base: filename does not match task=$exp_task attempt=$exp_attempt"; return 1 ;;
+    esac
+    checker_from_name="${base#"$prefix"}"
+    checker_from_name="${checker_from_name%.verdict}"
+    [[ -n "$checker_from_name" ]] || { _verr="$base: empty checker in filename"; return 1; }
+  else
+    # Best-effort parse: <task>.<attempt>.<checker>.verdict (task may contain dots).
+    if [[ ! "$base" =~ ^(.+)\.([0-9]+)\.(.+)\.verdict$ ]]; then
+      _verr="$base: unparseable verdict filename"; return 1
+    fi
+    exp_task="${BASH_REMATCH[1]}"
+    exp_attempt="${BASH_REMATCH[2]}"
+    checker_from_name="${BASH_REMATCH[3]}"
+  fi
+
+  # Require the separator line (exact ---).
+  grep -qx -- '---' "$f" || { _verr="$base: missing '---' separator"; return 1; }
+
+  verdict=$(field_of "$f" VERDICT)
+  checker=$(field_of "$f" CHECKER)
+  family=$(field_of "$f" FAMILY)
+  task=$(field_of "$f" TASK)
+  attempt=$(field_of "$f" ATTEMPT)
+
+  [[ -n "$verdict" ]]  || { _verr="$base: missing VERDICT"; return 1; }
+  [[ -n "$checker" ]]  || { _verr="$base: missing CHECKER"; return 1; }
+  [[ -n "$family" ]]   || { _verr="$base: missing FAMILY"; return 1; }
+  [[ -n "$task" ]]     || { _verr="$base: missing TASK"; return 1; }
+  [[ -n "$attempt" ]]  || { _verr="$base: missing ATTEMPT"; return 1; }
+
+  case "$verdict" in
+    PASS|FAIL|UPHOLD|OVERRULE) ;;
+    *) _verr="$base: invalid VERDICT '$verdict'"; return 1 ;;
+  esac
+  case "$family" in
+    anthropic|glm|local) ;;
+    *) _verr="$base: invalid FAMILY '$family'"; return 1 ;;
+  esac
+  [[ "$attempt" =~ ^[0-9]+$ ]] || { _verr="$base: invalid ATTEMPT '$attempt'"; return 1; }
+
+  # Filename ↔ header agreement (checker authorization + identity).
+  [[ "$checker" == "$checker_from_name" ]] || {
+    _verr="$base: CHECKER '$checker' != filename checker '$checker_from_name'"; return 1
+  }
+  [[ "$task" == "$exp_task" ]] || {
+    _verr="$base: TASK '$task' != filename/ledger task '$exp_task'"; return 1
+  }
+  [[ "$attempt" == "$exp_attempt" ]] || {
+    _verr="$base: ATTEMPT '$attempt' != filename/ledger attempt '$exp_attempt'"; return 1
+  }
+
+  _vv=$verdict; _vc=$checker; _vf=$family; _vt=$task; _va=$attempt
+  return 0
+}
+
 # --- per-tier acceptance ----------------------------------------------------
 check_tier1() {                                                      # task attempt checks
-  local task="$1" attempt="$2" checks="$3" c f v
+  local task="$1" attempt="$2" checks="$3" c f
   [[ "$checks" == "-" || -z "$checks" ]] && return 0
   IFS=',' read -ra req <<<"$checks"
   for c in "${req[@]}"; do
     f="$VERDICTS/$task.$attempt.checker-$c.verdict"
     [[ -f "$f" ]] || fail "$task: missing verdict from checker-$c (attempt $attempt)"
-    v=$(field_of "$f" VERDICT); [[ "$v" == PASS ]] || fail "$task: checker-$c returned ${v:-none}"
+    load_verdict "$f" "$task" "$attempt" || fail "$task: invalid verdict checker-$c: $_verr"
+    [[ "$_vv" == PASS ]] || fail "$task: checker-$c returned ${_vv:-none}"
   done
 }
 check_tier2() {                                                      # task attempt
-  local task="$1" attempt="$2" f v fam has_fail=0 up=0 ov=0
+  local task="$1" attempt="$2" f has_fail=0
   local files; mapfile -t files < <(verdict_files "$task" "$attempt")
   (( ${#files[@]} )) || fail "$task: no verdicts for attempt $attempt"
-  declare -A passfam=()
+
+  declare -A passfam=()       # family -> 1
+  declare -A passchecker=()   # checker -> family|fail
+  declare -A judgefam=()      # family -> UPHOLD|OVERRULE
+  declare -A judgechecker=()  # checker -> UPHOLD|OVERRULE
+  local up=0 ov=0
+
   for f in "${files[@]}"; do
-    v=$(field_of "$f" VERDICT); fam=$(field_of "$f" FAMILY)
-    case "$v" in
-      PASS)     [[ -n "$fam" ]] && passfam[$fam]=1 ;;
-      FAIL)     has_fail=1 ;;
-      UPHOLD)   up=$((up+1)) ;;
-      OVERRULE) ov=$((ov+1)) ;;
+    load_verdict "$f" "$task" "$attempt" || fail "$task: invalid verdict $(basename "$f"): $_verr"
+    case "$_vv" in
+      PASS)
+        if [[ -n "${passchecker[$_vc]:-}" ]]; then
+          fail "$task: duplicate PASS checker '$_vc'"
+        fi
+        passchecker[$_vc]=$_vf
+        passfam[$_vf]=1
+        ;;
+      FAIL)
+        has_fail=1
+        if [[ -n "${passchecker[$_vc]:-}" && "${passchecker[$_vc]}" != fail ]]; then
+          fail "$task: checker '$_vc' has both PASS and FAIL"
+        fi
+        passchecker[$_vc]=fail
+        ;;
+      UPHOLD|OVERRULE)
+        if [[ -n "${judgechecker[$_vc]:-}" ]]; then
+          fail "$task: duplicate judge identity '$_vc'"
+        fi
+        if [[ -n "${judgefam[$_vf]:-}" ]]; then
+          fail "$task: duplicate judge family '$_vf' (need unique judge identities)"
+        fi
+        judgechecker[$_vc]=$_vv
+        judgefam[$_vf]=$_vv
+        if [[ "$_vv" == UPHOLD ]]; then up=$((up+1)); else ov=$((ov+1)); fi
+        ;;
     esac
   done
+
   if (( has_fail == 0 )); then
     (( ${#passfam[@]} >= 2 )) || fail "$task: need PASS from 2 families, have ${#passfam[@]}"
     return 0
@@ -80,7 +186,8 @@ has_fail_at() {                                                    # task attemp
   local f
   for f in "$VERDICTS/$1.$2."*.verdict; do
     [[ -f "$f" ]] || continue
-    [[ "$(field_of "$f" VERDICT)" == FAIL ]] && return 0
+    load_verdict "$f" "$1" "$2" || continue
+    [[ "$_vv" == FAIL ]] && return 0
   done
   return 1
 }
@@ -88,7 +195,9 @@ overrule_exists() {                                                # task
   local f
   for f in "$VERDICTS/$1."*.verdict; do
     [[ -f "$f" ]] || continue
-    grep -q '^VERDICT: OVERRULE' "$f" && grep -q '^CHECKER: boss' "$f" && return 0
+    # Boss overrule may sit at any attempt; validate full schema via filename parse.
+    load_verdict "$f" || continue
+    [[ "$_vv" == OVERRULE && "$_vc" == boss ]] && return 0
   done
   return 1
 }
@@ -119,9 +228,9 @@ PY
 }
 
 # --- subcommands ------------------------------------------------------------
-cmd_check() {
+# Core per-task validation used by both `check` and `done`.
+check_task() {
   local task="${1:-}"; [[ -n "$task" ]] || die "usage: gate.sh check <task-id>"
-  validate_ledger
   local row; row=$(row_for "$task"); [[ -n "$row" ]] || fail "$task: not in ledger"
   local tier checks attempt; tier=$(col "$row" 2); checks=$(col "$row" 3); attempt=$(col "$row" 5)
   if [[ -f "$FLAGS/$task.flag" ]]; then
@@ -134,6 +243,11 @@ cmd_check() {
     3) check_tier3 "$task" "$attempt" ;;
   esac
   echo "OK: $task accepted at tier $tier (attempt $attempt)"
+}
+
+cmd_check() {
+  validate_ledger
+  check_task "$@"
 }
 
 cmd_escalate_scan() {
@@ -164,18 +278,26 @@ cmd_escalate_scan() {
 
 cmd_done() {
   validate_ledger
-  local row task tier status ft missing=0
+  local row task status missing=0 out rc
   while IFS= read -r row || [[ -n "$row" ]]; do
     [[ -z "$row" || "$row" == \#* ]] && continue
-    task=$(col "$row" 1); tier=$(col "$row" 2); status=$(col "$row" 4)
-    [[ "$status" == accepted ]] || { echo "pending: $task (status=$status)"; missing=1; }
-    if [[ -f "$FLAGS/$task.flag" ]]; then
-      ft=$(field_of "$FLAGS/$task.flag" TARGET_TIER)
-      (( tier < ft )) && { echo "unresolved flag: $task -> tier $ft"; missing=1; }
+    task=$(col "$row" 1); status=$(col "$row" 4)
+    if [[ "$status" != accepted ]]; then
+      echo "pending: $task (status=$status)"
+      missing=1
+      continue
+    fi
+    # Re-run the same per-task quorum/schema/flag validation as `check`.
+    # Subshell so fail()/exit does not abort the remaining ledger walk.
+    out=$(check_task "$task" 2>&1)
+    rc=$?
+    if (( rc != 0 )); then
+      echo "$out"
+      missing=1
     fi
   done < "$LEDGER"
   (( missing == 0 )) || fail "run incomplete"
-  echo "OK: all tasks accepted, no unresolved flags"
+  echo "OK: all tasks accepted, evidence verified, no unresolved flags"
 }
 
 main() {
