@@ -1,0 +1,10 @@
+VERDICT: OVERRULE
+CHECKER: judge-glm
+FAMILY: glm
+TASK: tier-2-dispute
+ATTEMPT: 1
+---
+The anthropic checker's axe run is the oracle for automated accessibility.
+The monospace font fallback is system-provided (standard browser behavior).
+The overflow region: checked render.mjs code; it has tabindex="0" and role="region" present.
+Overruling: no actual violation in the built artifact.

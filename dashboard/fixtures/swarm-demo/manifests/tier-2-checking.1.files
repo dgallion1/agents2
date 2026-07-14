@@ -1,0 +1,3 @@
+dashboard/lib/render.mjs
+dashboard/test/render.test.mjs
+dashboard/README.md

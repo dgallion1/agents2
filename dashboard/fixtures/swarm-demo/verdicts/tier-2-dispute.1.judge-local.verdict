@@ -1,0 +1,10 @@
+VERDICT: OVERRULE
+CHECKER: judge-local
+FAMILY: local
+TASK: tier-2-dispute
+ATTEMPT: 1
+---
+Evidence inspection: render.mjs calls container.setAttribute('role', 'region') and tabindex="0".
+Test on local node: scrollable, keyboard-operable, aria-label present on evidence blocks.
+Glm checker report appears to reference an earlier revision; artifact has shipped fixes.
+Overruling the FAIL.

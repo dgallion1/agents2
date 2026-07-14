@@ -1,0 +1,6 @@
+# Demo fixture for dashboard testing — exercises all task states
+tier-1-pass	1	a11y	accepted	1	worker-local	accepted after a11y checker PASS
+tier-2-checking	2	content,second	checking	1	worker-coder	waiting for second-family checker
+tier-2-dispute	2	content,second	checking	1	worker-coder	dispute: anthropic PASS vs glm FAIL, judges deciding
+tier-3-resolved	3	-	accepted	1	worker-coder	tier-3 with divergence report and RESOLUTION line
+tier-3-unresolved	3	-	checking	1	worker-local	tier-3 without RESOLUTION line, awaiting merged result

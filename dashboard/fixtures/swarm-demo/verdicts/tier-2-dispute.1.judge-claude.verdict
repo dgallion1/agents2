@@ -1,0 +1,9 @@
+VERDICT: UPHOLD
+CHECKER: judge-claude
+FAMILY: anthropic
+TASK: tier-2-dispute
+ATTEMPT: 1
+---
+The glm checker's evidence on accessibility is valid: scrollable container needs explicit role="region" and tabindex.
+The anthropic checker's axe run was clean, but axe cannot detect all overflow issues in SSE-updated regions.
+Upholding the FAIL: requires explicit scroll/keyboard handling in the evidence block.

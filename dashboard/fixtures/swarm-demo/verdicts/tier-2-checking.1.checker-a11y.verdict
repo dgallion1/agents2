@@ -1,0 +1,10 @@
+VERDICT: PASS
+CHECKER: checker-a11y
+FAMILY: anthropic
+TASK: tier-2-checking
+ATTEMPT: 1
+---
+axe core audit: 0 violations in dark mode, 0 in light mode.
+Keyboard navigation: all interactive elements reachable and operable.
+Focus indicators visible and meet 3:1 contrast in both themes.
+Task drawer opens and closes correctly.

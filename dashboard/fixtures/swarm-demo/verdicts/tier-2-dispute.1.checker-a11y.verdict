@@ -1,0 +1,10 @@
+VERDICT: PASS
+CHECKER: checker-a11y
+FAMILY: anthropic
+TASK: tier-2-dispute
+ATTEMPT: 1
+---
+axe: 0 violations in both themes.
+Contrast: all text meets AA in light (4.5:1) and dark (4.5:1).
+Status conveyed by icon + text, never color alone.
+Keyboard accessible and focus indicators visible.

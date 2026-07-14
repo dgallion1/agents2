@@ -1,0 +1,10 @@
+{"ts": 1752115200, "alias": "worker-local", "family": "local", "tier": 1, "task": "tier-1-pass", "prompt_tokens": 2840, "completion_tokens": 512, "cost_usd": 0}
+{"ts": 1752115300, "alias": "checker-a11y", "family": "anthropic", "tier": 1, "task": "tier-1-pass", "prompt_tokens": 1200, "completion_tokens": 140, "cost_usd": 0.0045}
+{"ts": 1752115400, "alias": "worker-coder", "family": "anthropic", "tier": 2, "task": "tier-2-checking", "prompt_tokens": 5600, "completion_tokens": 1840, "cost_usd": 0.0220}
+{"ts": 1752115500, "alias": "checker-a11y", "family": "anthropic", "tier": 2, "task": "tier-2-checking", "prompt_tokens": 1100, "completion_tokens": 150, "cost_usd": 0.0050}
+{"ts": 1752115600, "alias": "checker-second", "family": "glm", "tier": 2, "task": "tier-2-dispute", "prompt_tokens": 1050, "completion_tokens": 320, "cost_usd": 0.0035}
+{"ts": 1752115700, "alias": "judge-claude", "family": "anthropic", "tier": 2, "task": "tier-2-dispute", "prompt_tokens": 2100, "completion_tokens": 480, "cost_usd": 0.0098}
+{"ts": 1752115800, "alias": "judge-glm", "family": "glm", "tier": 2, "task": "tier-2-dispute", "prompt_tokens": 1900, "completion_tokens": 410, "cost_usd": 0.0062}
+{"ts": 1752115900, "alias": "judge-local", "family": "local", "tier": 2, "task": "tier-2-dispute", "prompt_tokens": 1680, "completion_tokens": 240, "cost_usd": 0}
+{"ts": 1752116000, "alias": "worker-coder", "family": "anthropic", "tier": 3, "task": "tier-3-resolved", "prompt_tokens": 7200, "completion_tokens": 2100, "cost_usd": 0.0310}
+{"ts": 1752116100, "alias": "worker-local", "family": "local", "tier": 3, "task": "tier-3-unresolved", "prompt_tokens": 6400, "completion_tokens": 1800, "cost_usd": 0}

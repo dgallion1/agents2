@@ -1,0 +1,9 @@
+VERDICT: FAIL
+CHECKER: checker-second
+FAMILY: glm
+TASK: tier-2-dispute
+ATTEMPT: 1
+---
+render.mjs: evidence block overflow not scrollable in all viewport sizes.
+Monospace font stack unavailable on test system; fallback needed.
+status-badge icon lacks accessible name in some verdicts.

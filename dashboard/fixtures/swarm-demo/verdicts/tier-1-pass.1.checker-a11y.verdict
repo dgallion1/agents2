@@ -1,0 +1,10 @@
+VERDICT: PASS
+CHECKER: checker-a11y
+FAMILY: anthropic
+TASK: tier-1-pass
+ATTEMPT: 1
+---
+axe: 0 violations in both light and dark mode.
+Contrast AA verified for all text and interactive elements.
+Landmarks present: header, main, footer.
+Heading structure correct (single h1, no skips).

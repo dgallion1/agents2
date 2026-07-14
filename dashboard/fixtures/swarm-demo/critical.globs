@@ -1,0 +1,6 @@
+litellm-config.yaml
+docker-compose.yaml
+.env
+swarm/**
+.claude/agents/**
+**/*.deploy.*
