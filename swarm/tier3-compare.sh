@@ -8,9 +8,25 @@ base="$SWARM_DIR/tier3/$task"
 oracle="$base/accept.sh"; report="$base/report.md"
 [[ -x "$oracle" || -f "$oracle" ]] || { echo "no oracle at $oracle" >&2; exit 2; }
 
-run_in() { ( cd "$1" && bash "$oracle" ) 2>&1; }
-og=$(run_in "$base/wt-glm");   rg=$?
-ol=$(run_in "$base/wt-local"); rl=$?
+# Worktrees live outside the repo (see tier3-setup.sh for why). Fall back to
+# the legacy in-repo location so runs started before that change still compare.
+repo_slug=$(basename "$(git rev-parse --show-toplevel)")
+WT_ROOT="${SWARM_WT_ROOT:-${TMPDIR:-/tmp}/swarm-worktrees/$repo_slug}"
+wt_for() {                                        # wt_for <fam>
+  if [[ -d "$WT_ROOT/$task/wt-$1" ]]; then echo "$WT_ROOT/$task/wt-$1"
+  else echo "$base/wt-$1"; fi
+}
+wt_glm=$(wt_for glm); wt_local=$(wt_for local)
+for d in "$wt_glm" "$wt_local"; do
+  [[ -d "$d" ]] || { echo "no worktree at $d — run tier3-setup.sh $task first" >&2; exit 2; }
+done
+
+# The oracle is referenced by a path relative to the repo, so resolve it to an
+# absolute path before cd'ing into a worktree that may live elsewhere.
+oracle_abs=$(cd "$(dirname "$oracle")" && pwd)/$(basename "$oracle")
+run_in() { ( cd "$1" && bash "$oracle_abs" ) 2>&1; }
+og=$(run_in "$wt_glm");   rg=$?
+ol=$(run_in "$wt_local"); rl=$?
 
 {
   echo "# Tier 3 divergence report — $task"
