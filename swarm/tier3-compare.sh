@@ -16,8 +16,8 @@ wt_for() {                                        # wt_for <fam>
   if [[ -d "$WT_ROOT/$task/wt-$1" ]]; then echo "$WT_ROOT/$task/wt-$1"
   else echo "$base/wt-$1"; fi
 }
-wt_glm=$(wt_for glm); wt_local=$(wt_for local)
-for d in "$wt_glm" "$wt_local"; do
+wt_primary=$(wt_for primary); wt_alt=$(wt_for alt)
+for d in "$wt_primary" "$wt_alt"; do
   [[ -d "$d" ]] || { echo "no worktree at $d — run tier3-setup.sh $task first" >&2; exit 2; }
 done
 
@@ -25,26 +25,26 @@ done
 # absolute path before cd'ing into a worktree that may live elsewhere.
 oracle_abs=$(cd "$(dirname "$oracle")" && pwd)/$(basename "$oracle")
 run_in() { ( cd "$1" && bash "$oracle_abs" ) 2>&1; }
-og=$(run_in "$wt_glm");   rg=$?
-ol=$(run_in "$wt_local"); rl=$?
+op=$(run_in "$wt_primary"); rp=$?
+oa=$(run_in "$wt_alt");     ra=$?
 
 {
   echo "# Tier 3 divergence report — $task"
   echo
   echo "| worktree | oracle exit |"
   echo "|----------|-------------|"
-  echo "| wt-glm   | $rg |"
-  echo "| wt-local | $rl |"
+  echo "| wt-primary | $rp |"
+  echo "| wt-alt     | $ra |"
   echo
-  if [[ "$og" == "$ol" && "$rg" == "$rl" ]]; then
+  if [[ "$op" == "$oa" && "$rg" == "$rl" ]]; then
     echo "## No behavioral divergence"
-    echo '```'; echo "$og"; echo '```'
+    echo '```'; echo "$op"; echo '```'
   else
     echo "## Divergence"
-    echo "### wt-glm output"; echo '```'; echo "$og"; echo '```'
-    echo "### wt-local output"; echo '```'; echo "$ol"; echo '```'
-    echo "### diff (glm vs local)"
-    echo '```diff'; diff <(printf '%s\n' "$og") <(printf '%s\n' "$ol"); echo '```'
+    echo "### wt-primary output"; echo '```'; echo "$op"; echo '```'
+    echo "### wt-alt output"; echo '```'; echo "$oa"; echo '```'
+    echo "### diff (primary vs alt)"
+    echo '```diff'; diff <(printf '%s\n' "$op") <(printf '%s\n' "$oa"); echo '```'
   fi
   echo
   echo "<!-- Boss: after adjudicating, append a line starting 'RESOLUTION:' -->"

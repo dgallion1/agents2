@@ -24,7 +24,7 @@ base="$SWARM_DIR/tier3/$task"; mkdir -p "$base"
 mkdir -p "$WT_ROOT/$task"
 
 head=$(git rev-parse HEAD)
-for fam in glm local; do
+for fam in primary alt; do
   wt="$WT_ROOT/$task/wt-$fam"; branch="tier3/$task/$fam"
   git worktree remove --force "$wt" 2>/dev/null || true
   # Clean up any worktree left at the old in-repo location too.

@@ -52,29 +52,46 @@ write verdict files. You read evidence and update ledger status only.
 Worker → the mechanical checker(s) named in the ledger `checks` column
 (`checker-content` and/or `checker-a11y`) → `gate.sh check` → accept.
 
-### Tier 2 — dual family + judge panel on disputes
-Worker builds once. Then two checkers run in parallel from different families:
-the relevant mechanical checker (Anthropic) **and** `checker-second` (GLM).
-Both must PASS. If they disagree (any FAIL), it is a dispute: dispatch all
-three judges — `judge-claude`, `judge-glm`, `judge-local` — each with the task,
-the work, the contested verdict + evidence, and the constitution. Majority
-OVERRULE accepts; majority UPHOLD sends the task back to the worker. Record the
-ruling in SPEC.md "Rulings". The gate enforces the vote count mechanically.
+### Tier 2 — two independence lanes + judge panel on disputes
+Worker builds once. Then two checkers run in parallel in **different
+independence lanes**: the relevant primary verifier (`checker-tests` for code,
+`checker-a11y` / `checker-content` for UI and content — lane `anthropic`) **and**
+`checker-second` (lane `adversarial`). Both must PASS.
+
+A lane is not a vendor. Every agent now runs on Claude, so the second opinion
+cannot come from a different training lineage; it comes from a different **job**
+and a different **model tier**. The primary verifier asks "does this meet the
+criteria?" and must cite the command proving each one. `checker-second` asks
+"what would make this wrong?", defaults to FAIL on ambiguity, and is performing
+its role badly if it never disagrees. Treat two PASSes as weaker evidence than
+the old cross-vendor pair did — this is a real reduction in independence,
+accepted deliberately (user decision 2026-08-19).
+
+If they disagree (any FAIL), it is a dispute: dispatch all three judges —
+`judge-claude` (primary lane), `judge-standards` (adversarial lane),
+`judge-impact` (user-impact lane) — each with the task, the work, the contested
+verdict + evidence, and the constitution. Majority OVERRULE accepts; majority
+UPHOLD sends the task back to the worker. Record the ruling in SPEC.md
+"Rulings". The gate enforces the vote count and the distinct-lane requirement
+mechanically.
 
 ### Tier 3 — blind N-version, then Tier 2
 1. Write **executable acceptance checks** as `.swarm/tier3/<task>/accept.sh`
    before dispatch — commands plus expected observations. This is the oracle.
 2. `swarm/tier3-setup.sh <task>` creates two isolated worktrees.
-3. Dispatch `worker-coder` (GLM) and `worker-local` (Qwen) with the identical
-   task block, in parallel, blind to each other, one per worktree.
+3. Dispatch `worker-coder` (Sonnet, worktree `wt-primary`) and `worker-local`
+   (Haiku, worktree `wt-alt`) with the identical task block, in parallel, blind
+   to each other. The two arms differ by model tier only, so N-version here
+   catches slips and misreadings rather than shared blind spots — weigh the
+   comparison accordingly.
 4. `swarm/tier3-compare.sh <task>` runs `accept.sh` in both and writes
    `.swarm/tier3/<task>/report.md` (per-check matrix + output diffs).
 5. Review **only the divergences**, pick a winner or synthesize, append a
    `RESOLUTION:` line to the report, and merge into the main tree.
 6. Run the Tier-2 dual-checker verification on the merged result as a **new
    attempt** (increment the ledger `attempt`; verdict files use that attempt
-   number). `gate.sh check` requires both the RESOLUTION line and dual-family
-   PASS at that attempt.
+   number). `gate.sh check` requires both the RESOLUTION line and a PASS
+   from each lane at that attempt.
 
 ### Disputes at Tier 1
 You adjudicate against the written documents (unchanged). Record an overrule by
@@ -94,4 +111,6 @@ gets checked by the same standard as worker code.
 ## Cost discipline
 - Lead session: judgment tier only (planning, specs, review, adjudication).
 - Do not use the lead model for mechanical tasks a worker can do.
-- Prefer `worker-local` when the task is high-volume, low-judgment.
+- Prefer `worker-local` (Haiku) when the task is high-volume, low-judgment.
+- All agents run on Claude; there is no gateway and no local endpoint. Model
+  choice per agent lives in `.claude/agents/*.md` frontmatter.

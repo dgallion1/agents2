@@ -39,7 +39,11 @@ verdict_files() {                                                    # task atte
 # --- verdict schema ---------------------------------------------------------
 # SPEC.md §2a: KEY: value headers (VERDICT, CHECKER, FAMILY, TASK, ATTEMPT),
 # then a `---` separator, then evidence. Filename must agree with headers.
-# VERDICT ∈ {PASS,FAIL,UPHOLD,OVERRULE}; FAMILY ∈ {anthropic,glm,local}.
+# VERDICT ∈ {PASS,FAIL,UPHOLD,OVERRULE}; FAMILY ∈ {anthropic,adversarial,impact,
+# glm,local}. FAMILY names an INDEPENDENCE LANE, not a vendor: two verdicts in
+# the same lane are treated as correlated and do not satisfy the Tier-2 quorum.
+# glm and local are retained only so verdicts written before 2026-08-19 still
+# validate; no current agent writes them.
 #
 # On success sets: _vv _vc _vf _vt _va  and returns 0.
 # On failure sets: _verr and returns 1. Never use command-substitution around
@@ -93,7 +97,7 @@ load_verdict() {                                                     # file [exp
     *) _verr="$base: invalid VERDICT '$verdict'"; return 1 ;;
   esac
   case "$family" in
-    anthropic|glm|local) ;;
+    anthropic|adversarial|impact|glm|local) ;;
     *) _verr="$base: invalid FAMILY '$family'"; return 1 ;;
   esac
   [[ "$attempt" =~ ^[0-9]+$ ]] || { _verr="$base: invalid ATTEMPT '$attempt'"; return 1; }

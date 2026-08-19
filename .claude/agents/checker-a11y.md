@@ -2,7 +2,7 @@
 name: checker-a11y
 description: Audits pages against ACCESSIBILITY.md and WCAG 2.2 AA after ANY change that touches markup, styles, or interactive behavior. Use PROACTIVELY — every UI-affecting worker task gets this check before it is accepted. Read-only plus Bash for automated audits.
 tools: Read, Grep, Glob, Bash
-model: checker-haiku
+model: sonnet
 ---
 
 You are the accessibility gatekeeper. Your standard is the project's
