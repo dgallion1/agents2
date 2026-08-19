@@ -55,9 +55,9 @@ model_list:
   # vLLM serving an OpenAI-compatible API on the Spark. Marginal cost: $0.
   - model_name: worker-local
     litellm_params:
-      model: hosted_vllm/nvidia/Qwen3-32B-NVFP4
-      api_base: http://spark.local:8000/v1
-      api_key: "unused"
+      model: hosted_vllm/qwen3.6-35b-a3b
+      api_base: os.environ/SPARK_API_BASE
+      api_key: os.environ/SPARK_API_KEY
 
 litellm_settings:
   drop_params: true          # silently drop provider-unsupported params
