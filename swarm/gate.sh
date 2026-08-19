@@ -205,6 +205,29 @@ overrule_exists() {                                                # task
   done
   return 1
 }
+# judges_overruled_at — 0 when a judge panel set aside the FAIL(s) at this
+# attempt. Uses the SAME quorum check_tier2 uses to accept a disputed attempt
+# (>=3 judge verdicts, strict OVERRULE majority), so the two halves of this
+# tool cannot disagree about whether an attempt failed.
+judges_overruled_at() {                                            # task attempt
+  local f up=0 ov=0
+  for f in "$VERDICTS/$1.$2."*.verdict; do
+    [[ -f "$f" ]] || continue
+    load_verdict "$f" "$1" "$2" || continue
+    case "$_vv" in
+      UPHOLD)   up=$((up+1)) ;;
+      OVERRULE) ov=$((ov+1)) ;;
+    esac
+  done
+  (( up + ov >= 3 && ov > up ))
+}
+# unresolved_fail_at — 0 when this attempt has a FAIL that no judge panel set
+# aside. This is what "the task failed at attempt N" means for escalation.
+unresolved_fail_at() {                                             # task attempt
+  has_fail_at "$1" "$2" || return 1
+  judges_overruled_at "$1" "$2" && return 1
+  return 0
+}
 manifest_hits_glob() {                                             # task -> 0 if any path matches any glob
   [[ -f "$GLOBS" ]] || return 1
   local mans=() m
@@ -262,7 +285,7 @@ cmd_escalate_scan() {
     [[ -z "$row" || "$row" == \#* ]] && continue
     task=$(col "$row" 1); tier=$(col "$row" 2); attempt=$(col "$row" 5)
     reasons=""
-    if (( attempt >= 1 )) && has_fail_at "$task" "$attempt" && has_fail_at "$task" "$((attempt-1))"; then
+    if (( attempt >= 1 )) && unresolved_fail_at "$task" "$attempt" && unresolved_fail_at "$task" "$((attempt-1))"; then
       reasons+="two-consecutive-fails "
     fi
     overrule_exists "$task"    && reasons+="checker-overruled "
