@@ -33,7 +33,13 @@ row_for()  { awk -F'\t' -v t="$1" '$1==t{print; exit}' "$LEDGER"; }
 col()      { cut -f"$2" <<<"$1"; }                                   # col "<row>" N
 field_of() { grep -m1 "^$2:" "$1" 2>/dev/null | sed "s/^$2:[[:space:]]*//"; }
 verdict_files() {                                                    # task attempt
-  shopt -s nullglob; local f=("$VERDICTS/$1.$2."*.verdict); printf '%s\n' "${f[@]}"
+  # Print nothing when the glob matches nothing: printf on an empty array
+  # still emits one empty line, which the caller would mapfile into a
+  # phantom entry and then report as "invalid verdict: missing file"
+  # instead of the accurate "no verdicts for attempt N".
+  shopt -s nullglob; local f=("$VERDICTS/$1.$2."*.verdict)
+  (( ${#f[@]} )) || return 0
+  printf '%s\n' "${f[@]}"
 }
 
 # --- verdict schema ---------------------------------------------------------
