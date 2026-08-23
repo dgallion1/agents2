@@ -260,15 +260,85 @@ sys.exit(1)
 PY
 }
 
+# --- no-change terminal status ----------------------------------------------
+# no-change is terminal ONLY when the reason is audit-traceable (points at a
+# written SPEC.md note or a dated ruling, matched as a hyphen-delimited TOKEN
+# sequence, not a bare substring — "unsee-SPECIAL" must not count as
+# "see-SPEC") AND no verdict was EVER written for this task, at ANY attempt
+# (not just the attempt currently named in the ledger — bumping that column
+# must not launder a real FAIL sitting on disk at an older attempt). A row
+# that was actually checked (verdict files exist at any attempt) must not be
+# closed as no-change — that would let a written FAIL be dodged by relabeling
+# the row, so it fails loudly instead.
+nochange_reason_ok() {                                              # reason -> 0/1
+  local reason="$1" i n
+  local -a tok
+  IFS='-' read -ra tok <<<"$reason"
+  n=${#tok[@]}
+  for (( i=0; i+1<n; i++ )); do
+    [[ "${tok[i]}" == see && "${tok[i+1]}" == SPEC ]] && return 0
+  done
+  for (( i=0; i+3<n; i++ )); do
+    [[ "${tok[i]}" == ruling ]] || continue
+    local yyyy="${tok[i+1]}" mm="${tok[i+2]}" ddsuf="${tok[i+3]}"
+    [[ "$yyyy" =~ ^[0-9]{4}$ ]]                              || continue
+    [[ "$mm" =~ ^(0[1-9]|1[0-2])$ ]]                         || continue
+    [[ "$ddsuf" =~ ^(0[1-9]|[12][0-9]|3[01])[a-z]?$ ]]       || continue
+    return 0
+  done
+  return 1
+}
+any_verdict_exists() {                                              # task -> 0/1
+  # The "$1."* glob is a superset prefix match, not a task-id boundary: it
+  # also catches files belonging to a sibling task where one task id is a
+  # dot-prefix of the other (task "A" vs "A.1", in both directions). Confirm
+  # ownership with load_verdict's own best-effort <task>.<attempt>.<checker>
+  # parse (the same one filenameless calls like overrule_exists rely on)
+  # rather than trusting the glob alone. A file the parser cannot make sense
+  # of at all still blocks, conservatively, since we cannot rule it out.
+  local f
+  for f in "$VERDICTS/$1."*.verdict; do
+    [[ -f "$f" ]] || continue
+    if load_verdict "$f"; then
+      [[ "$_vt" == "$1" ]] && return 0
+    else
+      return 0
+    fi
+  done
+  return 1
+}
+check_no_change() {                                                  # task attempt reason
+  local task="$1" reason="$3"
+  any_verdict_exists "$task" && \
+    fail "$task: status=no-change but a verdict file exists for this task (some attempt) — this row was checked, no-change is the wrong status"
+  nochange_reason_ok "$reason" || \
+    fail "$task: no-change reason '$reason' lacks audit-traceable justification (need see-SPEC or ruling-YYYY-MM-DD as tokens)"
+  echo "no-change: $task ($reason)"
+}
+
 # --- subcommands ------------------------------------------------------------
 # Core per-task validation used by both `check` and `done`.
 check_task() {
   local task="${1:-}"; [[ -n "$task" ]] || die "usage: gate.sh check <task-id>"
   local row; row=$(row_for "$task"); [[ -n "$row" ]] || fail "$task: not in ledger"
-  local tier checks attempt; tier=$(col "$row" 2); checks=$(col "$row" 3); attempt=$(col "$row" 5)
+  local tier checks status attempt reason
+  tier=$(col "$row" 2); checks=$(col "$row" 3); status=$(col "$row" 4)
+  attempt=$(col "$row" 5); reason=$(col "$row" 7)
+  # The escalation flag is not a tier check — it applies to every status,
+  # no-change included. Checking it first means a row already flagged for
+  # mandatory re-verification (two-consecutive-fails / checker-overruled /
+  # critical-glob) cannot be closed out from under the flag by relabeling it
+  # no-change; the gate would otherwise report "no unresolved flags" while
+  # one sits unread on disk.
   if [[ -f "$FLAGS/$task.flag" ]]; then
     local target; target=$(field_of "$FLAGS/$task.flag" TARGET_TIER)
     (( tier < target )) && fail "$task: escalation pending — bump tier to $target then re-verify"
+  fi
+  if [[ "$status" == no-change ]]; then
+    # Terminal status: never runs through check_tier1/2/3, which demand
+    # verdict files this row legitimately does not have.
+    check_no_change "$task" "$attempt" "$reason"
+    return 0
   fi
   case "$tier" in
     1) check_tier1 "$task" "$attempt" "$checks" ;;
@@ -315,18 +385,23 @@ cmd_done() {
   while IFS= read -r row || [[ -n "$row" ]]; do
     [[ -z "$row" || "$row" == \#* ]] && continue
     task=$(col "$row" 1); status=$(col "$row" 4)
-    if [[ "$status" != accepted ]]; then
+    if [[ "$status" != accepted && "$status" != no-change ]]; then
       echo "pending: $task (status=$status)"
       missing=1
       continue
     fi
-    # Re-run the same per-task quorum/schema/flag validation as `check`.
+    # Re-run the same per-task quorum/schema/flag/no-change validation as
+    # `check`, so the two subcommands cannot disagree about a row's fate.
     # Subshell so fail()/exit does not abort the remaining ledger walk.
     out=$(check_task "$task" 2>&1)
     rc=$?
     if (( rc != 0 )); then
       echo "$out"
       missing=1
+    elif [[ "$status" == no-change ]]; then
+      # Never silent: a terminal no-change row must still be visible in the
+      # `done` output even though it earned no verdict.
+      echo "$out"
     fi
   done < "$LEDGER"
   (( missing == 0 )) || fail "run incomplete"
