@@ -74,4 +74,34 @@ mkverdict "$sd" e8 0 judge-local  UPHOLD   local
 run_gate "$sd" escalate-scan
 assert_nofile "judge-panel OVERRULE does not escalate (only boss overrule does)" "$sd/flags/e8.flag"
 
+# E9: a manifest of ONLY test files under a critical glob must NOT escalate,
+# with an explicit test.globs file present.
+sd=$(newswarm)
+mkledger "$sd" 'e9\t1\tcontent\tverifying\t0\tw\t-\n'
+printf 'internal/services/storage/**\n' > "$sd/critical.globs"
+printf '**/*_test.go\n' > "$sd/test.globs"
+printf 'internal/services/storage/foo_test.go\ninternal/services/storage/bar_test.go\n' > "$sd/manifests/e9.0.files"
+run_gate "$sd" escalate-scan
+assert_nofile "test-only manifest under critical glob does not escalate" "$sd/flags/e9.flag"
+
+# E10: a mix of one production file and one test file under the same critical
+# glob must STILL escalate -- a test glob only exempts the test path, not the
+# whole manifest, so adding a test file cannot buy an exemption.
+sd=$(newswarm)
+mkledger "$sd" 'e10\t1\tcontent\tverifying\t0\tw\t-\n'
+printf 'internal/services/storage/**\n' > "$sd/critical.globs"
+printf '**/*_test.go\n' > "$sd/test.globs"
+printf 'internal/services/storage/migration.go\ninternal/services/storage/migration_test.go\n' > "$sd/manifests/e10.0.files"
+run_gate "$sd" escalate-scan
+assert_file "mixed production+test manifest still escalates" "$sd/flags/e10.flag"
+
+# E11: with NO test.globs file present, the compiled-in default list still
+# exempts a *_test.go path under a critical glob (fallback behaviour).
+sd=$(newswarm)
+mkledger "$sd" 'e11\t1\tcontent\tverifying\t0\tw\t-\n'
+printf 'internal/services/storage/**\n' > "$sd/critical.globs"
+printf 'internal/services/storage/foo_test.go\n' > "$sd/manifests/e11.0.files"
+run_gate "$sd" escalate-scan
+assert_nofile "default test-glob fallback exempts *_test.go with no test.globs file" "$sd/flags/e11.flag"
+
 finish

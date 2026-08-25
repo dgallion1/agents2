@@ -11,6 +11,18 @@ VERDICTS="$SWARM_DIR/verdicts"
 MANIFESTS="$SWARM_DIR/manifests"
 FLAGS="$SWARM_DIR/flags"
 GLOBS="$SWARM_DIR/critical.globs"
+TESTGLOBS="$SWARM_DIR/test.globs"
+# Fallback used ONLY when $SWARM_DIR/test.globs is absent, so an existing
+# .swarm directory keeps working (test-code exemption still applies) without
+# being edited. If test.globs exists, its contents are used instead and this
+# list is ignored entirely.
+DEFAULT_TEST_GLOBS='**/*_test.go
+**/*_test.py
+**/test_*.py
+**/*.test.ts
+**/*.spec.ts
+smoketest/**
+tests/**'
 
 die()  { echo "gate: $*" >&2; exit 2; }
 fail() { echo "FAIL: $*"; exit 1; }
@@ -234,16 +246,31 @@ unresolved_fail_at() {                                             # task attemp
   judges_overruled_at "$1" "$2" && return 1
   return 0
 }
-manifest_hits_glob() {                                             # task -> 0 if any path matches any glob
+manifest_hits_glob() {                # task -> 0 if any NON-TEST path matches a critical glob
+  # A path counts toward escalation only when it matches critical.globs AND
+  # matches no test.globs entry. One production-file match is enough to
+  # escalate even when the same manifest also contains test files — a test
+  # glob only exempts the test path itself, never the whole manifest.
   [[ -f "$GLOBS" ]] || return 1
   local mans=() m
   for m in "$MANIFESTS/$1."*.files; do [[ -f "$m" ]] && mans+=("$m"); done
   (( ${#mans[@]} )) || return 1
-  python3 - "$GLOBS" "${mans[@]}" <<'PY'
+  local tglobs_file tmp_tglobs=""
+  if [[ -f "$TESTGLOBS" ]]; then
+    tglobs_file="$TESTGLOBS"
+  else
+    tmp_tglobs=$(mktemp)
+    printf '%s\n' "$DEFAULT_TEST_GLOBS" > "$tmp_tglobs"
+    tglobs_file="$tmp_tglobs"
+  fi
+  python3 - "$GLOBS" "$tglobs_file" "${mans[@]}" <<'PY'
 import sys, fnmatch
-globs=[l.strip() for l in open(sys.argv[1]) if l.strip() and not l.startswith('#')]
+def load(path):
+    return [l.strip() for l in open(path) if l.strip() and not l.startswith('#')]
+critical = load(sys.argv[1])
+testglobs = load(sys.argv[2])
 paths=[]
-for p in sys.argv[2:]:
+for p in sys.argv[3:]:
     paths += [l.strip() for l in open(p) if l.strip()]
 def matches(path, g):
     cands = {g}
@@ -252,12 +279,16 @@ def matches(path, g):
     if '/**' in g:
         cands.add(g.replace('/**', '/*'))
     return any(fnmatch.fnmatch(path, c) for c in cands)
+def matches_any(path, globs):
+    return any(matches(path, g) for g in globs)
 for path in paths:
-    for g in globs:
-        if matches(path, g):
-            sys.exit(0)
+    if matches_any(path, critical) and not matches_any(path, testglobs):
+        sys.exit(0)
 sys.exit(1)
 PY
+  local rc=$?
+  [[ -n "$tmp_tglobs" ]] && rm -f "$tmp_tglobs"
+  return $rc
 }
 
 # --- no-change terminal status ----------------------------------------------
