@@ -36,7 +36,7 @@ oa=$(run_in "$wt_alt");     ra=$?
   echo "| wt-primary | $rp |"
   echo "| wt-alt     | $ra |"
   echo
-  if [[ "$op" == "$oa" && "$rg" == "$rl" ]]; then
+  if [[ "$op" == "$oa" && "$rp" == "$ra" ]]; then
     echo "## No behavioral divergence"
     echo '```'; echo "$op"; echo '```'
   else

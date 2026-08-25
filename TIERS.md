@@ -35,6 +35,19 @@ src/auth/**
 db/migrations/**
 ```
 
+A manifest path only forces escalation when it matches `critical.globs` **and
+is not test code** — a change to `src/payments/foo_test.go` alone does not
+escalate, but a change to `src/payments/foo.go` alone does, and a manifest
+mixing the two still escalates (one production-file match is enough; a test
+file cannot buy an exemption for the rest of the manifest). What counts as
+test code is `.swarm/test.globs`, in the same one-glob-per-line format. If
+that file is absent, gate.sh falls back to a compiled-in default list
+(`**/*_test.go`, `**/*_test.py`, `**/test_*.py`, `**/*.test.ts`,
+`**/*.spec.ts`, `smoketest/**`, `tests/**`), so an existing `.swarm` directory
+keeps working unedited. This exemption is path-based only — it does not
+inspect diff content, so a comment-only change to a production file still
+escalates.
+
 ## Phase 0 output
 
 In SPEC.md's task table, add a **Tier** column with a one-line justification

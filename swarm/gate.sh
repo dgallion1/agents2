@@ -11,6 +11,18 @@ VERDICTS="$SWARM_DIR/verdicts"
 MANIFESTS="$SWARM_DIR/manifests"
 FLAGS="$SWARM_DIR/flags"
 GLOBS="$SWARM_DIR/critical.globs"
+TESTGLOBS="$SWARM_DIR/test.globs"
+# Fallback used ONLY when $SWARM_DIR/test.globs is absent, so an existing
+# .swarm directory keeps working (test-code exemption still applies) without
+# being edited. If test.globs exists, its contents are used instead and this
+# list is ignored entirely.
+DEFAULT_TEST_GLOBS='**/*_test.go
+**/*_test.py
+**/test_*.py
+**/*.test.ts
+**/*.spec.ts
+smoketest/**
+tests/**'
 
 die()  { echo "gate: $*" >&2; exit 2; }
 fail() { echo "FAIL: $*"; exit 1; }
@@ -33,7 +45,13 @@ row_for()  { awk -F'\t' -v t="$1" '$1==t{print; exit}' "$LEDGER"; }
 col()      { cut -f"$2" <<<"$1"; }                                   # col "<row>" N
 field_of() { grep -m1 "^$2:" "$1" 2>/dev/null | sed "s/^$2:[[:space:]]*//"; }
 verdict_files() {                                                    # task attempt
-  shopt -s nullglob; local f=("$VERDICTS/$1.$2."*.verdict); printf '%s\n' "${f[@]}"
+  # Print nothing when the glob matches nothing: printf on an empty array
+  # still emits one empty line, which the caller would mapfile into a
+  # phantom entry and then report as "invalid verdict: missing file"
+  # instead of the accurate "no verdicts for attempt N".
+  shopt -s nullglob; local f=("$VERDICTS/$1.$2."*.verdict)
+  (( ${#f[@]} )) || return 0
+  printf '%s\n' "${f[@]}"
 }
 
 # --- verdict schema ---------------------------------------------------------
@@ -228,16 +246,31 @@ unresolved_fail_at() {                                             # task attemp
   judges_overruled_at "$1" "$2" && return 1
   return 0
 }
-manifest_hits_glob() {                                             # task -> 0 if any path matches any glob
+manifest_hits_glob() {                # task -> 0 if any NON-TEST path matches a critical glob
+  # A path counts toward escalation only when it matches critical.globs AND
+  # matches no test.globs entry. One production-file match is enough to
+  # escalate even when the same manifest also contains test files — a test
+  # glob only exempts the test path itself, never the whole manifest.
   [[ -f "$GLOBS" ]] || return 1
   local mans=() m
   for m in "$MANIFESTS/$1."*.files; do [[ -f "$m" ]] && mans+=("$m"); done
   (( ${#mans[@]} )) || return 1
-  python3 - "$GLOBS" "${mans[@]}" <<'PY'
+  local tglobs_file tmp_tglobs=""
+  if [[ -f "$TESTGLOBS" ]]; then
+    tglobs_file="$TESTGLOBS"
+  else
+    tmp_tglobs=$(mktemp)
+    printf '%s\n' "$DEFAULT_TEST_GLOBS" > "$tmp_tglobs"
+    tglobs_file="$tmp_tglobs"
+  fi
+  python3 - "$GLOBS" "$tglobs_file" "${mans[@]}" <<'PY'
 import sys, fnmatch
-globs=[l.strip() for l in open(sys.argv[1]) if l.strip() and not l.startswith('#')]
+def load(path):
+    return [l.strip() for l in open(path) if l.strip() and not l.startswith('#')]
+critical = load(sys.argv[1])
+testglobs = load(sys.argv[2])
 paths=[]
-for p in sys.argv[2:]:
+for p in sys.argv[3:]:
     paths += [l.strip() for l in open(p) if l.strip()]
 def matches(path, g):
     cands = {g}
@@ -246,12 +279,72 @@ def matches(path, g):
     if '/**' in g:
         cands.add(g.replace('/**', '/*'))
     return any(fnmatch.fnmatch(path, c) for c in cands)
+def matches_any(path, globs):
+    return any(matches(path, g) for g in globs)
 for path in paths:
-    for g in globs:
-        if matches(path, g):
-            sys.exit(0)
+    if matches_any(path, critical) and not matches_any(path, testglobs):
+        sys.exit(0)
 sys.exit(1)
 PY
+  local rc=$?
+  [[ -n "$tmp_tglobs" ]] && rm -f "$tmp_tglobs"
+  return $rc
+}
+
+# --- no-change terminal status ----------------------------------------------
+# no-change is terminal ONLY when the reason is audit-traceable (points at a
+# written SPEC.md note or a dated ruling, matched as a hyphen-delimited TOKEN
+# sequence, not a bare substring — "unsee-SPECIAL" must not count as
+# "see-SPEC") AND no verdict was EVER written for this task, at ANY attempt
+# (not just the attempt currently named in the ledger — bumping that column
+# must not launder a real FAIL sitting on disk at an older attempt). A row
+# that was actually checked (verdict files exist at any attempt) must not be
+# closed as no-change — that would let a written FAIL be dodged by relabeling
+# the row, so it fails loudly instead.
+nochange_reason_ok() {                                              # reason -> 0/1
+  local reason="$1" i n
+  local -a tok
+  IFS='-' read -ra tok <<<"$reason"
+  n=${#tok[@]}
+  for (( i=0; i+1<n; i++ )); do
+    [[ "${tok[i]}" == see && "${tok[i+1]}" == SPEC ]] && return 0
+  done
+  for (( i=0; i+3<n; i++ )); do
+    [[ "${tok[i]}" == ruling ]] || continue
+    local yyyy="${tok[i+1]}" mm="${tok[i+2]}" ddsuf="${tok[i+3]}"
+    [[ "$yyyy" =~ ^[0-9]{4}$ ]]                              || continue
+    [[ "$mm" =~ ^(0[1-9]|1[0-2])$ ]]                         || continue
+    [[ "$ddsuf" =~ ^(0[1-9]|[12][0-9]|3[01])[a-z]?$ ]]       || continue
+    return 0
+  done
+  return 1
+}
+any_verdict_exists() {                                              # task -> 0/1
+  # The "$1."* glob is a superset prefix match, not a task-id boundary: it
+  # also catches files belonging to a sibling task where one task id is a
+  # dot-prefix of the other (task "A" vs "A.1", in both directions). Confirm
+  # ownership with load_verdict's own best-effort <task>.<attempt>.<checker>
+  # parse (the same one filenameless calls like overrule_exists rely on)
+  # rather than trusting the glob alone. A file the parser cannot make sense
+  # of at all still blocks, conservatively, since we cannot rule it out.
+  local f
+  for f in "$VERDICTS/$1."*.verdict; do
+    [[ -f "$f" ]] || continue
+    if load_verdict "$f"; then
+      [[ "$_vt" == "$1" ]] && return 0
+    else
+      return 0
+    fi
+  done
+  return 1
+}
+check_no_change() {                                                  # task attempt reason
+  local task="$1" reason="$3"
+  any_verdict_exists "$task" && \
+    fail "$task: status=no-change but a verdict file exists for this task (some attempt) — this row was checked, no-change is the wrong status"
+  nochange_reason_ok "$reason" || \
+    fail "$task: no-change reason '$reason' lacks audit-traceable justification (need see-SPEC or ruling-YYYY-MM-DD as tokens)"
+  echo "no-change: $task ($reason)"
 }
 
 # --- subcommands ------------------------------------------------------------
@@ -259,10 +352,24 @@ PY
 check_task() {
   local task="${1:-}"; [[ -n "$task" ]] || die "usage: gate.sh check <task-id>"
   local row; row=$(row_for "$task"); [[ -n "$row" ]] || fail "$task: not in ledger"
-  local tier checks attempt; tier=$(col "$row" 2); checks=$(col "$row" 3); attempt=$(col "$row" 5)
+  local tier checks status attempt reason
+  tier=$(col "$row" 2); checks=$(col "$row" 3); status=$(col "$row" 4)
+  attempt=$(col "$row" 5); reason=$(col "$row" 7)
+  # The escalation flag is not a tier check — it applies to every status,
+  # no-change included. Checking it first means a row already flagged for
+  # mandatory re-verification (two-consecutive-fails / checker-overruled /
+  # critical-glob) cannot be closed out from under the flag by relabeling it
+  # no-change; the gate would otherwise report "no unresolved flags" while
+  # one sits unread on disk.
   if [[ -f "$FLAGS/$task.flag" ]]; then
     local target; target=$(field_of "$FLAGS/$task.flag" TARGET_TIER)
     (( tier < target )) && fail "$task: escalation pending — bump tier to $target then re-verify"
+  fi
+  if [[ "$status" == no-change ]]; then
+    # Terminal status: never runs through check_tier1/2/3, which demand
+    # verdict files this row legitimately does not have.
+    check_no_change "$task" "$attempt" "$reason"
+    return 0
   fi
   case "$tier" in
     1) check_tier1 "$task" "$attempt" "$checks" ;;
@@ -309,18 +416,23 @@ cmd_done() {
   while IFS= read -r row || [[ -n "$row" ]]; do
     [[ -z "$row" || "$row" == \#* ]] && continue
     task=$(col "$row" 1); status=$(col "$row" 4)
-    if [[ "$status" != accepted ]]; then
+    if [[ "$status" != accepted && "$status" != no-change ]]; then
       echo "pending: $task (status=$status)"
       missing=1
       continue
     fi
-    # Re-run the same per-task quorum/schema/flag validation as `check`.
+    # Re-run the same per-task quorum/schema/flag/no-change validation as
+    # `check`, so the two subcommands cannot disagree about a row's fate.
     # Subshell so fail()/exit does not abort the remaining ledger walk.
     out=$(check_task "$task" 2>&1)
     rc=$?
     if (( rc != 0 )); then
       echo "$out"
       missing=1
+    elif [[ "$status" == no-change ]]; then
+      # Never silent: a terminal no-change row must still be visible in the
+      # `done` output even though it earned no verdict.
+      echo "$out"
     fi
   done < "$LEDGER"
   (( missing == 0 )) || fail "run incomplete"
