@@ -3,7 +3,7 @@
 set -u
 root="$(cd "$(dirname "$0")/.." && pwd)"
 fail=0
-for f in README.md CLAUDE.md litellm-config.yaml docker-compose.yaml \
+for f in README.md CLAUDE.md TIERS.md swarm/gate.sh \
          .claude/agents/worker-coder.md .claude/agents/worker-local.md \
          .claude/agents/checker-content.md .claude/agents/checker-a11y.md \
          .gitignore; do
