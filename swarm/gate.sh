@@ -197,10 +197,23 @@ check_tier2() {                                                      # task atte
   (( ov > up ))      || fail "$task: judges upheld the FAIL ($ov overrule / $up uphold)"
 }
 check_tier3() {                                                     # task attempt
-  local task="$1" attempt="$2" rep="$SWARM_DIR/tier3/$1/report.md"
-  [[ -f "$rep" ]]                 || fail "$task: no divergence report at $rep"
-  grep -q '^RESOLUTION:' "$rep"   || fail "$task: report has no RESOLUTION line"
-  check_tier2 "$task" "$attempt"                                    # merged result still needs dual-family PASS
+  local task="$1" attempt="$2" dir="$SWARM_DIR/tier3/$1"
+  local rep="$dir/report.md" oracle="$dir/accept.sh" olog="$dir/oracle.$attempt.log"
+  if [[ -f "$rep" ]]; then
+    # Legacy blind-arm contract (runs recorded before 2026-08-26): a
+    # divergence report with a RESOLUTION line.
+    grep -q '^RESOLUTION:' "$rep" || fail "$task: report has no RESOLUTION line"
+  else
+    # Oracle-first contract (user decision 2026-08-26, CLAUDE.md Tier 3):
+    # an executable acceptance oracle, plus a logged passing run at THIS
+    # attempt. The lead runs the oracle and tees the log; the log's last
+    # line must be the oracle's own ORACLE PASS marker.
+    [[ -f "$oracle" ]] || fail "$task: no tier-3 oracle at $oracle (and no legacy report.md)"
+    [[ -x "$oracle" ]] || fail "$task: tier-3 oracle $oracle is not executable"
+    [[ -f "$olog" ]]   || fail "$task: no oracle run log at $olog (run accept.sh and tee the log)"
+    [[ "$(tail -n1 "$olog")" == "ORACLE PASS" ]] || fail "$task: $olog does not end with ORACLE PASS"
+  fi
+  check_tier2 "$task" "$attempt"                                    # result still needs dual-lane PASS
 }
 
 # --- escalation helpers -----------------------------------------------------
