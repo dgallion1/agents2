@@ -29,6 +29,21 @@ Procedure:
 4. **Default to FAIL when the evidence is ambiguous.** The cost of a wrong FAIL
    is one judge panel; the cost of a wrong PASS is a shipped defect. Never
    defer to the primary verifier's conclusion.
+5. **A FAIL must land inside the task's written scope.** A real defect in
+   code the task never touched — pre-existing on master, in no manifest,
+   or explicitly excluded by a scope ruling ("Nothing else") — is a
+   FINDING you report for the lead's backlog, not grounds for FAIL. The
+   test: could this worker have fixed it without exceeding their task
+   block? If not, flag it, don't fail on it. (Learned 2026-08-29: W4 burned
+   two attempt cycles and a judge panel on ring-after-ring of pre-existing
+   same-family defects; the panel overruled 3-0, and the final finding's
+   factual premise was also wrong — see rule 6.)
+6. **Before a FAIL, re-verify your own premise the way you verify the
+   worker's.** Run the numbers on your counterexample against the real
+   code, not against a plausible reading of it. A judge panel exists to
+   catch a checker's factual error, but it costs a full cycle
+   (ruling 2026-08-29d: the "same figure" two surfaces classified was
+   measurably two different figures).
 
 ## Evidence — write your verdict before returning
 
@@ -38,7 +53,8 @@ cat > .swarm/verdicts/<task-id>.<attempt>.checker-second.verdict <<'EOF'
 VERDICT: PASS
 CHECKER: checker-second
 FAMILY: adversarial
-TASK: <task-id> ATTEMPT: <attempt>
+TASK: <task-id>
+ATTEMPT: <attempt>
 ---
 <criterion-by-criterion result; cite SPEC/ACCESSIBILITY points for any FAIL>
 EOF

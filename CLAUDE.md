@@ -75,23 +75,61 @@ UPHOLD sends the task back to the worker. Record the ruling in SPEC.md
 "Rulings". The gate enforces the vote count and the distinct-lane requirement
 mechanically.
 
-### Tier 3 — blind N-version, then Tier 2
+### Tier 3 — oracle-first, then Tier 2
+Blind N-version was dropped (user decision 2026-08-26): across the budget2
+runs the two arms' oracle scores were identical every time real divergence
+existed, both arms inherited the brief's errors, and every Tier-3 catch came
+from the oracle or the Tier-2 pass that followed — not from the comparison.
+What remains is the oracle discipline:
 1. Write **executable acceptance checks** as `.swarm/tier3/<task>/accept.sh`
    before dispatch — commands plus expected observations. This is the oracle.
-2. `swarm/tier3-setup.sh <task>` creates two isolated worktrees.
-3. Dispatch `worker-coder` (Sonnet, worktree `wt-primary`) and `worker-local`
-   (Haiku, worktree `wt-alt`) with the identical task block, in parallel, blind
-   to each other. The two arms differ by model tier only, so N-version here
-   catches slips and misreadings rather than shared blind spots — weigh the
-   comparison accordingly.
-4. `swarm/tier3-compare.sh <task>` runs `accept.sh` in both and writes
-   `.swarm/tier3/<task>/report.md` (per-check matrix + output diffs).
-5. Review **only the divergences**, pick a winner or synthesize, append a
-   `RESOLUTION:` line to the report, and merge into the main tree.
-6. Run the Tier-2 dual-checker verification on the merged result as a **new
-   attempt** (increment the ledger `attempt`; verdict files use that attempt
-   number). `gate.sh check` requires both the RESOLUTION line and a PASS
-   from each lane at that attempt.
+   It must assert on the observable output of **every existing consumer** of
+   any data the task touches, and be validated at both ends before dispatch
+   (a featureless tree must fail it; the spec's own examples must pass it).
+2. Dispatch a single `worker-coder` with the task block.
+3. Run `accept.sh` against the result. Any failure goes back to the worker as
+   a failed attempt.
+4. Run the Tier-2 dual-checker verification (both lanes, judge panel on
+   disputes). `gate.sh check` requires a PASS from each lane at the current
+   attempt.
+
+### Disputes in practice (2026-08-29, first panel use)
+- The lead may CONCEDE an uncontested FAIL — treating it as an implicit
+  UPHOLD and sending the task straight back to the worker — when the lead
+  agrees the defect is real and in-scope. Reserve the three-judge panel for
+  verdicts the lead would overrule; dispatching judges to rubber-stamp a
+  FAIL you believe wastes a cycle.
+- **The scope of a reopened attempt governs its acceptance.** When the user
+  reopens a hard-stopped task with an explicit scope ("Nothing else"), that
+  later, specific ruling controls over any earlier general ruling. Checkers
+  report beyond-scope findings as observations for the backlog; they do not
+  FAIL on them (ruling 2026-08-29c/d precedent).
+- Judges verify the contested verdict's FACTUAL premise first — a FAIL can
+  simply be wrong (2026-08-29d: the claimed same-figure contradiction was
+  two different figures).
+
+### Oracle calibration (additions to the both-ends rule)
+- Validate every check for the RIGHT failure: at the fail end, confirm the
+  failing check is the defect, not a harness error; at the pass end, use a
+  throwaway prototype, then discard it.
+- Calibrate assertions against MASTER's own rendering first: html/template
+  strips HTML comments (don't anchor on them); whitespace-only lines and
+  permanently-tinted sibling elements may be master-native — pin counts
+  relative to that baseline, or the oracle fails a perfect fix.
+- When an escalated attempt adds new oracle checks, the whole extended
+  oracle re-validates at both ends before dispatch.
+
+### Concurrent runs in one repo
+Two leads may run in one repo only with: distinct ledger prefixes, an
+explicit written territory list per run (exact paths), a freeze handshake
+before any lane that copies the tree (a `cp -a` of a mid-edit foreign
+territory poisons a checker's baseline), and NO git-state changes (HEAD,
+branches, stash, index) by the non-committing session. Checkers are told
+the foreign territories verbatim so they attribute, not FAIL. The lead
+stages ONLY its own manifest paths plus its own `.swarm/` files;
+`gate.sh done` over the shared ledger belongs to whichever run finishes
+last. (Established with agents2-26, 2026-08-29 — including one HEAD switch
+under a live run that this section exists to prevent.)
 
 ### Disputes at Tier 1
 You adjudicate against the written documents (unchanged). Record an overrule by

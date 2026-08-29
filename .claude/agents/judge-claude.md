@@ -24,7 +24,8 @@ cat > .swarm/verdicts/<task-id>.<attempt>.judge-claude.verdict <<'EOF'
 VERDICT: UPHOLD
 CHECKER: judge-claude
 FAMILY: anthropic
-TASK: <task-id> ATTEMPT: <attempt>
+TASK: <task-id>
+ATTEMPT: <attempt>
 ---
 <your reasoning, grounded in acceptance criteria and constitution points>
 EOF

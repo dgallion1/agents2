@@ -42,7 +42,8 @@ cat > .swarm/verdicts/<task-id>.<attempt>.checker-content.verdict <<'EOF'
 VERDICT: PASS
 CHECKER: checker-content
 FAMILY: anthropic
-TASK: <task-id> ATTEMPT: <attempt>
+TASK: <task-id>
+ATTEMPT: <attempt>
 ---
 <your evidence: per-block result, unified diffs for any FAIL>
 EOF
