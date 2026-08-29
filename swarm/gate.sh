@@ -227,11 +227,18 @@ has_fail_at() {                                                    # task attemp
   return 1
 }
 overrule_exists() {                                                # task
+  # The "$1."* glob is a superset prefix match, not a task-id boundary: it
+  # also catches files belonging to a sibling task where one task id is a
+  # dot-prefix of the other (task "A" vs "A.1", in both directions). Confirm
+  # ownership with load_verdict's own best-effort <task>.<attempt>.<checker>
+  # parse and compare the parsed task against "$1" explicitly — same fix as
+  # any_verdict_exists, for the same hazard. Boss overrule may sit at any
+  # attempt, so no expected-attempt is passed.
   local f
   for f in "$VERDICTS/$1."*.verdict; do
     [[ -f "$f" ]] || continue
-    # Boss overrule may sit at any attempt; validate full schema via filename parse.
     load_verdict "$f" || continue
+    [[ "$_vt" == "$1" ]] || continue
     [[ "$_vv" == OVERRULE && "$_vc" == boss ]] && return 0
   done
   return 1

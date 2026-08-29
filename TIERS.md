@@ -4,7 +4,9 @@ The lead assigns every task a tier in Phase 0. Answer three questions per task.
 
 1. **Oracle** — is there an executable check that decides pass/fail
    objectively (a test, a diff, an axe run, a command with an expected
-   output)? Or does judging the result require taste?
+   output)? Or does judging the result require taste? (At Tier 3 the oracle
+   is also a required pre-dispatch ARTIFACT — see CLAUDE.md Tier 3 for the
+   `accept.sh` contract.)
 2. **Reversible** — if a bad result merges, is it trivially undone before any
    harm (revert a commit on a static page) — or does it touch money, auth,
    data, deploys, or anything published to real users?
@@ -21,6 +23,9 @@ The lead assigns every task a tier in Phase 0. Answer three questions per task.
 | any    | **no** (payments, auth, deploys, migrations, external publishing) | any | 3 |
 
 **Tie-break: round up.** If a task sits between two tiers, choose the higher.
+But escalation is not free: a test-only follow-up dragged through Tier 3 once
+cost 9.5h against 29min done directly (2026-08-24). Escalate on what the
+diff *is*, not on what the task it follows up on was.
 
 ## Critical paths
 
@@ -46,7 +51,11 @@ that file is absent, gate.sh falls back to a compiled-in default list
 `**/*.spec.ts`, `smoketest/**`, `tests/**`), so an existing `.swarm` directory
 keeps working unedited. This exemption is path-based only — it does not
 inspect diff content, so a comment-only change to a production file still
-escalates.
+escalates. That is deliberate, not a TODO: content-based exemption needs a
+base ref plus per-language comment stripping, which has already proven
+unsound here in both directions — evadable by spelling a name through a
+variable, and false-firing on prose (see commit 31e9954). Do not re-propose
+it.
 
 ## Phase 0 output
 

@@ -1,6 +1,6 @@
 ---
 name: worker-local
-description: Cheapest worker tier for bulk mechanical tasks — file reorganization, boilerplate generation, format conversion, repetitive edits across many files. Also the second blind arm in Tier-3 N-version, where it differs from worker-coder by model tier. Use PROACTIVELY when a task is high-volume but low-judgment.
+description: Cheapest worker tier for bulk mechanical tasks — file reorganization, boilerplate generation, format conversion, repetitive edits across many files. Use PROACTIVELY when a task is high-volume but low-judgment.
 tools: Read, Write, Edit, Glob, Grep, Bash
 disallowedTools: Agent
 model: haiku

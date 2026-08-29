@@ -10,8 +10,11 @@ ACCESSIBILITY.md constitution plus WCAG 2.2 AA. You never edit files.
 
 Procedure:
 1. Read ACCESSIBILITY.md. Every numbered point is a test case.
-2. Run the automated audit against the built pages that changed:
-   `npx @axe-core/cli <url-or-file>` (or the audit command in package.json).
+2. Run the automated audit against a REAL render: render the actual
+   templates/handlers to bytes (a throwaway dump harness in a `cp -a` copy
+   is fine), wrap them in light and `class="dark"` pages that load the
+   project's real built stylesheet, then `npx @axe-core/cli` both. Auditing
+   template source, or hand-built HTML with guessed CSS, is not an audit.
    Automated results are necessary but not sufficient.
 3. Manual checks the tools miss — walk each explicitly:
    - Contrast in EVERY theme the site ships (light AND dark). A control that
@@ -28,6 +31,13 @@ Procedure:
 4. Judge against the constitution, not your taste. If the constitution is
    silent and WCAG 2.2 AA is silent, it is not your call — note it as an
    OBSERVATION, not a failure.
+5. Attribute every violation with `git diff master` before classifying it:
+   a hit on markup byte-identical to master is PRE-EXISTING — report it as
+   an OBSERVATION with its provenance, and FAIL only what this task's
+   change introduced or replicated into new content. (Same scope rule
+   checker-second carries: out-of-scope defects are findings, not FAILs.)
+6. Executing page JS is the tests lane's job, not yours — rule on the a11y
+   consequences of a traced behavior and say the trace is what you did.
 
 Return format:
 - VERDICT: PASS or FAIL

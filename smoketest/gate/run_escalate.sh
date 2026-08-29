@@ -104,4 +104,26 @@ printf 'internal/services/storage/foo_test.go\n' > "$sd/manifests/e11.0.files"
 run_gate "$sd" escalate-scan
 assert_nofile "default test-glob fallback exempts *_test.go with no test.globs file" "$sd/flags/e11.flag"
 
+# E12: overrule_exists task-prefix collision, direction 1. A boss OVERRULE
+# recorded for task "A.1" (filename "A.1.0.boss.verdict") must not make
+# overrule_exists("A") match it via the naive glob "A.*" -- only "A"'s own
+# overrule should flag "A".
+sd=$(newswarm)
+mkledger "$sd" 'A\t1\tcontent\tverifying\t0\tw\t-\nA.1\t1\tcontent\tverifying\t0\tw\t-\n'
+mkverdict "$sd" A.1 0 boss OVERRULE anthropic
+run_gate "$sd" escalate-scan
+assert_nofile "dotted-sibling overrule does not flag task A" "$sd/flags/A.flag"
+assert_file  "dotted-sibling overrule still flags its own task A.1" "$sd/flags/A.1.flag"
+
+# E13: overrule_exists task-prefix collision, direction 2. A boss OVERRULE
+# recorded for task "A" at attempt 1 (filename "A.1.boss.verdict") must not
+# make overrule_exists("A.1") match it via the glob "A.1.*" -- only "A"
+# should be flagged, not "A.1".
+sd=$(newswarm)
+mkledger "$sd" 'A\t1\tcontent\tverifying\t1\tw\t-\nA.1\t1\tcontent\tverifying\t0\tw\t-\n'
+mkverdict "$sd" A 1 boss OVERRULE anthropic
+run_gate "$sd" escalate-scan
+assert_file   "task A's own overrule flags A" "$sd/flags/A.flag"
+assert_nofile "dotted-sibling attempt-collision does not flag A.1" "$sd/flags/A.1.flag"
+
 finish
