@@ -59,9 +59,17 @@ verdict_files() {                                                    # task atte
 # then a `---` separator, then evidence. Filename must agree with headers.
 # VERDICT ∈ {PASS,FAIL,UPHOLD,OVERRULE}; FAMILY ∈ {anthropic,adversarial,impact,
 # glm,local}. FAMILY names an INDEPENDENCE LANE, not a vendor: two verdicts in
-# the same lane are treated as correlated and do not satisfy the Tier-2 quorum.
+# the same lane are treated as correlated and do not satisfy a dual-lane quorum.
 # glm and local are retained only so verdicts written before 2026-08-19 still
 # validate; no current agent writes them.
+#
+# Lean Tier-2 contract (experiment, 2026-08-31): Tier 2 requires a PASS from
+# every checker named in the ledger `checks` column (which must be non-empty at
+# tier 2). The two-lane span is enforced only when `second` is among the named
+# checks. Tier 3 keeps the unconditional dual-lane quorum. The dispute path is
+# unchanged at both tiers: any FAIL replaces the PASS requirement with the
+# judge-panel quorum (>=3 judge verdicts, unique identity AND unique lane,
+# strict OVERRULE majority).
 #
 # On success sets: _vv _vc _vf _vt _va  and returns 0.
 # On failure sets: _verr and returns 1. Never use command-substitution around
@@ -147,16 +155,15 @@ check_tier1() {                                                      # task atte
     [[ "$_vv" == PASS ]] || fail "$task: checker-$c returned ${_vv:-none}"
   done
 }
-check_tier2() {                                                      # task attempt
-  local task="$1" attempt="$2" f has_fail=0
+# Shared verdict walk for tier 2 and the tier-3 dual-lane check. Loads every
+# verdict at (task, attempt) into the caller's passfam/passchecker/judge maps
+# and up/ov counters, failing loudly on any malformed file. Callers declare
+# the maps; this only fills them (bash 4.3+ namerefs are avoided on purpose —
+# the maps are plain globals scoped by the calling function's declare -A).
+walk_verdicts() {                                                    # task attempt
+  local task="$1" attempt="$2" f
   local files; mapfile -t files < <(verdict_files "$task" "$attempt")
-  (( ${#files[@]} )) || fail "$task: no verdicts for attempt $attempt"
-
-  declare -A passfam=()       # family -> 1
-  declare -A passchecker=()   # checker -> family|fail
-  declare -A judgefam=()      # family -> UPHOLD|OVERRULE
-  declare -A judgechecker=()  # checker -> UPHOLD|OVERRULE
-  local up=0 ov=0
+  (( ${#files[@]} )) || return 0
 
   for f in "${files[@]}"; do
     load_verdict "$f" "$task" "$attempt" || fail "$task: invalid verdict $(basename "$f"): $_verr"
@@ -188,13 +195,58 @@ check_tier2() {                                                      # task atte
         ;;
     esac
   done
+}
+judge_quorum_or_fail() {                                             # task
+  (( up + ov >= 3 )) || fail "$1: dispute needs >=3 judge verdicts, have $((up+ov))"
+  (( ov > up ))      || fail "$1: judges upheld the FAIL ($ov overrule / $up uphold)"
+}
+# Lean Tier-2 (2026-08-31): PASS required from every checker named in the
+# ledger `checks` column; the dual-lane span applies only when `second` is
+# among them. An empty checks column is a hard error here — the tier-1
+# "blank column accepts with zero verdicts" footgun does not exist at tier 2.
+check_tier2() {                                                      # task attempt checks
+  local task="$1" attempt="$2" checks="${3:-}" c has_fail=0
+  [[ "$checks" == "-" || -z "$checks" ]] && \
+    fail "$task: tier 2 requires named checkers in the ledger checks column"
 
+  declare -A passfam=()       # family -> 1
+  declare -A passchecker=()   # checker -> family|fail
+  declare -A judgefam=()      # family -> UPHOLD|OVERRULE
+  declare -A judgechecker=()  # checker -> UPHOLD|OVERRULE
+  local up=0 ov=0
+  walk_verdicts "$task" "$attempt"
+
+  if (( has_fail == 0 )); then
+    local -a req
+    IFS=',' read -ra req <<<"$checks"
+    for c in "${req[@]}"; do
+      [[ -n "${passchecker[checker-$c]:-}" ]] || \
+        fail "$task: missing PASS from checker-$c (attempt $attempt)"
+    done
+    if [[ ",$checks," == *,second,* ]]; then
+      (( ${#passfam[@]} >= 2 )) || \
+        fail "$task: checks include 'second' but PASSes span ${#passfam[@]} lane(s), need 2"
+    fi
+    return 0
+  fi
+  judge_quorum_or_fail "$task"
+}
+# Unconditional dual-lane quorum — tier 3 only. This is the pre-2026-08-31
+# tier-2 rule, kept at full strength for irreversible work: PASSes must span
+# two independence lanes regardless of what the checks column names.
+check_dual_lane() {                                                  # task attempt
+  local task="$1" attempt="$2" has_fail=0
+  declare -A passfam=()
+  declare -A passchecker=()
+  declare -A judgefam=()
+  declare -A judgechecker=()
+  local up=0 ov=0
+  walk_verdicts "$task" "$attempt"
   if (( has_fail == 0 )); then
     (( ${#passfam[@]} >= 2 )) || fail "$task: need PASS from 2 families, have ${#passfam[@]}"
     return 0
   fi
-  (( up + ov >= 3 )) || fail "$task: dispute needs >=3 judge verdicts, have $((up+ov))"
-  (( ov > up ))      || fail "$task: judges upheld the FAIL ($ov overrule / $up uphold)"
+  judge_quorum_or_fail "$task"
 }
 check_tier3() {                                                     # task attempt
   local task="$1" attempt="$2" dir="$SWARM_DIR/tier3/$1"
@@ -213,7 +265,7 @@ check_tier3() {                                                     # task attem
     [[ -f "$olog" ]]   || fail "$task: no oracle run log at $olog (run accept.sh and tee the log)"
     [[ "$(tail -n1 "$olog")" == "ORACLE PASS" ]] || fail "$task: $olog does not end with ORACLE PASS"
   fi
-  check_tier2 "$task" "$attempt"                                    # result still needs dual-lane PASS
+  check_dual_lane "$task" "$attempt"                                # result still needs dual-lane PASS
 }
 
 # --- escalation helpers -----------------------------------------------------
@@ -393,7 +445,7 @@ check_task() {
   fi
   case "$tier" in
     1) check_tier1 "$task" "$attempt" "$checks" ;;
-    2) check_tier2 "$task" "$attempt" ;;
+    2) check_tier2 "$task" "$attempt" "$checks" ;;
     3) check_tier3 "$task" "$attempt" ;;
   esac
   echo "OK: $task accepted at tier $tier (attempt $attempt)"
@@ -428,6 +480,53 @@ cmd_escalate_scan() {
       (( tier >= ft )) && { rm -f "$flag"; echo "resolved: $task"; }
     fi
   done < "$LEDGER"
+}
+
+# stats — read-only experiment instrumentation (lean-verification test,
+# 2026-08-31). For every ledger row, find the EARLIEST attempt that has any
+# evidence on disk (a verdict file or a tier-3 oracle log) and report whether
+# that first attempt was clean (no FAIL verdict, oracle log — if one exists —
+# ends in ORACLE PASS) or failed. This measures the question the experiment
+# asks: how often does the worker get it right the first time. Never gates
+# anything; exit 0 unless the ledger is corrupt.
+cmd_stats() {
+  validate_ledger
+  local row task tier status attempt f n first fa
+  local total=0 clean=0 nfailed=0 noev=0
+  while IFS= read -r row || [[ -n "$row" ]]; do
+    [[ -z "$row" || "$row" == \#* ]] && continue
+    task=$(col "$row" 1); tier=$(col "$row" 2)
+    status=$(col "$row" 4); attempt=$(col "$row" 5)
+    if [[ "$status" == no-change ]]; then
+      echo "stats: $task tier=$tier no-change (excluded)"
+      continue
+    fi
+    first=""
+    for f in "$VERDICTS/$task."*.verdict; do
+      [[ -f "$f" ]] || continue
+      load_verdict "$f" || continue
+      [[ "$_vt" == "$task" ]] || continue
+      [[ -z "$first" || "$_va" -lt "$first" ]] && first=$_va
+    done
+    for f in "$SWARM_DIR/tier3/$task"/oracle.*.log; do
+      [[ -f "$f" ]] || continue
+      n=$(basename "$f"); n=${n#oracle.}; n=${n%.log}
+      [[ "$n" =~ ^[0-9]+$ ]] || continue
+      [[ -z "$first" || "$n" -lt "$first" ]] && first=$n
+    done
+    if [[ -z "$first" ]]; then
+      echo "stats: $task tier=$tier no evidence yet (status=$status)"
+      noev=$((noev+1)); continue
+    fi
+    fa=clean
+    has_fail_at "$task" "$first" && fa=failed
+    f="$SWARM_DIR/tier3/$task/oracle.$first.log"
+    if [[ -f "$f" && "$(tail -n1 "$f")" != "ORACLE PASS" ]]; then fa=failed; fi
+    echo "stats: $task tier=$tier first-attempt=$first $fa (now: status=$status attempt=$attempt)"
+    total=$((total+1))
+    if [[ "$fa" == clean ]]; then clean=$((clean+1)); else nfailed=$((nfailed+1)); fi
+  done < "$LEDGER"
+  echo "first-attempt clean: $clean/$total (no-evidence rows: $noev)"
 }
 
 cmd_done() {
@@ -465,7 +564,8 @@ main() {
     check)         cmd_check "$@" ;;
     escalate-scan) cmd_escalate_scan "$@" ;;
     done)          cmd_done "$@" ;;
-    *)             die "usage: gate.sh {check|escalate-scan|done} ..." ;;
+    stats)         cmd_stats "$@" ;;
+    *)             die "usage: gate.sh {check|escalate-scan|done|stats} ..." ;;
   esac
 }
 main "$@"

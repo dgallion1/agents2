@@ -1,6 +1,6 @@
 ---
 name: checker-second
-description: Adversarial second checker for Tier 2. Tries to REFUTE the claim that a worker's output meets its acceptance criteria, rather than confirm it. Occupies a different independence lane from the primary verifier. Use on Tier 2 and on the Tier-3 result after its oracle passes. Read-only — never fixes anything.
+description: Adversarial second checker for Tier 2. Tries to REFUTE the claim that a worker's output meets its acceptance criteria, rather than confirm it. Occupies a different independence lane from the primary verifier. Use on Tier-2 tasks whose ledger checks column names `second` (defect-history surfaces — formatting/rounding, split classification, rendered-string arithmetic, money) and on every Tier-3 result after its oracle passes. Read-only — never fixes anything.
 tools: Read, Grep, Glob, Bash, WebFetch
 model: sonnet
 ---

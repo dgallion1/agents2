@@ -52,12 +52,17 @@ Rigor is chosen per task, not applied uniformly (see `TIERS.md`):
 
 - **Tier 1** — reversible, oracle-checkable work: worker → one mechanical
   checker. Same cost as the base kit.
-- **Tier 2** — shared/weak-oracle work: two independence lanes must both
-  PASS — the relevant primary verifier (`checker-tests`/`checker-a11y`/
-  `checker-content`, lane `anthropic`) and `checker-second` (lane
-  `adversarial`), which defaults to FAIL on ambiguity. All lanes run on
-  Claude; the independence is job + model tier, not vendor. Disputes go to a
-  3-judge panel (`judge-claude`, `judge-standards`, `judge-impact`).
+- **Tier 2** — shared/weak-oracle work: every checker named in the ledger
+  `checks` column must PASS. Since the lean-verification experiment
+  (2026-08-31) the default is ONE primary verifier (`checker-tests`/
+  `checker-a11y`/`checker-content`, lane `anthropic`); `checker-second`
+  (lane `adversarial`, defaults to FAIL on ambiguity) is added for tasks on
+  defect-history surfaces (formatting/rounding, split classification,
+  rendered-string arithmetic, money), and when listed the gate requires the
+  PASSes to span both lanes. All lanes run on Claude; the independence is
+  job + model tier, not vendor. Disputes default to concede-and-rework; a
+  3-judge panel (`judge-claude`, `judge-standards`, `judge-impact`) is
+  dispatched only for a FAIL the lead would overrule.
 - **Tier 3** — irreversible / high blast radius (payments, auth, deploys,
   migrations, publishing): oracle-first. The lead writes an executable
   acceptance oracle (`.swarm/tier3/<task>/accept.sh`) before dispatch and

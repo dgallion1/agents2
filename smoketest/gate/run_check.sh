@@ -9,11 +9,39 @@ mkverdict "$sd" t1 0 checker-content PASS anthropic
 mkverdict "$sd" t1 0 checker-a11y    PASS anthropic
 run_gate "$sd" check t1; assert_rc "tier1 all-pass accepts" 0 $?
 
-# T2: Tier 2 with only ONE verdict -> reject (rc 1)
+# T2: lean Tier 2 (2026-08-31) — a PASS from the single named checker accepts
 sd=$(newswarm)
 mkledger "$sd" 't2\t2\tcontent\tverifying\t0\tworker-coder\t-\n'
 mkverdict "$sd" t2 0 checker-content PASS anthropic
-run_gate "$sd" check t2; assert_rc "tier2 single verdict rejects" 1 $?
+run_gate "$sd" check t2; assert_rc "tier2 lean single-checker PASS accepts" 0 $?
+
+# T2b: Tier 2 with an EMPTY checks column -> reject (rc 1). The tier-1
+# blank-column-accepts footgun must not exist at tier 2.
+sd=$(newswarm)
+mkledger "$sd" 't2b\t2\t-\tverifying\t0\tworker-coder\t-\n'
+mkverdict "$sd" t2b 0 checker-content PASS anthropic
+run_gate "$sd" check t2b; assert_rc "tier2 empty checks column rejects" 1 $?
+
+# T2c: checks name content,second but only content PASSed -> reject
+sd=$(newswarm)
+mkledger "$sd" 't2c\t2\tcontent,second\tverifying\t0\tworker-coder\t-\n'
+mkverdict "$sd" t2c 0 checker-content PASS anthropic
+run_gate "$sd" check t2c; assert_rc "tier2 missing named second checker rejects" 1 $?
+
+# T2d: checks name content,second, both PASS in two lanes -> accept
+sd=$(newswarm)
+mkledger "$sd" 't2d\t2\tcontent,second\tverifying\t0\tworker-coder\t-\n'
+mkverdict "$sd" t2d 0 checker-content PASS anthropic
+mkverdict "$sd" t2d 0 checker-second  PASS adversarial
+run_gate "$sd" check t2d; assert_rc "tier2 dual-checker two-lane accepts" 0 $?
+
+# T2e: checks name content,second, both PASS but in the SAME lane -> reject.
+# Requesting the adversarial lane means the PASSes must actually span 2 lanes.
+sd=$(newswarm)
+mkledger "$sd" 't2e\t2\tcontent,second\tverifying\t0\tworker-coder\t-\n'
+mkverdict "$sd" t2e 0 checker-content PASS anthropic
+mkverdict "$sd" t2e 0 checker-second  PASS anthropic
+run_gate "$sd" check t2e; assert_rc "tier2 second requested but single-lane rejects" 1 $?
 
 # T3: Tier 2 with two DIFFERENT-family PASS -> accept (rc 0)
 sd=$(newswarm)
@@ -171,5 +199,60 @@ sd=$(newswarm)
 mkledger "$sd" 'A.1\t1\ttests\tno-change\t1\tw\tno-defect-see-SPEC\nA\t1\ttests\taccepted\t1\tw\tok\n'
 mkverdict "$sd" A 1 checker-tests PASS anthropic
 run_gate "$sd" check A.1; assert_rc "dotted-parent verdict does not block no-change" 0 $?
+
+# Tier-3 oracle-contract coverage. mktier3 builds a passing oracle + log at
+# attempt N so each test can vary just the verdicts.
+mktier3() { # sd task attempt
+  mkdir -p "$1/tier3/$2"
+  printf '#!/usr/bin/env bash\necho "ORACLE PASS"\n' > "$1/tier3/$2/accept.sh"
+  chmod +x "$1/tier3/$2/accept.sh"
+  printf 'check-1 ok\nORACLE PASS\n' > "$1/tier3/$2/oracle.$3.log"
+}
+
+# T22: tier 3 with oracle + ORACLE PASS log + two-lane PASS -> accept
+sd=$(newswarm)
+mkledger "$sd" 't22\t3\ttests\tverifying\t1\tworker-coder\t-\n'
+mktier3 "$sd" t22 1
+mkverdict "$sd" t22 1 checker-tests  PASS anthropic
+mkverdict "$sd" t22 1 checker-second PASS adversarial
+run_gate "$sd" check t22; assert_rc "tier3 oracle + dual-lane accepts" 0 $?
+
+# T23: tier 3 keeps the UNCONDITIONAL dual-lane rule — a single-lane PASS
+# rejects even though the checks column names only one checker (the lean
+# tier-2 contract must not leak into tier 3).
+sd=$(newswarm)
+mkledger "$sd" 't23\t3\ttests\tverifying\t1\tworker-coder\t-\n'
+mktier3 "$sd" t23 1
+mkverdict "$sd" t23 1 checker-tests PASS anthropic
+run_gate "$sd" check t23; assert_rc "tier3 single-lane PASS still rejects" 1 $?
+
+# T24: tier 3 with a log that does not end in ORACLE PASS -> reject, even
+# with a full dual-lane PASS quorum.
+sd=$(newswarm)
+mkledger "$sd" 't24\t3\ttests\tverifying\t1\tworker-coder\t-\n'
+mktier3 "$sd" t24 1
+printf 'check-1 ok\ncheck-2 FAILED\n' > "$sd/tier3/t24/oracle.1.log"
+mkverdict "$sd" t24 1 checker-tests  PASS anthropic
+mkverdict "$sd" t24 1 checker-second PASS adversarial
+run_gate "$sd" check t24; assert_rc "tier3 failed oracle log rejects" 1 $?
+
+# S1: gate.sh stats — first-attempt outcomes. t2 failed attempt 0 then passed
+# at 1; tA was clean at attempt 0. stats must call t2 failed and tA clean.
+sd=$(newswarm)
+mkledger "$sd" 'tA\t2\tcontent\taccepted\t0\tworker-coder\t-\ntB\t2\tcontent\taccepted\t1\tworker-coder\t-\n'
+mkverdict "$sd" tA 0 checker-content PASS anthropic
+mkverdict "$sd" tB 0 checker-content FAIL anthropic
+mkverdict "$sd" tB 1 checker-content PASS anthropic
+out=$(SWARM_DIR="$sd" bash "$GATE" stats 2>&1); rc=$?
+assert_rc "stats exits 0" 0 $rc
+echo "$out" | grep -q "stats: tA tier=2 first-attempt=0 clean" \
+  && echo "ok   - stats reports tA clean" \
+  || { echo "FAIL - stats reports tA clean"; FAILN=$((FAILN+1)); }
+echo "$out" | grep -q "stats: tB tier=2 first-attempt=0 failed" \
+  && echo "ok   - stats reports tB first-attempt failed" \
+  || { echo "FAIL - stats reports tB first-attempt failed"; FAILN=$((FAILN+1)); }
+echo "$out" | grep -q "first-attempt clean: 1/2" \
+  && echo "ok   - stats summary line correct" \
+  || { echo "FAIL - stats summary line correct"; FAILN=$((FAILN+1)); }
 
 finish

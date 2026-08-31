@@ -1,7 +1,33 @@
 # Orchestration rules — boss/worker/checker swarm
 
 You are the lead. Your job is judgment, not typing: design, specs, dispatch,
-review, adjudication. Delegate all implementation.
+review, adjudication. Delegate implementation by default (see Dispatch rules
+for the lead-direct exception).
+
+## ACTIVE EXPERIMENT — lean verification (2026-08-31)
+
+This run tests whether a stronger lead/worker model makes the heavier
+verification machinery redundant. What changed and why:
+
+- **Tier 2 defaults to ONE verifier.** The 2026-08-26 retro showed every real
+  catch came from the oracle or a checker — never from redundant generation —
+  and the surviving defects were spec-level (rounding paths, threshold
+  sources, surface enumeration), not capability-level. With all lanes on
+  Claude since 2026-08-19, a same-family adversarial second opinion on a
+  routine task adds little. `checker-second` is now RESERVED for tasks
+  touching the documented defect-history surfaces (see Tier 2).
+- **What is deliberately NOT weakened:** the Tier-3 oracle discipline, the
+  mechanical gate, and non-author verification. Those catch the brief's own
+  errors and the lead's own optimism — failure modes no model strength fixes.
+- **Measurement:** the gate now has a `stats` subcommand. At the end of the
+  run, run `swarm/gate.sh stats` and report the first-attempt clean rate to
+  the user verbatim. Decision rule agreed with the user: if first attempts
+  are ~all clean over ~10 tasks, the process shrinks further next run; if
+  oracle/checker failures persist on first attempts, the catches were never
+  about model strength and the machinery stays.
+- Record every catch this run in SPEC.md "Rulings" with WHICH mechanism
+  caught it (oracle / primary checker / second checker / judge / gate) —
+  that attribution is the experiment's real output.
 
 ## Phase 0 — Constitution before code
 Before any build work, produce two documents and get user sign-off:
@@ -14,9 +40,14 @@ If content is being migrated, also produce `SOURCES.md` mapping every content
 block to its canonical source.
 
 ## Dispatch rules
-- All implementation goes to `worker-coder` (or `worker-local` for bulk
-  mechanical work). You do not write application code in the main session
-  except during final review fixes.
+- Implementation goes to `worker-coder` (or `worker-local` for bulk
+  mechanical work) by default. **Lean exception (2026-08-31):** the lead MAY
+  implement a task directly when it is small, well-specified, and Tier 1–2.
+  Record `lead` in the ledger's `worker` column. The verification contract is
+  unchanged and non-negotiable: the named checkers still run (they are the
+  non-author eyes — the fresh-eyes property is the point, W4 precedent), the
+  lead still never writes a PASS verdict, and `gate.sh check` still decides
+  acceptance. Tier 3 is always dispatched to a worker.
 - One scoped task per worker invocation, with the relevant SPEC.md section
   pasted into the delegation message. Workers cannot see this conversation.
 - Independent tasks run as parallel background workers.
@@ -55,41 +86,46 @@ write verdict files. You read evidence and update ledger status only.
 ### Tier 1 — one checker
 Worker → the mechanical checker(s) named in the ledger `checks` column
 (`checker-content` and/or `checker-a11y`) → `gate.sh check` → accept.
-The `checks` column is load-bearing: a `-` or blank there makes
-`gate.sh check` accept the row with zero verdicts. Never leave it empty.
+The `checks` column is load-bearing: at Tier 1 a `-` or blank there makes
+`gate.sh check` accept the row with zero verdicts — never leave it empty.
+(At Tier 2 the gate now hard-rejects an empty `checks` column instead.)
 
-### Tier 2 — two independence lanes + judge panel on disputes
-Worker builds once. Then two checkers run in parallel in **different
-independence lanes**: the relevant primary verifier (`checker-tests` for code,
-`checker-a11y` / `checker-content` for UI and content — lane `anthropic`) **and**
-`checker-second` (lane `adversarial`). Both must PASS.
+### Tier 2 — named verifier(s) + judge panel on disputes (LEAN, 2026-08-31)
+Worker builds once. Then the checker(s) named in the ledger `checks` column
+run; **every named checker must PASS**. The default is ONE primary verifier
+(`checker-tests` for code, `checker-a11y` / `checker-content` for UI and
+content), which asks "does this meet the criteria?" and must cite the command
+proving each one — a PASS without commands is not evidence, send it back.
 
-A lane is not a vendor. Every agent now runs on Claude, so the second opinion
-cannot come from a different training lineage; it comes from a different **job**
-and a different **model tier**. The primary verifier asks "does this meet the
-criteria?" and must cite the command proving each one. `checker-second` asks
-"what would make this wrong?", defaults to FAIL on ambiguity, and is performing
-its role badly if it never disagrees. Treat two PASSes as weaker evidence than
-the old cross-vendor pair did — this is a real reduction in independence,
-accepted deliberately (user decision 2026-08-19).
+Add `second` (→ `checker-second`, lane `adversarial`) to `checks` — making it
+a dual-lane task exactly as before the experiment — when the task touches a
+**defect-history surface**:
+- value formatting or rounding shown to users (dual-formatter class, W2);
+- a threshold/classification applied to a figure on more than one surface
+  (split-classification class, W4 / ruling 2026-08-29a);
+- arithmetic over rendered strings (ruling 2026-08-29b);
+- money, or anything a wrong figure on screen makes a lie;
+- or whenever you are unsure — the tie-break is still "round up".
+`checker-second` asks "what would make this wrong?" and defaults to FAIL on
+ambiguity. When `second` is named, the gate mechanically requires the PASSes
+to span two lanes (`checker-a11y`+`checker-content` are both `anthropic` and
+do NOT satisfy it).
 
-If they disagree (any FAIL), it is a dispute: dispatch all three judges —
+Any FAIL is a dispute. Default resolution is **CONCEDE**: treat the FAIL as
+upheld and send the task back to the worker. Dispatch the three judges —
 `judge-claude` (primary lane), `judge-standards` (adversarial lane),
-`judge-impact` (user-impact lane) — each with the task, the work, the contested
-verdict + evidence, and the constitution. Majority OVERRULE accepts; majority
-UPHOLD sends the task back to the worker. Record the ruling in SPEC.md
-"Rulings". The gate enforces the vote count and the distinct-lane requirement
-mechanically. The arithmetic, precisely: once any FAIL exists at the attempt,
-judge votes REPLACE the two-lane PASS requirement; the panel needs ≥3
-verdicts, each with a unique judge identity AND a unique lane, and a strict
-OVERRULE majority — ties uphold. Valid `FAMILY` values are `anthropic`,
-`adversarial`, `impact` (plus `glm`/`local`, accepted only so pre-2026-08-19
-verdicts still validate — never write them). Note `checker-a11y` and
-`checker-content` both sit in the `anthropic` lane, so pairing them does NOT
-satisfy Tier 2's two-lane quorum — every Tier-2 pair includes
-`checker-second`.
+`judge-impact` (user-impact lane) — only for a FAIL you would overrule, each
+with the task, the work, the contested verdict + evidence, and the
+constitution. Record the ruling in SPEC.md "Rulings". The gate enforces the
+vote count and the distinct-lane requirement mechanically. The arithmetic,
+precisely: once any FAIL exists at the attempt, judge votes REPLACE the
+named-checker PASS requirement; the panel needs ≥3 verdicts, each with a
+unique judge identity AND a unique lane, and a strict OVERRULE majority —
+ties uphold. Valid `FAMILY` values are `anthropic`, `adversarial`, `impact`
+(plus `glm`/`local`, accepted only so pre-2026-08-19 verdicts still validate
+— never write them).
 
-### Tier 3 — oracle-first, then Tier 2
+### Tier 3 — oracle-first, then full dual-lane (NOT leaned)
 Blind N-version was dropped (user decision 2026-08-26): across the budget2
 runs the two arms' oracle scores were identical every time real divergence
 existed, both arms inherited the brief's errors, and every Tier-3 catch came
@@ -111,9 +147,11 @@ replication can never audit the lead. What remains is the oracle discipline:
    ⚠ A `report.md` in the task's tier3 dir flips the gate to the legacy
    blind-arm contract and bypasses the oracle entirely — never reuse a
    pre-2026-08-26 tier3 directory for a new task.
-4. Run the Tier-2 dual-checker verification (both lanes, judge panel on
-   disputes). `gate.sh check` requires a PASS from each lane at the current
-   attempt.
+4. Run the full dual-checker verification — primary verifier AND
+   `checker-second`, judge panel on disputes. Tier 3 is exempt from the lean
+   experiment: `gate.sh check` requires PASSes spanning both lanes at the
+   current attempt regardless of what the `checks` column names. Irreversible
+   work keeps the pre-2026-08-31 rigor.
 
 ### Disputes in practice (2026-08-29, first panel use)
 - The lead may CONCEDE an uncontested FAIL — treating it as an implicit
