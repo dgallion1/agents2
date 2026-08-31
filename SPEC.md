@@ -162,6 +162,11 @@ In the healthcare card, one "Late-life care" row per healthcare person:
 Dependency: CC2 and CC3 depend on CC1's fields existing; CC1 dispatches
 first, CC2/CC3 in parallel after CC1 is accepted.
 
+Outcome note (2026-08-31): CC1's tier column above is the Phase-0
+assignment; the gate escalated CC1 to **Tier 3** (critical-glob) after its
+first verdicts landed, and it was accepted under the full oracle contract at
+attempt 2 — the ledger is the authority on final tiers.
+
 Tier rationale (TIERS.md): all tasks reversible pre-merge and oracle-strong;
 CC1/CC2 blast radius is shared (every projection consumer / user-visible
 dollars) → Tier 2. Money on screen → `second` on both (defect-history
@@ -198,3 +203,14 @@ first-attempt clean rate to the user verbatim.
   must scale `CareMonthlyCost` 1.5× like its sibling fields. The
   checker's throwaway PV probe is promoted to a permanent regression test
   (V3 pattern).
+- **CC-2026-08-31c** (catch — mechanism: PRIMARY CHECKER checker-a11y, CC2
+  attempt 1, FAIL CONCEDED): the new care helper paragraph used
+  `dark:text-gray-400` on the card's `dark:bg-gray-700` — 4.05:1 in dark
+  mode, below the 4.5:1 minimum (light passed at 7.23:1). Measured by a
+  real axe run on the actually-rendered page, including catching its own
+  harness bug (the page's theme-detection script silently overrode the
+  forced theme class). Fix: `dark:text-gray-300`, matching the sibling
+  labels; applied lead-direct under the lean exception (attempt 2,
+  worker=lead), both named checkers re-run. The same failing token pairing
+  pre-exists on untouched elements — spun off as a separate backlog task
+  rather than widened into CC2.
