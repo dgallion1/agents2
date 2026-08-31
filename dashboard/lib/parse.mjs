@@ -206,9 +206,12 @@ function validateVerdictRecord(filename, headers, hasSeparator, fileTask, fileAt
   };
 }
 
-// Scans the whole verdicts/ dir once. Returns a Map keyed by `${task}.${attempt}`
-// -> array of verdict objects (all belonging to that task+attempt, any checker).
-// Invalid files are excluded from quorum and reported in errors[].
+// Scans the whole verdicts/ dir once. Returns:
+//   byTaskAttempt — Map keyed by `${task}.${attempt}` -> array of verdict
+//     objects (all belonging to that task+attempt, any checker). Invalid
+//     files are excluded from this map and reported in errors[].
+//   filenames — every entry in verdicts/, verbatim, so per-task blocking can
+//     later mirror gate.sh's glob semantics (see blockingVerdictFiles).
 function parseAllVerdicts(swarmDir, errors) {
   const dirPath = path.join(swarmDir, 'verdicts');
   const filenames = listDirIfExists(dirPath);
@@ -258,6 +261,7 @@ function parseAllVerdicts(swarmDir, errors) {
       attempt: validated.verdict.attempt,
       evidence,
       path: filePath,
+      filename,
     };
 
     const key = `${task}.${attempt}`;
@@ -265,7 +269,30 @@ function parseAllVerdicts(swarmDir, errors) {
     byTaskAttempt.get(key).push(verdictObj);
   }
 
-  return byTaskAttempt;
+  return { byTaskAttempt, filenames };
+}
+
+// gate.sh walk_verdicts (tiers 2/3) globs `<task>.<attempt>.*.verdict` and
+// hard-FAILS the task on ANY matching file it cannot load as a valid verdict
+// for exactly that task+attempt — bad headers, filename/header mismatch, an
+// unparseable filename, even a perfectly valid verdict belonging to a
+// dot-prefix sibling task (task `A.1.b` attempt 2 lands in task A attempt 1's
+// glob). Mirror the glob exactly: `*` matches anything, including nothing and
+// dots, so match = prefix + suffix without overlap. Anything the glob catches
+// that did not validate as this task+attempt's own verdict blocks the task.
+// Tier 1 is different — gate.sh only loads the named checkers' exact files —
+// so callers must apply this only at tiers 2/3.
+function blockingVerdictFiles(filenames, validVerdicts, taskId, attempt) {
+  const prefix = `${taskId}.${attempt}.`;
+  const suffix = '.verdict';
+  const validNames = new Set(validVerdicts.map((v) => v.filename));
+  return filenames.filter(
+    (fn) =>
+      fn.startsWith(prefix) &&
+      fn.endsWith(suffix) &&
+      fn.length >= prefix.length + suffix.length &&
+      !validNames.has(fn)
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -554,8 +581,10 @@ function computeQuorum(tier, checks, verdicts, tier3, hasFail, disputeResolved, 
   }
 
   // Only validated verdicts reach this point (invalid files were excluded in
-  // parseAllVerdicts). Any FAIL at the attempt replaces the PASS requirement
-  // with the judge-panel quorum — at both tiers (gate.sh walk_verdicts).
+  // parseAllVerdicts; at tiers 2/3 computeDerived separately voids the quorum
+  // when any current-attempt file failed validation, mirroring walk_verdicts'
+  // hard fail). Any FAIL at the attempt replaces the PASS requirement with
+  // the judge-panel quorum — at both tiers (gate.sh walk_verdicts).
   const passCheckers = new Set();
   const familiesPassed = new Set();
   for (const v of verdicts) {
@@ -608,6 +637,11 @@ function computeDerived(task, verdicts, flagOpen) {
   );
   // A dispute resolved only with duplicate judge identities is not a real quorum.
   if (hasFail && identityError) quorumHolds = false;
+  // gate.sh walk_verdicts fails the whole task on any current-attempt file it
+  // cannot validate (tiers 2/3 only — tier 1 loads only the named checkers'
+  // files, so a stray malformed file does not block there).
+  const invalidBlocking = task.tier >= 2 && task.invalidVerdicts.length > 0;
+  if (invalidBlocking) quorumHolds = false;
 
   let state;
   let mismatch = null;
@@ -633,6 +667,12 @@ function computeDerived(task, verdicts, flagOpen) {
       if (task.tier === 3 && !tier3ContractOk(task.tier3)) {
         // gate.sh checks the tier-3 evidence contract before the quorum walk.
         reason = tier3ContractReason(task.tier3);
+      } else if (task.tier === 2 && task.checks.length === 0) {
+        // gate.sh check_tier2 fails on an empty checks column before walking
+        // any verdict files, so this outranks invalid-file blocking too.
+        reason = 'tier 2 requires named checkers in the ledger checks column';
+      } else if (invalidBlocking) {
+        reason = `invalid verdict file(s) at attempt ${task.attempt}: ${task.invalidVerdicts.join(', ')}`;
       } else if (identityError) {
         reason = identityError;
       } else if (disputeOpen) {
@@ -643,8 +683,6 @@ function computeDerived(task, verdicts, flagOpen) {
         reason = 'unresolved FAIL in current-attempt verdicts';
       } else if (task.tier === 1) {
         reason = 'not all required checkers returned PASS';
-      } else if (task.tier === 2 && task.checks.length === 0) {
-        reason = 'tier 2 requires named checkers in the ledger checks column';
       } else if (missingChecker !== undefined) {
         reason = `missing PASS from checker-${missingChecker}`;
       } else if (task.tier === 2) {
@@ -680,13 +718,15 @@ export function parse(swarmDir) {
   const errors = [];
 
   const ledgerRows = parseLedger(swarmDir, errors);
-  const verdictsByTaskAttempt = parseAllVerdicts(swarmDir, errors);
+  const { byTaskAttempt: verdictsByTaskAttempt, filenames: verdictFilenames } =
+    parseAllVerdicts(swarmDir, errors);
 
   const tasks = ledgerRows.map((row) => {
     const manifest = parseManifest(swarmDir, row.id, row.attempt);
     const verdicts = verdictsByTaskAttempt.get(`${row.id}.${row.attempt}`) ?? [];
     const flag = parseFlag(swarmDir, row.id, row.tier);
     const tier3 = parseTier3(swarmDir, row.id, row.attempt);
+    const invalidVerdicts = blockingVerdictFiles(verdictFilenames, verdicts, row.id, row.attempt);
 
     const task = {
       id: row.id,
@@ -698,6 +738,7 @@ export function parse(swarmDir) {
       reason: row.reason,
       manifest,
       verdicts,
+      invalidVerdicts,
       flag,
       tier3,
       derived: null, // filled below

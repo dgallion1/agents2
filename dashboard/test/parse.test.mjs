@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 
 import { parse } from '../lib/parse.mjs';
 
@@ -808,6 +810,285 @@ test('tier-3 legacy footgun: report.md without RESOLUTION bypasses a valid oracl
   const task = state.tasks.find((t) => t.id === 't3-legacy-trap');
   assert.equal(task.tier3.hasReport, true);
   assert.equal(task.derived.state, 'blocked');
+});
+
+// ---------------------------------------------------------------------------
+// invalid verdict files block tiers 2/3 (gate.sh walk_verdicts parity).
+// gate.sh globs `<task>.<attempt>.*.verdict` and hard-FAILs the task when ANY
+// matching file cannot be loaded as that exact task+attempt's valid verdict —
+// so a full valid quorum plus one malformed extra file must NOT read
+// 'accepted' (the anti-lie property). Tier 1 loads only the named checkers'
+// files, so unnamed malformed files never block there.
+// ---------------------------------------------------------------------------
+
+test('tier-2: full valid quorum + one malformed extra verdict at the current attempt -> blocked', () => {
+  const dir = makeSwarmDir();
+  writeLedger(dir, [
+    ['t2-extra-junk', '2', 'tests,second', 'accepted', '1', 'worker-coder', 'quorum plus junk file'],
+  ]);
+  writeVerdict(dir, { task: 't2-extra-junk', attempt: 1, checker: 'checker-tests', verdict: 'PASS', family: 'anthropic' });
+  writeVerdict(dir, { task: 't2-extra-junk', attempt: 1, checker: 'checker-second', verdict: 'PASS', family: 'adversarial' });
+  writeFile(dir, 'verdicts/t2-extra-junk.1.checker-rogue.verdict', 'VERDICT: PASS\nFAMILY: anthropic\n');
+
+  const state = parse(dir);
+  const task = state.tasks.find((t) => t.id === 't2-extra-junk');
+  assert.deepEqual(task.invalidVerdicts, ['t2-extra-junk.1.checker-rogue.verdict']);
+  assert.equal(task.derived.state, 'blocked');
+  assert.ok(
+    state.errors.some(
+      (e) => e.message.includes('t2-extra-junk') && e.message.includes('invalid verdict file(s)')
+    ),
+    'expected the accepted-vs-invalid-file discrepancy in errors[]'
+  );
+});
+
+test('tier-2: malformed verdict at an OLD attempt does not block the current attempt', () => {
+  const dir = makeSwarmDir();
+  writeLedger(dir, [
+    ['t2-old-junk', '2', 'tests', 'accepted', '2', 'worker-coder', 'junk only at attempt 1'],
+  ]);
+  writeFile(dir, 'verdicts/t2-old-junk.1.checker-tests.verdict', 'VERDICT: PASS\nFAMILY: anthropic\n');
+  writeVerdict(dir, { task: 't2-old-junk', attempt: 2, checker: 'checker-tests', verdict: 'PASS', family: 'anthropic' });
+
+  const state = parse(dir);
+  const task = state.tasks.find((t) => t.id === 't2-old-junk');
+  assert.deepEqual(task.invalidVerdicts, []);
+  assert.equal(task.derived.state, 'accepted');
+});
+
+test('tier-1: named checker PASS + unnamed malformed file at the same attempt -> still accepted', () => {
+  const dir = makeSwarmDir();
+  writeLedger(dir, [
+    ['t1-stray-junk', '1', 'a11y', 'accepted', '1', 'worker-local', 'stray junk file'],
+  ]);
+  writeVerdict(dir, { task: 't1-stray-junk', attempt: 1, checker: 'checker-a11y', verdict: 'PASS', family: 'anthropic' });
+  writeFile(dir, 'verdicts/t1-stray-junk.1.checker-rogue.verdict', 'garbage, no headers at all\n');
+
+  const state = parse(dir);
+  const task = state.tasks.find((t) => t.id === 't1-stray-junk');
+  // The stray file is still tracked, but tier 1 does not block on it —
+  // gate.sh check_tier1 never opens files outside the named checkers'.
+  assert.deepEqual(task.invalidVerdicts, ['t1-stray-junk.1.checker-rogue.verdict']);
+  assert.equal(task.derived.state, 'accepted');
+});
+
+test('unparseable filename matching the task glob blocks at tier 2 (empty checker segment)', () => {
+  const dir = makeSwarmDir();
+  writeLedger(dir, [
+    ['t2-empty-checker', '2', 'tests', 'accepted', '1', 'worker-coder', 'empty checker in filename'],
+  ]);
+  writeVerdict(dir, { task: 't2-empty-checker', attempt: 1, checker: 'checker-tests', verdict: 'PASS', family: 'anthropic' });
+  // Matches gate.sh's glob `t2-empty-checker.1.*.verdict` with `*` = '' but
+  // the filename regex cannot parse it (no checker segment).
+  writeFile(dir, 'verdicts/t2-empty-checker.1..verdict', 'whatever\n');
+
+  const state = parse(dir);
+  const task = state.tasks.find((t) => t.id === 't2-empty-checker');
+  assert.deepEqual(task.invalidVerdicts, ['t2-empty-checker.1..verdict']);
+  assert.equal(task.derived.state, 'blocked');
+});
+
+test('filename shorter than the glob can match does not block (t.1.verdict has no checker slot)', () => {
+  const dir = makeSwarmDir();
+  writeLedger(dir, [
+    ['t2-short-name', '2', 'tests', 'accepted', '1', 'worker-coder', 'short stray filename'],
+  ]);
+  writeVerdict(dir, { task: 't2-short-name', attempt: 1, checker: 'checker-tests', verdict: 'PASS', family: 'anthropic' });
+  // gate.sh's glob `t2-short-name.1.*.verdict` needs `.verdict` AFTER the
+  // star, so this file is invisible to walk_verdicts and must not block.
+  writeFile(dir, 'verdicts/t2-short-name.1.verdict', 'whatever\n');
+
+  const state = parse(dir);
+  const task = state.tasks.find((t) => t.id === 't2-short-name');
+  assert.deepEqual(task.invalidVerdicts, []);
+  assert.equal(task.derived.state, 'accepted');
+});
+
+test('dot-prefix sibling: a VALID verdict for task a.1.b lands in task a attempt 1\'s glob and blocks it', () => {
+  const dir = makeSwarmDir();
+  writeLedger(dir, [
+    ['t2-sib', '2', 'tests', 'accepted', '1', 'worker-coder', 'prefix-collision victim'],
+    ['t2-sib.1.b', '2', 'tests', 'accepted', '2', 'worker-coder', 'sibling with colliding id'],
+  ]);
+  writeVerdict(dir, { task: 't2-sib', attempt: 1, checker: 'checker-tests', verdict: 'PASS', family: 'anthropic' });
+  // Perfectly valid for its OWN task+attempt, but its filename
+  // t2-sib.1.b.2.checker-tests.verdict matches t2-sib attempt 1's glob and
+  // fails header agreement there — gate.sh fails t2-sib on it.
+  writeVerdict(dir, { task: 't2-sib.1.b', attempt: 2, checker: 'checker-tests', verdict: 'PASS', family: 'anthropic' });
+
+  const state = parse(dir);
+  const victim = state.tasks.find((t) => t.id === 't2-sib');
+  const sibling = state.tasks.find((t) => t.id === 't2-sib.1.b');
+  assert.deepEqual(victim.invalidVerdicts, ['t2-sib.1.b.2.checker-tests.verdict']);
+  assert.equal(victim.derived.state, 'blocked');
+  assert.equal(sibling.derived.state, 'accepted');
+});
+
+test('tier-3: green oracle + dual-lane PASSes + one malformed extra verdict -> blocked', () => {
+  const dir = makeSwarmDir();
+  writeLedger(dir, [
+    ['t3-extra-junk', '3', 'tests,second', 'accepted', '1', 'worker-coder', 'quorum plus junk file'],
+  ]);
+  writeDualLanePasses(dir, 't3-extra-junk', 1);
+  writeOracle(dir, 't3-extra-junk');
+  writeFile(dir, 'tier3/t3-extra-junk/oracle.1.log', 'ORACLE PASS\n');
+  writeFile(dir, 'verdicts/t3-extra-junk.1.checker-rogue.verdict', 'VERDICT: PASS\nFAMILY: anthropic\n');
+
+  const state = parse(dir);
+  const task = state.tasks.find((t) => t.id === 't3-extra-junk');
+  assert.equal(task.derived.state, 'blocked');
+  assert.ok(state.errors.some((e) => e.message.includes('t3-extra-junk') && e.message.includes('invalid verdict file(s)')));
+});
+
+test('dispute overruled by a full judge panel + one malformed extra verdict -> still blocked', () => {
+  const dir = makeSwarmDir();
+  writeLedger(dir, [
+    ['t2-judged-junk', '2', 'tests', 'accepted', '1', 'worker-coder', 'panel quorum plus junk file'],
+  ]);
+  writeVerdict(dir, { task: 't2-judged-junk', attempt: 1, checker: 'checker-tests', verdict: 'FAIL', family: 'anthropic' });
+  writeVerdict(dir, { task: 't2-judged-junk', attempt: 1, checker: 'judge-claude', verdict: 'OVERRULE', family: 'anthropic' });
+  writeVerdict(dir, { task: 't2-judged-junk', attempt: 1, checker: 'judge-standards', verdict: 'OVERRULE', family: 'adversarial' });
+  writeVerdict(dir, { task: 't2-judged-junk', attempt: 1, checker: 'judge-impact', verdict: 'OVERRULE', family: 'impact' });
+  writeFile(dir, 'verdicts/t2-judged-junk.1.checker-rogue.verdict', 'VERDICT: PASS\nFAMILY: anthropic\n');
+
+  const state = parse(dir);
+  const task = state.tasks.find((t) => t.id === 't2-judged-junk');
+  assert.equal(task.derived.state, 'blocked');
+});
+
+// ---------------------------------------------------------------------------
+// differential run against swarm/gate.sh — the anti-lie property, tested
+// mechanically: for every fixture below (all rows ledgered 'accepted'),
+// `gate.sh check <task>` exits 0 exactly when derived.state === 'accepted'.
+// ---------------------------------------------------------------------------
+
+const GATE_SH = fileURLToPath(new URL('../../swarm/gate.sh', import.meta.url));
+
+function gateCheck(swarmDir, taskId) {
+  const res = spawnSync('bash', [GATE_SH, 'check', taskId], {
+    env: { ...process.env, SWARM_DIR: swarmDir },
+    encoding: 'utf8',
+  });
+  assert.notEqual(res.status, null, `gate.sh did not run: ${res.error}`);
+  assert.notEqual(res.status, 2, `gate.sh usage/corruption error: ${res.stdout} ${res.stderr}`);
+  return res.status === 0;
+}
+
+// Each scenario ledgers its tasks as 'accepted' and returns the task ids to
+// differentially check. Scenario names describe the disk state, not the
+// expected outcome — the expectation is agreement, whichever way it falls.
+const DIFFERENTIAL_SCENARIOS = [
+  ['tier-1 named checker PASS', (dir) => {
+    writeLedger(dir, [['d1', '1', 'a11y', 'accepted', '1', 'w', 'r']]);
+    writeVerdict(dir, { task: 'd1', attempt: 1, checker: 'checker-a11y', verdict: 'PASS', family: 'anthropic' });
+    return ['d1'];
+  }],
+  ['tier-1 PASS + unnamed malformed stray', (dir) => {
+    writeLedger(dir, [['d1s', '1', 'a11y', 'accepted', '1', 'w', 'r']]);
+    writeVerdict(dir, { task: 'd1s', attempt: 1, checker: 'checker-a11y', verdict: 'PASS', family: 'anthropic' });
+    writeFile(dir, 'verdicts/d1s.1.checker-rogue.verdict', 'garbage\n');
+    return ['d1s'];
+  }],
+  ['tier-1 named checker file malformed', (dir) => {
+    writeLedger(dir, [['d1m', '1', 'a11y', 'accepted', '1', 'w', 'r']]);
+    writeFile(dir, 'verdicts/d1m.1.checker-a11y.verdict', 'VERDICT: PASS\nFAMILY: anthropic\n');
+    return ['d1m'];
+  }],
+  ['lean tier-2 single named checker PASS', (dir) => {
+    writeLedger(dir, [['d2', '2', 'tests', 'accepted', '1', 'w', 'r']]);
+    writeVerdict(dir, { task: 'd2', attempt: 1, checker: 'checker-tests', verdict: 'PASS', family: 'anthropic' });
+    return ['d2'];
+  }],
+  ['tier-2 two-lane quorum with second', (dir) => {
+    writeLedger(dir, [['d2q', '2', 'tests,second', 'accepted', '1', 'w', 'r']]);
+    writeVerdict(dir, { task: 'd2q', attempt: 1, checker: 'checker-tests', verdict: 'PASS', family: 'anthropic' });
+    writeVerdict(dir, { task: 'd2q', attempt: 1, checker: 'checker-second', verdict: 'PASS', family: 'adversarial' });
+    return ['d2q'];
+  }],
+  ['tier-2 quorum + malformed extra at current attempt', (dir) => {
+    writeLedger(dir, [['d2j', '2', 'tests,second', 'accepted', '1', 'w', 'r']]);
+    writeVerdict(dir, { task: 'd2j', attempt: 1, checker: 'checker-tests', verdict: 'PASS', family: 'anthropic' });
+    writeVerdict(dir, { task: 'd2j', attempt: 1, checker: 'checker-second', verdict: 'PASS', family: 'adversarial' });
+    writeFile(dir, 'verdicts/d2j.1.checker-rogue.verdict', 'VERDICT: PASS\nFAMILY: anthropic\n');
+    return ['d2j'];
+  }],
+  ['tier-2 quorum + malformed file at an old attempt', (dir) => {
+    writeLedger(dir, [['d2o', '2', 'tests', 'accepted', '2', 'w', 'r']]);
+    writeFile(dir, 'verdicts/d2o.1.checker-tests.verdict', 'VERDICT: PASS\nFAMILY: anthropic\n');
+    writeVerdict(dir, { task: 'd2o', attempt: 2, checker: 'checker-tests', verdict: 'PASS', family: 'anthropic' });
+    return ['d2o'];
+  }],
+  ['tier-2 glob-matching filename with empty checker segment', (dir) => {
+    writeLedger(dir, [['d2e', '2', 'tests', 'accepted', '1', 'w', 'r']]);
+    writeVerdict(dir, { task: 'd2e', attempt: 1, checker: 'checker-tests', verdict: 'PASS', family: 'anthropic' });
+    writeFile(dir, 'verdicts/d2e.1..verdict', 'whatever\n');
+    return ['d2e'];
+  }],
+  ['tier-2 stray filename too short for the glob', (dir) => {
+    writeLedger(dir, [['d2t', '2', 'tests', 'accepted', '1', 'w', 'r']]);
+    writeVerdict(dir, { task: 'd2t', attempt: 1, checker: 'checker-tests', verdict: 'PASS', family: 'anthropic' });
+    writeFile(dir, 'verdicts/d2t.1.verdict', 'whatever\n');
+    return ['d2t'];
+  }],
+  ['dot-prefix sibling collision (both tasks checked)', (dir) => {
+    writeLedger(dir, [
+      ['d2p', '2', 'tests', 'accepted', '1', 'w', 'r'],
+      ['d2p.1.b', '2', 'tests', 'accepted', '2', 'w', 'r'],
+    ]);
+    writeVerdict(dir, { task: 'd2p', attempt: 1, checker: 'checker-tests', verdict: 'PASS', family: 'anthropic' });
+    writeVerdict(dir, { task: 'd2p.1.b', attempt: 2, checker: 'checker-tests', verdict: 'PASS', family: 'anthropic' });
+    return ['d2p', 'd2p.1.b'];
+  }],
+  ['tier-2 dispute overruled by full panel', (dir) => {
+    writeLedger(dir, [['d2v', '2', 'tests', 'accepted', '1', 'w', 'r']]);
+    writeVerdict(dir, { task: 'd2v', attempt: 1, checker: 'checker-tests', verdict: 'FAIL', family: 'anthropic' });
+    writeVerdict(dir, { task: 'd2v', attempt: 1, checker: 'judge-claude', verdict: 'OVERRULE', family: 'anthropic' });
+    writeVerdict(dir, { task: 'd2v', attempt: 1, checker: 'judge-standards', verdict: 'OVERRULE', family: 'adversarial' });
+    writeVerdict(dir, { task: 'd2v', attempt: 1, checker: 'judge-impact', verdict: 'UPHOLD', family: 'impact' });
+    return ['d2v'];
+  }],
+  ['tier-2 overruled dispute + malformed extra', (dir) => {
+    writeLedger(dir, [['d2vj', '2', 'tests', 'accepted', '1', 'w', 'r']]);
+    writeVerdict(dir, { task: 'd2vj', attempt: 1, checker: 'checker-tests', verdict: 'FAIL', family: 'anthropic' });
+    writeVerdict(dir, { task: 'd2vj', attempt: 1, checker: 'judge-claude', verdict: 'OVERRULE', family: 'anthropic' });
+    writeVerdict(dir, { task: 'd2vj', attempt: 1, checker: 'judge-standards', verdict: 'OVERRULE', family: 'adversarial' });
+    writeVerdict(dir, { task: 'd2vj', attempt: 1, checker: 'judge-impact', verdict: 'OVERRULE', family: 'impact' });
+    writeFile(dir, 'verdicts/d2vj.1.checker-rogue.verdict', 'VERDICT: PASS\nFAMILY: anthropic\n');
+    return ['d2vj'];
+  }],
+  ['tier-3 green oracle + dual-lane quorum', (dir) => {
+    writeLedger(dir, [['d3', '3', 'tests,second', 'accepted', '1', 'w', 'r']]);
+    writeDualLanePasses(dir, 'd3', 1);
+    writeOracle(dir, 'd3');
+    writeFile(dir, 'tier3/d3/oracle.1.log', 'ORACLE PASS\n');
+    return ['d3'];
+  }],
+  ['tier-3 green oracle + quorum + malformed extra', (dir) => {
+    writeLedger(dir, [['d3j', '3', 'tests,second', 'accepted', '1', 'w', 'r']]);
+    writeDualLanePasses(dir, 'd3j', 1);
+    writeOracle(dir, 'd3j');
+    writeFile(dir, 'tier3/d3j/oracle.1.log', 'ORACLE PASS\n');
+    writeFile(dir, 'verdicts/d3j.1.checker-rogue.verdict', 'VERDICT: PASS\nFAMILY: anthropic\n');
+    return ['d3j'];
+  }],
+];
+
+test('differential: gate.sh check agrees with derived.state for every fixture', () => {
+  for (const [name, setup] of DIFFERENTIAL_SCENARIOS) {
+    const dir = makeSwarmDir();
+    const taskIds = setup(dir);
+    const state = parse(dir);
+    for (const taskId of taskIds) {
+      const gateOk = gateCheck(dir, taskId);
+      const task = state.tasks.find((t) => t.id === taskId);
+      assert.ok(task, `${name}: task ${taskId} missing from parse output`);
+      assert.equal(
+        task.derived.state === 'accepted',
+        gateOk,
+        `${name}: gate.sh check ${taskId} ${gateOk ? 'accepts' : 'rejects'} but derived.state is '${task.derived.state}'`
+      );
+    }
+  }
 });
 
 // ---------------------------------------------------------------------------
