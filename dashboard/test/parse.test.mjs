@@ -406,7 +406,7 @@ test('resolved flag (ledger tier >= target tier) -> flag is null, not counted op
 test('R-2: accepted ledger + 2-family PASS quorum + OPEN flag -> flagged, not accepted, with errors entry', () => {
   const dir = makeSwarmDir();
   writeLedger(dir, [
-    ['esc-task', '2', 'content,second', 'accepted', '1', 'worker-coder', 'reason'],
+    ['esc-task', '2', 'a11y,second', 'accepted', '1', 'worker-coder', 'reason'],
   ]);
   writeVerdict(dir, { task: 'esc-task', attempt: 1, checker: 'checker-a11y', verdict: 'PASS', family: 'anthropic' });
   writeVerdict(dir, { task: 'esc-task', attempt: 1, checker: 'checker-second', verdict: 'PASS', family: 'glm' });
@@ -428,7 +428,7 @@ test('R-2: accepted ledger + 2-family PASS quorum + OPEN flag -> flagged, not ac
 test('R-2: accepted ledger + 2-family PASS quorum + RESOLVED flag (target <= tier) -> still accepted, no discrepancy', () => {
   const dir = makeSwarmDir();
   writeLedger(dir, [
-    ['esc-task-resolved', '2', 'content,second', 'accepted', '1', 'worker-coder', 'reason'],
+    ['esc-task-resolved', '2', 'a11y,second', 'accepted', '1', 'worker-coder', 'reason'],
   ]);
   writeVerdict(dir, { task: 'esc-task-resolved', attempt: 1, checker: 'checker-a11y', verdict: 'PASS', family: 'anthropic' });
   writeVerdict(dir, { task: 'esc-task-resolved', attempt: 1, checker: 'checker-second', verdict: 'PASS', family: 'glm' });
@@ -583,6 +583,231 @@ test('spend.derived.perAcceptedTask is null when there are zero accepted tasks',
 
   const state = parse(dir);
   assert.equal(state.spend.derived.perAcceptedTask, null);
+});
+
+// ---------------------------------------------------------------------------
+// lean Tier-2 contract (gate.sh 2026-08-31): PASS from every checker named in
+// the ledger checks column; empty checks hard-fails; the two-lane span applies
+// only when `second` is among the named checks.
+// ---------------------------------------------------------------------------
+
+test('lean tier-2: single named checker PASS in one lane -> accepted (no second, no span rule)', () => {
+  const dir = makeSwarmDir();
+  writeLedger(dir, [
+    ['t2-lean-solo', '2', 'tests', 'accepted', '1', 'worker-coder', 'lean single-checker tier 2'],
+  ]);
+  writeVerdict(dir, { task: 't2-lean-solo', attempt: 1, checker: 'checker-tests', verdict: 'PASS', family: 'anthropic' });
+
+  const state = parse(dir);
+  const task = state.tasks.find((t) => t.id === 't2-lean-solo');
+  assert.equal(task.derived.state, 'accepted');
+  assert.ok(!state.errors.some((e) => e.message.includes('t2-lean-solo')));
+});
+
+test('lean tier-2: empty checks column is a hard error even with 2-family PASSes -> blocked', () => {
+  const dir = makeSwarmDir();
+  writeLedger(dir, [
+    ['t2-lean-empty', '2', '-', 'accepted', '1', 'worker-coder', 'blank checks at tier 2'],
+  ]);
+  writeVerdict(dir, { task: 't2-lean-empty', attempt: 1, checker: 'checker-tests', verdict: 'PASS', family: 'anthropic' });
+  writeVerdict(dir, { task: 't2-lean-empty', attempt: 1, checker: 'checker-second', verdict: 'PASS', family: 'adversarial' });
+
+  const state = parse(dir);
+  const task = state.tasks.find((t) => t.id === 't2-lean-empty');
+  assert.equal(task.derived.state, 'blocked');
+  assert.ok(
+    state.errors.some((e) => e.message.includes('t2-lean-empty') && e.message.includes('named checkers')),
+    'expected the empty-checks hard error to be surfaced'
+  );
+});
+
+test('lean tier-2: checks include second, both PASSes in one lane -> blocked on lane span', () => {
+  const dir = makeSwarmDir();
+  writeLedger(dir, [
+    ['t2-lean-onelane', '2', 'tests,second', 'accepted', '1', 'worker-coder', 'second in same lane'],
+  ]);
+  writeVerdict(dir, { task: 't2-lean-onelane', attempt: 1, checker: 'checker-tests', verdict: 'PASS', family: 'anthropic' });
+  writeVerdict(dir, { task: 't2-lean-onelane', attempt: 1, checker: 'checker-second', verdict: 'PASS', family: 'anthropic' });
+
+  const state = parse(dir);
+  const task = state.tasks.find((t) => t.id === 't2-lean-onelane');
+  assert.equal(task.derived.state, 'blocked');
+  assert.ok(state.errors.some((e) => e.message.includes('t2-lean-onelane')));
+});
+
+test('lean tier-2: checks include second, PASSes span anthropic+adversarial lanes -> accepted', () => {
+  const dir = makeSwarmDir();
+  writeLedger(dir, [
+    ['t2-lean-twolane', '2', 'tests,second', 'accepted', '1', 'worker-coder', 'proper two-lane pair'],
+  ]);
+  writeVerdict(dir, { task: 't2-lean-twolane', attempt: 1, checker: 'checker-tests', verdict: 'PASS', family: 'anthropic' });
+  writeVerdict(dir, { task: 't2-lean-twolane', attempt: 1, checker: 'checker-second', verdict: 'PASS', family: 'adversarial' });
+
+  const state = parse(dir);
+  const task = state.tasks.find((t) => t.id === 't2-lean-twolane');
+  assert.equal(task.verdicts.length, 2, 'adversarial FAMILY must be a valid lane');
+  assert.equal(task.derived.state, 'accepted');
+});
+
+test('lean tier-2: missing PASS from a named checker -> blocked, even with an extra unnamed PASS', () => {
+  const dir = makeSwarmDir();
+  writeLedger(dir, [
+    ['t2-lean-missing', '2', 'tests,second', 'accepted', '1', 'worker-coder', 'named checker never ran'],
+  ]);
+  writeVerdict(dir, { task: 't2-lean-missing', attempt: 1, checker: 'checker-a11y', verdict: 'PASS', family: 'anthropic' });
+  writeVerdict(dir, { task: 't2-lean-missing', attempt: 1, checker: 'checker-second', verdict: 'PASS', family: 'adversarial' });
+
+  const state = parse(dir);
+  const task = state.tasks.find((t) => t.id === 't2-lean-missing');
+  assert.equal(task.derived.state, 'blocked');
+  assert.ok(
+    state.errors.some((e) => e.message.includes('t2-lean-missing') && e.message.includes('checker-tests')),
+    'expected the missing named-checker PASS to be surfaced'
+  );
+});
+
+test('lean tier-2 dispute: judge quorum in anthropic/adversarial/impact lanes replaces the named-checker rule', () => {
+  const dir = makeSwarmDir();
+  writeLedger(dir, [
+    ['t2-lean-judged', '2', 'tests', 'accepted', '1', 'worker-coder', 'FAIL overruled by panel'],
+  ]);
+  writeVerdict(dir, { task: 't2-lean-judged', attempt: 1, checker: 'checker-tests', verdict: 'FAIL', family: 'anthropic' });
+  writeVerdict(dir, { task: 't2-lean-judged', attempt: 1, checker: 'judge-claude', verdict: 'OVERRULE', family: 'anthropic' });
+  writeVerdict(dir, { task: 't2-lean-judged', attempt: 1, checker: 'judge-standards', verdict: 'OVERRULE', family: 'adversarial' });
+  writeVerdict(dir, { task: 't2-lean-judged', attempt: 1, checker: 'judge-impact', verdict: 'UPHOLD', family: 'impact' });
+
+  const state = parse(dir);
+  const task = state.tasks.find((t) => t.id === 't2-lean-judged');
+  assert.equal(task.verdicts.length, 4, 'impact FAMILY must be a valid lane');
+  assert.equal(task.derived.isDispute, true);
+  assert.equal(task.derived.state, 'accepted');
+});
+
+// ---------------------------------------------------------------------------
+// tier-3 oracle contract (gate.sh 2026-08-26/31): no report.md -> accept.sh
+// must exist and be executable, and oracle.<attempt>.log must end with the
+// exact line ORACLE PASS. A report.md flips the dir to the legacy contract.
+// ---------------------------------------------------------------------------
+
+function writeOracle(dir, task, { executable = true } = {}) {
+  writeFile(dir, `tier3/${task}/accept.sh`, '#!/usr/bin/env bash\necho ORACLE PASS\n');
+  fs.chmodSync(path.join(dir, `tier3/${task}/accept.sh`), executable ? 0o755 : 0o644);
+}
+
+function writeDualLanePasses(dir, task, attempt) {
+  writeVerdict(dir, { task, attempt, checker: 'checker-tests', verdict: 'PASS', family: 'anthropic' });
+  writeVerdict(dir, { task, attempt, checker: 'checker-second', verdict: 'PASS', family: 'adversarial' });
+}
+
+test('tier-3 oracle: executable accept.sh + ORACLE PASS log + dual-lane PASSes -> accepted', () => {
+  const dir = makeSwarmDir();
+  writeLedger(dir, [
+    ['t3-oracle-ok', '3', 'tests,second', 'accepted', '1', 'worker-coder', 'oracle green'],
+  ]);
+  writeDualLanePasses(dir, 't3-oracle-ok', 1);
+  writeOracle(dir, 't3-oracle-ok');
+  writeFile(dir, 'tier3/t3-oracle-ok/oracle.1.log', 'check 1 ok\ncheck 2 ok\nORACLE PASS\n');
+
+  const state = parse(dir);
+  const task = state.tasks.find((t) => t.id === 't3-oracle-ok');
+  assert.equal(task.tier3.hasReport, false);
+  assert.equal(task.tier3.oracle.scriptExists, true);
+  assert.equal(task.tier3.oracle.scriptExecutable, true);
+  assert.equal(task.tier3.oracle.logExists, true);
+  assert.equal(task.tier3.oracle.oraclePass, true);
+  assert.equal(task.derived.state, 'accepted');
+});
+
+test('tier-3 oracle: accept.sh not executable -> blocked', () => {
+  const dir = makeSwarmDir();
+  writeLedger(dir, [
+    ['t3-oracle-noexec', '3', 'tests,second', 'accepted', '1', 'worker-coder', 'chmod forgotten'],
+  ]);
+  writeDualLanePasses(dir, 't3-oracle-noexec', 1);
+  writeOracle(dir, 't3-oracle-noexec', { executable: false });
+  writeFile(dir, 'tier3/t3-oracle-noexec/oracle.1.log', 'ORACLE PASS\n');
+
+  const state = parse(dir);
+  const task = state.tasks.find((t) => t.id === 't3-oracle-noexec');
+  assert.equal(task.tier3.oracle.scriptExecutable, false);
+  assert.equal(task.derived.state, 'blocked');
+  assert.ok(
+    state.errors.some((e) => e.message.includes('t3-oracle-noexec') && e.message.includes('executable'))
+  );
+});
+
+test('tier-3 oracle: log at an old attempt does not satisfy the current attempt', () => {
+  const dir = makeSwarmDir();
+  writeLedger(dir, [
+    ['t3-oracle-stale', '3', 'tests,second', 'accepted', '2', 'worker-coder', 'log never re-run'],
+  ]);
+  writeDualLanePasses(dir, 't3-oracle-stale', 2);
+  writeOracle(dir, 't3-oracle-stale');
+  writeFile(dir, 'tier3/t3-oracle-stale/oracle.1.log', 'ORACLE PASS\n');
+
+  const state = parse(dir);
+  const task = state.tasks.find((t) => t.id === 't3-oracle-stale');
+  assert.equal(task.tier3.oracle.logExists, false);
+  assert.equal(task.derived.state, 'blocked');
+});
+
+test('tier-3 oracle: log whose final line is not ORACLE PASS -> blocked', () => {
+  const dir = makeSwarmDir();
+  writeLedger(dir, [
+    ['t3-oracle-fail', '3', 'tests,second', 'accepted', '1', 'worker-coder', 'oracle actually failed'],
+  ]);
+  writeDualLanePasses(dir, 't3-oracle-fail', 1);
+  writeOracle(dir, 't3-oracle-fail');
+  writeFile(dir, 'tier3/t3-oracle-fail/oracle.1.log', 'ORACLE PASS\ncheck 3 FAILED\n');
+
+  const state = parse(dir);
+  const task = state.tasks.find((t) => t.id === 't3-oracle-fail');
+  assert.equal(task.tier3.oracle.oraclePass, false);
+  assert.equal(task.derived.state, 'blocked');
+});
+
+test('tier-3 oracle: valid oracle but PASSes in one lane only -> blocked (dual-lane quorum unconditional)', () => {
+  const dir = makeSwarmDir();
+  writeLedger(dir, [
+    ['t3-oracle-onelane', '3', 'tests,second', 'accepted', '1', 'worker-coder', 'lanes collapsed'],
+  ]);
+  writeVerdict(dir, { task: 't3-oracle-onelane', attempt: 1, checker: 'checker-tests', verdict: 'PASS', family: 'anthropic' });
+  writeVerdict(dir, { task: 't3-oracle-onelane', attempt: 1, checker: 'checker-second', verdict: 'PASS', family: 'anthropic' });
+  writeOracle(dir, 't3-oracle-onelane');
+  writeFile(dir, 'tier3/t3-oracle-onelane/oracle.1.log', 'ORACLE PASS\n');
+
+  const state = parse(dir);
+  const task = state.tasks.find((t) => t.id === 't3-oracle-onelane');
+  assert.equal(task.derived.state, 'blocked');
+});
+
+test('tier-3: no tier3 dir at all -> ledger accepted is blocked (no oracle, no legacy report)', () => {
+  const dir = makeSwarmDir();
+  writeLedger(dir, [
+    ['t3-nodir', '3', 'tests,second', 'accepted', '1', 'worker-coder', 'nothing on disk'],
+  ]);
+  writeDualLanePasses(dir, 't3-nodir', 1);
+
+  const state = parse(dir);
+  const task = state.tasks.find((t) => t.id === 't3-nodir');
+  assert.equal(task.tier3, null);
+  assert.equal(task.derived.state, 'blocked');
+});
+
+test('tier-3 legacy footgun: report.md without RESOLUTION bypasses a valid oracle -> blocked', () => {
+  const dir = makeSwarmDir();
+  writeLedger(dir, [
+    ['t3-legacy-trap', '3', 'tests,second', 'accepted', '1', 'worker-coder', 'stale report.md in dir'],
+  ]);
+  writeDualLanePasses(dir, 't3-legacy-trap', 1);
+  writeOracle(dir, 't3-legacy-trap');
+  writeFile(dir, 'tier3/t3-legacy-trap/oracle.1.log', 'ORACLE PASS\n');
+  writeFile(dir, 'tier3/t3-legacy-trap/report.md', '# stale blind-arm report, no resolution line\n');
+
+  const state = parse(dir);
+  const task = state.tasks.find((t) => t.id === 't3-legacy-trap');
+  assert.equal(task.tier3.hasReport, true);
+  assert.equal(task.derived.state, 'blocked');
 });
 
 // ---------------------------------------------------------------------------
