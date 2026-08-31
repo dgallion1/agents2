@@ -1,223 +1,200 @@
-# SPEC.md — Swarm Mission Control (read-only dashboard)
+# SPEC.md — budget2 "Retirement Smile": per-person late-life care costs
 
-A local web UI that renders the state of a running boss/worker/checker swarm
-by **reading `.swarm/` and never writing to it**. The dashboard cannot accept,
-reject, or edit any task — status flows only through verdict files and the
-gate, exactly as `CLAUDE.md` requires. The UI is a window onto the evidence,
-not a second path around the gate.
+Run prefix: **CC** (care cost). Target repo: `/home/darrell/bin/ai/budget2`
+(all manifest paths and globs in this run are budget2-repo-relative).
+Previous run's spec (Swarm Mission Control dashboard) is preserved in git
+history on master; its `.swarm` is archived as `.swarm-archive-dash`.
 
-## 1. Architecture
+## 1. Motivation
 
-- **Server-rendered first, live-reloaded second.** A zero-dependency Node
-  server (Node ≥ 24, built-in `http`/`fs` only — no npm install, honoring
-  cost discipline) reads `.swarm/`, builds a state object, and renders the
-  **complete HTML** on every `GET /`. The client's only job is to reconnect an
-  SSE stream and swap in fresh HTML when files change. This means: the real
-  content lives in the initial HTML (so `axe` audits the true page, and a
-  content checker can grep rendered values against source files), and the
-  dashboard works with JavaScript disabled.
-- **Read-only.** The server opens `.swarm/` for reading. The only endpoints
-  that run anything are explicit, operator-triggered *read* actions that shell
-  out to the existing `swarm/gate.sh` (`check`, `escalate-scan`) and stream its
-  stdout back — they change no dashboard state and write no files. There is no
-  "accept" button anywhere. (These action endpoints are **out of scope for
-  this build** — see §6; the build ships the viewer only.)
-- **Data source is swappable.** The watched directory is `SWARM_DIR`
-  (default `.swarm`), so the same binary can point at a live run or at the
-  demo fixtures.
+The what-if projection models the falling half of the retirement spending
+curve (Go-Go → No-Go phase multipliers on living + discretionary expenses)
+and healthcare *premium* inflation, but not the late-life **utilization
+jump** — assisted living / home care, typically $6–9k/mo in today's dollars,
+starting in the mid-80s. A flat 65% No-Go multiplier with no care event makes
+the projection optimistic in exactly the years portfolio depletion matters
+most. Research basis: Blanchett's "retirement smile" — total real spending is
+U-shaped, with the late rise driven by care, not premiums.
 
-### File layout (everything under `dashboard/`)
+Design decision (user-approved 2026-08-31): model care as a **per-person
+healthcare cost**, not a spending phase and not an ExpenseSource. Care is
+per-person (one spouse in assisted living while the other lives at home),
+must NOT be scaled down by spending-phase multipliers, and should inflate at
+healthcare rates, not CPI.
 
-```
-dashboard/
-  server.mjs            # http + SSE + fs.watch glue; reads SWARM_DIR from disk
-  lib/parse.mjs         # pure: (swarmDir contents) -> state object   [no HTTP]
-  lib/render.mjs        # pure: (state) -> full HTML string           [no I/O]
-  test/parse.test.mjs   # node --test suite for parse.mjs against fixtures
-  fixtures/swarm-demo/  # sample .swarm tree (ledger, verdicts, ...) + spend.jsonl
-  spend-callback.py     # LiteLLM custom logger -> spend.jsonl  (inert; not wired)
-  README.md             # how to run: `node dashboard/server.mjs [SWARM_DIR]`
+## 2. Architecture
+
+### 2a. Model (`internal/models/healthcare.go`)
+
+`HealthcarePerson` gains two optional fields:
+
+```go
+CareStartAge    int     `json:"care_start_age,omitempty"`    // 0 = care not modeled
+CareMonthlyCost float64 `json:"care_monthly_cost,omitempty"` // today's dollars
 ```
 
-## 2. Data contracts
+New method `CareCostAt(month int, startDate string) float64`:
 
-These are the interfaces workers code against. They are fixed here so the five
-tasks are mutually blind and independent — each codes to this document, not to
-another worker's output.
+- Returns 0 when `CareStartAge == 0` or `CareMonthlyCost <= 0`.
+- Care starts at the projection month the person reaches `CareStartAge`,
+  computed with the same month-precision rules as Medicare eligibility:
+  BirthMonth+startDate → month-precise (mirror `monthsUntilMedicareEligible`,
+  generalized to an arbitrary age); otherwise the year-based fallback
+  `(CareStartAge − CurrentAge) * 12`, clamped at 0.
+- From care start onward:
+  `CareMonthlyCost * (1 + PostMedicareInflation/100) ^ (month/12)`.
+  Inflation compounds from **month 0** (the amount is entered in today's
+  dollars), using the person's `PostMedicareInflation` — no new inflation
+  knob. This is the ONE formula; no other file may re-derive it.
+- Care runs to the end of the projection. No duration, no mortality — the
+  engine does not model mortality, and running to the horizon is the
+  conservative choice. Say so in the docs task (CC3), not silently.
 
-### 2a. `.swarm/` file formats (already defined by `swarm/gate.sh` + agent protocols — do not invent)
+### 2b. Engine integration (`internal/models/whatif.go`)
 
-- `ledger.tsv` — TAB-separated, 7 columns, `#` comments allowed:
-  `task_id  tier  checks  status  attempt  worker  reason`.
-  `tier ∈ {1,2,3}`, `attempt` is a non-negative integer, `checks` is a
-  comma-list or `-`.
-- `manifests/<task>.<attempt>.files` — repo-relative paths, one per line.
-- `verdicts/<task>.<attempt>.<checker>.verdict` — line-oriented `KEY: value`
-  header (`VERDICT`, `CHECKER`, `FAMILY`, `TASK`, `ATTEMPT`), then a `---`
-  separator, then free-text evidence. `VERDICT ∈ {PASS, FAIL, UPHOLD,
-  OVERRULE}`. `FAMILY ∈ {anthropic, glm, local}`.
-- `flags/<task>.flag` — `TARGET_TIER: <n>` and `REASON: <text>`.
-- `tier3/<task>/report.md` — free text; significant lines are `RESOLUTION:`
-  (presence = resolved) and a per-check matrix.
-- `spend.jsonl` — **new, defined by this project** (§2c). Absent ⇒ cost views
-  render an empty state, never an error.
+`GetTotalHealthcareCost(month)` adds `CareCostAt(month, startDate)` for each
+`HealthcarePerson`, in the multi-person branch only. The legacy single-person
+branch (`MonthlyHealthcare`) is unchanged — care requires `HealthcarePersons`.
 
-### 2b. State object (the `parse.mjs` → `render.mjs` contract)
+Everything downstream inherits automatically **and must be verified, not
+assumed** — this is a split-classification surface. Known consumers of
+`GetTotalHealthcareCost` (enumerated 2026-08-31; the checker re-enumerates):
 
-`parse(swarmDir)` returns a plain object; `render(state)` consumes exactly it.
-Unknown/malformed inputs are surfaced in `state.errors`, never thrown away.
+1. `engine/expense.go` `TotalExpenses` + `CalculateExpenseBreakdown`
+   (care lands in *essential*; never scaled by the phase multiplier).
+2. `engine/stepper.go:310` — `GetTotalHealthcareCost(m) * p.HealthcareMultiplier`
+   (Monte Carlo variation multiplies care too; accepted).
+3. `engine/expense.go` `TotalExpenses`/`CalculateExpenseBreakdown` is the
+   second dollar-accumulation path, consumed independently of the stepper by
+   `analysis/budget_fit.go` and `analysis/monte_carlo.go`. **Both paths must
+   include care identically** — this pair is the defect risk in this task.
+   (Corrected 2026-08-31: the spec originally named `loop_helpers.go:85`,
+   whose only healthcare logic is `MedicareEligibleAdultCountAtMonth` — an
+   IRMAA head-count, not dollars. See Rulings CC-2026-08-31a.)
+4. `analysis/budget_fit.go:132` and `metrics/metrics.go:48` — both call
+   `GetTotalHealthcareCost(0)` as the *current premium budget*. With
+   `CareStartAge` in the 80s and a younger current age, month 0 is
+   unaffected. Known consequence, accepted: if a user sets
+   `CareStartAge <= current age`, active care correctly counts as current
+   healthcare spending on the dashboard target.
+5. `whatif` results / spending-trajectory rows (`HealthcareExpense`,
+   Spend column) — care must appear in the trajectory table.
+6. MCP `get_balance_projection` / `run_scenario` — flow through the same
+   engine; verify a scenario with care shows higher expenses / earlier
+   depletion. Explicit per-field scenario *overrides* for care are OUT OF
+   SCOPE (configure via saved settings).
+7. `engine/healthcare.go` `HealthcarePV` → `analysis/present_value.go`
+   `PVExpenses` → orchestrator `fastAnalysis` (the Total-Needs /
+   coverage-ratio panel). **Computes per-person healthcare directly, not via
+   `GetTotalHealthcareCost`** — must add care via `CareCostAt` (no formula
+   re-derivation). Missed by the original enumeration; found by
+   checker-second (Rulings CC-2026-08-31b). Fix contract (attempt 2):
+   `HealthcarePV` keeps its `(person, discountRate, totalMonths)` signature
+   and adds the discounted care stream using `person.CareCostAt(m, "")` —
+   year-fallback start precision is accepted for this estimate panel and
+   must be stated in CC3's docs, not left silent. Discounting follows the
+   file's existing convention.
+8. `analysis/sensitivity.go` "Higher Healthcare" scenario — scales
+   `CurrentMonthlyCost`/`MedicareMonthlyCost`/`ACACostAfterEmployer` by 1.5×;
+   must scale `CareMonthlyCost` identically or the stress test silently
+   excludes care (checker-second observation, promoted into CC1 scope).
 
-```js
-{
-  tasks: [{
-    id, tier, checks: [..], status, attempt, worker, reason,
-    manifest: [paths] | null,
-    verdicts: [{ checker, family, verdict, task, attempt, evidence, path }],
-    flag: { targetTier, reason } | null,
-    tier3: { hasResolution, resolution, matrix: [{ check, a, b, agree }] } | null,
-    derived: { state: 'building'|'checking'|'disputed'|'accepted'|'flagged'|'blocked',
-               familiesPassed: [..], isDispute: bool }
-  }],
-  summary: { accepted, inVerification, disputed, flagsOpen,
-             byTier: { '1': n, '2': n, '3': n } },
-  spend: null | {
-    total, perAlias: [{ alias, family, tokens, cost }],
-    perTier:  [{ tier, tasks, avgCost }],
-    derived:  { perAcceptedTask, verificationSharePct, disputeOverhead, localTokens }
-  },
-  errors: [{ file, message }]
-}
-```
+Persistence: the two fields ride the existing `WhatIfSettings` JSON
+round-trip (save → load → identical values). Verify, don't assume.
 
-`derived.state` is computed, not read from the ledger `status` string alone, so
-the badge can never claim `accepted` unless a PASS-quorum actually exists in the
-verdict files. This is the anti-lie property; `parse.mjs` owns it.
+IRMAA: care is an expense, not a premium — it must NOT enter any IRMAA or
+premium-tax-credit logic. `CoverageAt` is untouched.
 
-### 2c. `spend.jsonl` line schema (one JSON object per line)
+### 2c. UI (`web/templates/components/whatif/`)
 
-```json
-{"ts": 1752115200, "alias": "worker-glm", "family": "glm", "tier": 2,
- "task": "dash-render", "prompt_tokens": 8123, "completion_tokens": 2044,
- "cost_usd": 0.031}
-```
+In the healthcare card, one "Late-life care" row per healthcare person:
 
-`tier` and `task` may be `null` (the gateway can't always attribute a call to a
-task). `family` is derived from the alias per `litellm-config.yaml`. Cost is
-whatever LiteLLM computed (`response_cost`). `worker-local` rows carry real
-token counts and `cost_usd: 0`.
+- Number input for start age (blank/0 = off; sensible min 60, max 100) and a
+  dollar input for monthly cost in today's dollars, wired through the
+  existing healthcare settings hx-post path (extend the handler to parse the
+  new fields).
+- A short helper line: "Assisted living / home care, in today's dollars.
+  Inflates at this person's post-Medicare healthcare rate and runs to the
+  end of the projection."
+- All displayed dollar values go through the existing single formatting path
+  (`formatDollars` server-side / `formatWholeDollars` client-side as the
+  card already uses) — no new formatter (dual-formatter defect class, W2).
+- Spending-phases card blurb gains one sentence: healthcare and late-life
+  care are modeled separately and are not reduced by these multipliers.
+- Quick Adjust panel: OUT OF SCOPE this run.
 
-## 3. Page inventory
+### 2d. Docs / assumptions honesty
 
-One page, seven regions (plus a per-task drawer). All server-rendered.
+- `whatif://assumptions` MCP resource: replace whatever it currently implies
+  about late-life costs with the true state: late-life care is modeled only
+  when configured per person; mortality is still not modeled; care runs to
+  the projection horizon.
+- Same statement wherever the app's help/docs describe spending phases.
 
-| Region | What it shows | Source |
-|--------|---------------|--------|
-| Header + summary cards | run name, accepted / in-verification / disputed / flags-open | `summary` |
-| Flags strip | red banner listing open escalations + target tier (hidden if none) | `flag` |
-| Ledger table | one row per task: id, tier badge, checks, attempt, family-colored worker, computed status | `tasks` |
-| Task drawer (`?task=<id>`) | manifest files, each verdict as a card (family + verdict + evidence) | `tasks[].manifest/verdicts` |
-| Dispute panel | for `isDispute`: both checker verdicts side by side, then the 3 judges with lenses + mechanical vote count | `verdicts` |
-| Tier-3 diff | worktree-A vs -B check matrix, divergent rows highlighted, RESOLUTION line (or its conspicuous absence) | `tier3` |
-| Cost panel | spend-by-alias table with token counts + bars, per-tier efficiency, derived metrics | `spend` |
+## 3. Out of scope (this run)
 
-## 4. Brand, voice, palette
+- Quick Adjust sliders for care; MCP `run_scenario` per-field care
+  overrides; care duration / mortality modeling; survivor spending
+  adjustment; essentials-floor-from-ledger; smooth phase interpolation;
+  trajectory sparkline. Candidates for later runs.
 
-Aligned to the Claude Design System so it reads as native tooling, not a
-bolt-on. Full rules in `ACCESSIBILITY.md`; the essentials:
+## 4. Worker constraints (paste into every dispatch)
 
-- **Surfaces**: neutral only; page is the darkest, cards step up. Light **and**
-  dark mode both first-class (`prefers-color-scheme`, no toggle needed).
-- **Family color = identity, not decoration.** Anthropic = coral, GLM = teal,
-  local = gray. Used consistently for workers, checker verdicts, judges.
-- **Status is never color-only.** Every pass/fail/dispute pairs a hue with an
-  icon **and** a text label (accessibility point A-9).
-- **Tier badges**: T1 gray, T2 purple, T3 pink — small pills, same everywhere.
-- **Voice**: sentence case, no emoji, terse operator language. Numbers are
-  rounded for display. Verdict evidence is shown verbatim, in a mono block —
-  never paraphrased (this is a fidelity tool).
+- Repo: `/home/darrell/bin/ai/budget2`, branch `feat/care-cost` (lead
+  creates it before dispatch; workers commit nothing — the lead commits).
+- **Never run the built budget2 binary** — any invocation, even
+  `--help`, starts a server and kills the live :8080 instance. `go test`
+  and `go build` only. Browser verification happens against the demo
+  instance on :8081 (`run-demo.sh`) if needed, never :8080.
+- Today's-dollars inputs, one formula per figure, one formatter per value.
+- Write your manifest to
+  `<agents2 worktree>/.swarm/manifests/<task>.<attempt>.files`
+  (budget2-repo-relative paths, one per line).
 
-## 5. Task breakdown (tiers assigned per `TIERS.md`; approved at sign-off)
+## 5. Task breakdown
 
-Tier rationale answers Oracle / Reversible / Blast-radius. All work is
-reversible (local static viewer; nothing touches money, auth, deploys, or
-migrations) so nothing is Tier 3.
+| ID  | Task | Tier | Checks | Acceptance criteria |
+|-----|------|------|--------|---------------------|
+| CC1 | Model + engine: `CareStartAge`/`CareMonthlyCost` on `HealthcarePerson`, `CareCostAt`, `GetTotalHealthcareCost` integration, tests | 2 | tests,second | (a) `go build ./...` and `go test ./...` pass. (b) New unit tests: zero-config returns 0; year-fallback start month; BirthMonth month-precise start; inflation formula exact at care start and +N years; legacy single-person branch unchanged. (c) A projection-level test proves care raises `TotalExpenses` after care age and not before, is absent from discretionary in `CalculateExpenseBreakdown`, and is NOT scaled by an enabled `SpendingPhaseConfig`. (d) A test proves stepper and loop_helpers paths agree on healthcare including care for the same month (the §2b.3 pair). (e) Settings JSON round-trip preserves both fields. (f) Checker enumerates §2b consumers and confirms each sees care or is knowingly month-0-exempt. |
+| CC2 | UI: per-person care inputs in healthcare card + handler parsing + phases-card blurb sentence | 2 | a11y,second | (a) Inputs render per healthcare person, labeled, keyboard-operable, pass ACCESSIBILITY.md checks on the changed card. (b) Posting the form persists values (visible after reload); blank/0 disables care. (c) Dollar displays use the existing formatter path only — checker greps for any new formatting call sites. (d) Phases blurb sentence present exactly once. (e) Trajectory table (Show → rows) reflects care in years ≥ care age when configured on the demo instance (:8081). |
+| CC3 | Assumptions honesty: `whatif://assumptions` resource + any help text | 1 | content | (a) Resource text states: care modeled only when configured, per person, to horizon; mortality not modeled. (b) No remaining text claims spending only declines with age. (c) Wording matches §2d substance (checker verifies against this spec section). |
 
-| Task | Tier | Checks | Worker | Why this tier |
-|------|------|--------|--------|---------------|
-| `dash-fixtures` | 1 | second | worker-local | Strong oracle (schema must satisfy `gate.sh validate_ledger`); reversible; small. Bulk mechanical → local. |
-| `dash-parse` | 2 | content, second | worker-coder | Shared trust boundary — every view depends on it; a misparse makes the UI *lie about acceptance*, the one failure this whole system exists to prevent. Dual-family. |
-| `dash-render` | 2 | a11y, second | worker-coder | Shared design system across all views; a11y oracle is only partial (axe can't judge contrast intent), so dual-family + a11y checker. |
-| `dash-server` | 1 | second | worker-coder | Thin glue over parse+render; reversible; small blast radius. Oracle = endpoints answer + smoke test passes. |
-| `dash-spend-callback` | 1 | second | worker-coder | An **inert standalone file** plus wiring instructions; it changes nothing until the user edits `litellm-config.yaml` (that activation is explicitly out of scope, and would itself be Tier 3 — it touches the shared gateway on a `critical.globs` path). Oracle = unit test: given a mock LiteLLM payload, it emits one schema-valid `spend.jsonl` line. |
+Dependency: CC2 and CC3 depend on CC1's fields existing; CC1 dispatches
+first, CC2/CC3 in parallel after CC1 is accepted.
 
-### Acceptance criteria (the oracles)
+Tier rationale (TIERS.md): all tasks reversible pre-merge and oracle-strong;
+CC1/CC2 blast radius is shared (every projection consumer / user-visible
+dollars) → Tier 2. Money on screen → `second` on both (defect-history
+surfaces: dual formatters, split classification, rendered figures). CC3 is
+small, reversible, strong oracle → Tier 1.
 
-- **dash-fixtures** — A sample `fixtures/swarm-demo/` tree that exercises every
-  state: an accepted T1, a T2 mid-check, a T2 dispute with 2 checker + 3 judge
-  verdicts, a T3 with a `report.md` (RESOLUTION present) and one without, one
-  open flag, and a `spend.jsonl` with ≥1 row per family incl. a `cost_usd:0`
-  local row. **Pass iff** `SWARM_DIR=dashboard/fixtures/swarm-demo bash
-  swarm/gate.sh escalate-scan` and `... validate_ledger` run without a `gate:`
-  error, and every verdict file parses as `KEY: value` + `---` + evidence.
-- **dash-parse** — `node --test dashboard/test/parse.test.mjs` passes; tests
-  assert (a) `derived.state==='accepted'` **only** when a PASS-quorum exists
-  for the current attempt, (b) a `FAIL` from one family flips `isDispute`, (c)
-  malformed lines land in `state.errors` rather than throwing, (d) ledger
-  values appear in state **character-faithfully** (checker-content verifies the
-  round-trip). Pure module: no `http`, no `process.exit`.
-- **dash-render** — `render(state)` returns one complete `<!doctype html>`
-  document. Running `npx @axe-core/cli` against a rendered fixture page yields
-  **zero violations** in both `prefers-color-scheme` settings; every numbered
-  point in `ACCESSIBILITY.md` holds; status is never conveyed by color alone;
-  verdict evidence appears verbatim. No inline event handlers, no external
-  origins (CSP-clean, self-contained CSS).
-- **dash-server** — `node dashboard/server.mjs dashboard/fixtures/swarm-demo`
-  serves `GET /` (200, full HTML), `GET /events` (SSE, `text/event-stream`),
-  and `GET /?task=<id>` (drawer open). A touch to a fixture file pushes an SSE
-  event within 1s. Serves nothing outside `dashboard/` and never opens `.swarm`
-  for writing.
-- **dash-spend-callback** — `spend-callback.py` exposes a LiteLLM
-  `CustomLogger` whose success hook appends exactly one `spend.jsonl` line
-  matching §2c for a mock payload; a bundled `python3` self-test asserts the
-  line parses and has all required keys. It imports nothing project-specific
-  and writes only to the path it is given. **Does not** modify
-  `litellm-config.yaml` (that path is in `critical.globs`).
+## 6. Lean-experiment bookkeeping
 
-## 6. Out of scope (this build)
-
-- Wiring `spend-callback.py` into the live gateway (edits `litellm-config.yaml`,
-  restarts the container — the user's call; Tier 3 when done).
-- The gate-action endpoints (`/run/check`, `/run/escalate-scan`). Deferred to a
-  follow-up; the viewer ships first.
-- Any write path into `.swarm/`. Permanently out of scope by design.
+Record every catch in §7 with the mechanism that caught it (primary checker /
+second / judge / gate). At run end: `swarm/gate.sh stats` and report the
+first-attempt clean rate to the user verbatim.
 
 ## 7. Rulings
 
-**R-2 (2026-07-10, boss) — dash-parse attempt 1 sent back (dispute resolved by
-rework, not panel).** At Tier 2, `checker-content` (anthropic-haiku) PASSed on
-fidelity; `checker-second` (anthropic-sonnet) FAILed on quorum logic. I
-independently reproduced the defect: for a task with ledger `status=accepted`,
-a genuine 2-family PASS quorum, **and** an open escalation flag (`tier <
-TARGET_TIER`), `parse()` returns `derived.state='accepted'` while `gate.sh
-check` returns FAIL ("escalation pending"). The gate checks the flag *before*
-tier acceptance (gate.sh cmd_check); `parse` did not, breaking the anti-lie
-property. The two checkers examined different properties and do not genuinely
-conflict, and a reproduced `gate.sh check` exit 1 is a settled mechanical fact,
-not a matter of taste — so the 3-judge panel (whose only distinct outcome is
-OVERRULE→accept-despite-FAIL) has nothing to arbitrate. Resolution: rework at
-attempt 2. Fix: an open flag must prevent `derived.state==='accepted'` and, when
-the ledger nonetheless says accepted, surface an `errors[]` discrepancy;
-mirror gate precedence (flag check first). Regression test required.
-
-**R-1 (2026-07-10, boss) — degraded-family run.** The LiteLLM gateway is not
-running and this session's `ANTHROPIC_BASE_URL` points at api.anthropic.com,
-so the `worker-glm` / `worker-local` / `checker-glm` aliases cannot resolve
-(worker-local dispatch failed at model resolution; no work was lost). This run
-proceeds Anthropic-only with per-dispatch model overrides. Tier 2's "two
-families" is downgraded to two *model-tier lineages*: mechanical checkers on
-Haiku (`FAMILY: anthropic-haiku`), second checker on Sonnet (`FAMILY:
-anthropic-sonnet`). Verdict FAMILY fields record what actually ran — never
-`glm`/`local` labels for models that didn't. The gate's distinct-family count
-still operates on these strings. True vendor independence requires relaunching
-the session through the gateway per README; tiers and checks are otherwise
-unchanged.
+- **CC-2026-08-31a** (catch — mechanism: WORKER report, CC1 attempt 1): the
+  spec's §2b.3 named `engine/loop_helpers.go:85` as the second healthcare
+  dollar-accumulation path. It is not — its only healthcare logic is
+  `MedicareEligibleAdultCountAtMonth` (IRMAA head-count). The real pair is
+  `stepper.go` vs `expense.go` (consumed by `analysis/budget_fit.go` and
+  `analysis/monte_carlo.go`). Spec corrected; the worker had already written
+  the agreement test against the correct pair. A brief-level error — exactly
+  the class no model strength in verification would have fixed; caught
+  before any checker ran.
+- **CC-2026-08-31b** (catch — mechanism: SECOND CHECKER, CC1 attempt 1,
+  FAIL CONCEDED): `engine/healthcare.go` `HealthcarePV` (→ `PVExpenses` →
+  Total-Needs/coverage-ratio panel) computes per-person healthcare dollars
+  without `GetTotalHealthcareCost`, so a $5,000/mo active care cost left
+  `PVExpenses` bit-identical while month-by-month expenses billed it — a
+  split-classification defect AND a second spec-enumeration miss (§2b
+  originally listed six consumers; this was the seventh). Lead conceded
+  without a panel. Escalation: gate flagged CC1 → Tier 3 (critical-glob);
+  attempt 2 runs under the full Tier-3 oracle contract. Secondary
+  observation promoted into scope: `sensitivity.go` "Higher Healthcare"
+  must scale `CareMonthlyCost` 1.5× like its sibling fields. The
+  checker's throwaway PV probe is promoted to a permanent regression test
+  (V3 pattern).
