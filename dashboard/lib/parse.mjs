@@ -15,7 +15,10 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 const VALID_VERDICTS = new Set(['PASS', 'FAIL', 'UPHOLD', 'OVERRULE']);
-const VALID_FAMILIES = new Set(['anthropic', 'glm', 'local']);
+// FAMILY names an independence LANE (gate.sh load_verdict): anthropic /
+// adversarial / impact are current; glm and local validate only so
+// pre-2026-08-19 verdicts still parse.
+const VALID_FAMILIES = new Set(['anthropic', 'adversarial', 'impact', 'glm', 'local']);
 const VERDICT_FILENAME_RE = /^(.+)\.(\d+)\.(.+)\.verdict$/;
 const REQUIRED_VERDICT_HEADERS = ['VERDICT', 'CHECKER', 'FAMILY', 'TASK', 'ATTEMPT'];
 
@@ -346,12 +349,31 @@ function parseTier3Matrix(content) {
   return [];
 }
 
-function parseTier3(swarmDir, taskId) {
+// Mirrors gate.sh `tail -n1`: a trailing newline does not add an empty last
+// line, but any other trailing content (extra blank line, \r) counts as-is.
+function lastLine(content) {
+  const lines = content.split('\n');
+  if (lines.length > 1 && lines[lines.length - 1] === '') lines.pop();
+  return lines[lines.length - 1];
+}
+
+function isExecutable(filePath) {
+  try {
+    fs.accessSync(filePath, fs.constants.X_OK);
+    return fs.statSync(filePath).isFile();
+  } catch {
+    return false;
+  }
+}
+
+function parseTier3(swarmDir, taskId, attempt) {
   const dirPath = path.join(swarmDir, 'tier3', taskId);
   if (!isDirectory(dirPath)) return null;
 
   const reportPath = path.join(dirPath, 'report.md');
-  const content = readFileIfExists(reportPath) ?? '';
+  const reportContent = readFileIfExists(reportPath);
+  const hasReport = reportContent !== null;
+  const content = reportContent ?? '';
 
   const lines = content.split(/\r?\n/);
   let resolution = null;
@@ -362,11 +384,44 @@ function parseTier3(swarmDir, taskId) {
     }
   }
 
+  // Oracle-first contract (gate.sh check_tier3, 2026-08-26): only consulted
+  // when no report.md exists, but always reported for display.
+  const scriptPath = path.join(dirPath, 'accept.sh');
+  const logContent = readFileIfExists(path.join(dirPath, `oracle.${attempt}.log`));
+  const oracle = {
+    scriptExists: fs.existsSync(scriptPath),
+    scriptExecutable: isExecutable(scriptPath),
+    logExists: logContent !== null,
+    oraclePass: logContent !== null && lastLine(logContent) === 'ORACLE PASS',
+  };
+
   return {
+    hasReport,
     hasResolution: resolution !== null,
     resolution,
     matrix: parseTier3Matrix(content),
+    oracle,
   };
+}
+
+// The tier-3 evidence contract (gate.sh check_tier3): a report.md switches the
+// directory to the legacy blind-arm contract (RESOLUTION line required, oracle
+// ignored); otherwise the oracle contract applies in full.
+function tier3ContractOk(tier3) {
+  if (!tier3) return false;
+  if (tier3.hasReport) return tier3.hasResolution;
+  const o = tier3.oracle;
+  return o.scriptExists && o.scriptExecutable && o.logExists && o.oraclePass;
+}
+
+function tier3ContractReason(tier3) {
+  if (!tier3) return 'no tier-3 oracle (accept.sh) and no legacy report.md';
+  if (tier3.hasReport) return 'no RESOLUTION line in tier-3 report';
+  const o = tier3.oracle;
+  if (!o.scriptExists) return 'no tier-3 oracle (accept.sh) and no legacy report.md';
+  if (!o.scriptExecutable) return 'tier-3 oracle accept.sh is not executable';
+  if (!o.logExists) return 'no oracle run log at the current attempt';
+  return 'oracle log does not end with ORACLE PASS';
 }
 
 // ---------------------------------------------------------------------------
@@ -498,8 +553,9 @@ function computeQuorum(tier, checks, verdicts, tier3, hasFail, disputeResolved, 
     );
   }
 
-  // tier 2 and 3 share the dual-family quorum rule. Only validated verdicts
-  // reach this point (invalid files were excluded in parseAllVerdicts).
+  // Only validated verdicts reach this point (invalid files were excluded in
+  // parseAllVerdicts). Any FAIL at the attempt replaces the PASS requirement
+  // with the judge-panel quorum — at both tiers (gate.sh walk_verdicts).
   const passCheckers = new Set();
   const familiesPassed = new Set();
   for (const v of verdicts) {
@@ -508,14 +564,23 @@ function computeQuorum(tier, checks, verdicts, tier3, hasFail, disputeResolved, 
     passCheckers.add(v.checker);
     familiesPassed.add(v.family);
   }
-  const baseQuorum = hasFail
-    ? disputeResolved && majorityOverrule
-    : familiesPassed.size >= 2;
+  const disputeQuorum = disputeResolved && majorityOverrule;
 
-  if (tier === 3) {
-    return baseQuorum && !!(tier3 && tier3.hasResolution);
+  if (tier === 2) {
+    // Lean tier-2 contract (gate.sh check_tier2, 2026-08-31): PASS from every
+    // checker named in the ledger checks column; an empty column is a hard
+    // error; the two-lane span applies only when `second` is among the names.
+    if (checks.length === 0) return false;
+    if (hasFail) return disputeQuorum;
+    if (!checks.every((c) => passCheckers.has(`checker-${c}`))) return false;
+    if (checks.includes('second') && familiesPassed.size < 2) return false;
+    return true;
   }
-  return baseQuorum;
+
+  // Tier 3 (gate.sh check_tier3): evidence contract first, then the
+  // unconditional dual-lane quorum regardless of the checks column.
+  const baseQuorum = hasFail ? disputeQuorum : familiesPassed.size >= 2;
+  return tier3ContractOk(tier3) && baseQuorum;
 }
 
 function computeDerived(task, verdicts, flagOpen) {
@@ -559,7 +624,16 @@ function computeDerived(task, verdicts, flagOpen) {
     } else {
       state = 'blocked';
       let reason;
-      if (identityError) {
+      const missingChecker =
+        task.tier === 2 && !hasFail
+          ? task.checks.find(
+              (c) => !verdicts.some((v) => v.checker === `checker-${c}` && v.verdict === 'PASS')
+            )
+          : undefined;
+      if (task.tier === 3 && !tier3ContractOk(task.tier3)) {
+        // gate.sh checks the tier-3 evidence contract before the quorum walk.
+        reason = tier3ContractReason(task.tier3);
+      } else if (identityError) {
         reason = identityError;
       } else if (disputeOpen) {
         reason = `open dispute (${ups} uphold / ${ovs} overrule, need >=3 judges)`;
@@ -569,8 +643,12 @@ function computeDerived(task, verdicts, flagOpen) {
         reason = 'unresolved FAIL in current-attempt verdicts';
       } else if (task.tier === 1) {
         reason = 'not all required checkers returned PASS';
-      } else if (task.tier === 3 && !(task.tier3 && task.tier3.hasResolution)) {
-        reason = 'no RESOLUTION line in tier-3 report';
+      } else if (task.tier === 2 && task.checks.length === 0) {
+        reason = 'tier 2 requires named checkers in the ledger checks column';
+      } else if (missingChecker !== undefined) {
+        reason = `missing PASS from checker-${missingChecker}`;
+      } else if (task.tier === 2) {
+        reason = `checks include 'second' but PASSes span ${familiesPassed.length} lane(s), need 2`;
       } else {
         reason = `only ${familiesPassed.length} distinct family PASS(es), need 2`;
       }
@@ -608,7 +686,7 @@ export function parse(swarmDir) {
     const manifest = parseManifest(swarmDir, row.id, row.attempt);
     const verdicts = verdictsByTaskAttempt.get(`${row.id}.${row.attempt}`) ?? [];
     const flag = parseFlag(swarmDir, row.id, row.tier);
-    const tier3 = parseTier3(swarmDir, row.id);
+    const tier3 = parseTier3(swarmDir, row.id, row.attempt);
 
     const task = {
       id: row.id,
