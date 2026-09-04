@@ -1,216 +1,236 @@
-# SPEC.md — budget2 "Retirement Smile": per-person late-life care costs
+# SPEC.md — budget2 what-if: make the monthly expense total legible
 
-Run prefix: **CC** (care cost). Target repo: `/home/darrell/bin/ai/budget2`
-(all manifest paths and globs in this run are budget2-repo-relative).
-Previous run's spec (Swarm Mission Control dashboard) is preserved in git
-history on master; its `.swarm` is archived as `.swarm-archive-dash`.
+Run prefix: **EX** (expense clarity). Target repo: `/home/darrell/bin/ai/budget2`,
+worktree `/home/darrell/bin/ai/budget2/.claude/worktrees/expense-clarity`,
+branch `feat/expense-breakdown-clarity` (cut from master `75862ec`). All
+manifest paths and globs in this run are budget2-repo-relative. The
+previous run's spec (CC, per-person care costs) is preserved in git history.
 
 ## 1. Motivation
 
-The what-if projection models the falling half of the retirement spending
-curve (Go-Go → No-Go phase multipliers on living + discretionary expenses)
-and healthcare *premium* inflation, but not the late-life **utilization
-jump** — assisted living / home care, typically $6–9k/mo in today's dollars,
-starting in the mid-80s. A flat 65% No-Go multiplier with no care event makes
-the projection optimistic in exactly the years portfolio depletion matters
-most. Research basis: Blanchett's "retirement smile" — total real spending is
-U-shaped, with the late rise driven by care, not premiums.
+The user asked (2026-09-03): "The monthly living expenses and the full
+expenses as in 10.7K now confuse me. Are we sure the health ins isn't part
+of the 7,792?" It is not — the plan total is three separately-entered
+figures added together:
 
-Design decision (user-approved 2026-08-31): model care as a **per-person
-healthcare cost**, not a spending phase and not an ExpenseSource. Care is
-per-person (one spouse in assisted living while the other lives at home),
-must NOT be scaled down by spending-phase multipliers, and should inflate at
-healthcare rates, not CPI.
+| Piece | Monthly | Source in the plan |
+|---|---|---|
+| Living expenses (Go-Go multiplier 1.0 at age 67) | 7,792.85 | `monthly_living_expenses` (set by Sync from Dashboard, which EXCLUDES "Health Insurance"-category rows — `internal/handlers/whatif/sync.go:202`) |
+| Christine, ACA premium | 1,655.30 | `healthcare_persons[1].current_monthly_cost` |
+| Darrell, Medicare | 600.00 | `healthcare_persons[0].current_monthly_cost` |
+| Property tax | 666.00 | `monthly_property_tax` |
+| **Total** | **10,714.15** | `BudgetFit.MonthlyExpenses` |
 
-## 2. Architecture
+The arithmetic is right; the page hides it. Three findings (lead, verified
+in the browser 2026-09-03):
 
-### 2a. Model (`internal/models/healthcare.go`)
+1. The Living / Healthcare / Property Tax breakdown exists only in "Monthly
+   Budget Analysis" on the **Cash Flow tab**. The page opens on Overview,
+   which shows the verdict strip and chart but never itemizes the total.
+2. The "Monthly Living Expenses" slider helper text reads only "In today's
+   dollars. Inflation is applied during projection." It never says
+   healthcare and property tax are added on top from the fields below.
+3. The Healthcare row is one lump (2,255.30). Nothing says it is two
+   people's premiums from the Healthcare card rather than ledger spending.
 
-`HealthcarePerson` gains two optional fields:
+(The Sync preview already says premiums are excluded —
+`sync-preview.html:28` — but that text is visible only during a sync.)
 
-```go
-CareStartAge    int     `json:"care_start_age,omitempty"`    // 0 = care not modeled
-CareMonthlyCost float64 `json:"care_monthly_cost,omitempty"` // today's dollars
-```
+## 2. Design
 
-New method `CareCostAt(month int, startDate string) float64`:
+Two independent tasks. Neither changes any computed figure; both are
+presentation. Every dollar shown goes through an existing formatter
+(`formatMoney` for cents in the panel, `formatDollars` for whole dollars
+beside the slider); no new formatting code, no JS arithmetic over
+rendered strings.
 
-- Returns 0 when `CareStartAge == 0` or `CareMonthlyCost <= 0`.
-- Care starts at the projection month the person reaches `CareStartAge`,
-  computed with the same month-precision rules as Medicare eligibility:
-  BirthMonth+startDate → month-precise (mirror `monthsUntilMedicareEligible`,
-  generalized to an arbitrary age); otherwise the year-based fallback
-  `(CareStartAge − CurrentAge) * 12`, clamped at 0.
-- From care start onward:
-  `CareMonthlyCost * (1 + PostMedicareInflation/100) ^ (month/12)`.
-  Inflation compounds from **month 0** (the amount is entered in today's
-  dollars), using the person's `PostMedicareInflation` — no new inflation
-  knob. This is the ONE formula; no other file may re-derive it.
-- Care runs to the end of the projection. No duration, no mortality — the
-  engine does not model mortality, and running to the horizon is the
-  conservative choice. Say so in the docs task (CC3), not silently.
+### 2a. EX1 — per-person Healthcare sub-rows (`internal/services/retirement/analysis/budget_fit.go`)
 
-### 2b. Engine integration (`internal/models/whatif.go`)
+In `calculateBudgetFit` (the `healthcareCost > 0` branch, ~line 133), when
+`len(s.HealthcarePersons) > 0`, populate the Healthcare row's `SubItems`
+with one entry per person, in `HealthcarePersons` order:
 
-`GetTotalHealthcareCost(month)` adds `CareCostAt(month, startDate)` for each
-`HealthcarePerson`, in the multi-person branch only. The legacy single-person
-branch (`MonthlyHealthcare`) is unchanged — care requires `HealthcarePersons`.
+- `Name`: `<person.Name> (<coverage label>)`, where the coverage label is
+  the person's coverage at month 0 (`CoverageAt(0, s.StartDate)`) rendered
+  as `Medicare` / `ACA` / `Employer` (title-case for display). If
+  `models.CoverageType` already has a display-label helper, use it; if
+  not, add ONE method `func (c CoverageType) Label() string` in
+  `internal/models/healthcare.go` and use it here — never a second
+  mapping. An empty `person.Name` renders as `Person N` (1-based).
+- `Amount`: the person's month-0 contribution, exactly the two terms
+  `GetTotalHealthcareCost` sums: `GetMonthlyCostAt(0, s.StartDate) +
+  CareCostAt(0, s.StartDate)`. A person whose month-0 cost is 0 (employer
+  covered, coverage not started) still gets a row at 0 — provenance is the
+  point.
+- **Rendered-string identity (ruling 2026-08-29b, same construction as the
+  Living Expenses sub-rows directly above):** every sub-row amount is
+  derived via `centsFromDecimalString`, and the LAST sub-row absorbs the
+  integer-cent residual against `centsFromDecimalString(healthcareCost)`,
+  so the rendered sub-rows sum to the rendered Healthcare row by
+  construction. The Healthcare row's own `Amount` stays `healthcareCost`
+  (unchanged rendering). Fractional cents are real here: the MCP
+  `healthcare_monthly_cost` override distributes a total proportionally
+  across persons.
+- `SignedAmount` stays false (these are components, not adjustments).
+- Legacy single-scalar healthcare (no persons) and the `$0 / employer
+  covered` branch: unchanged, no sub-rows.
 
-Everything downstream inherits automatically **and must be verified, not
-assumed** — this is a split-classification surface. Known consumers of
-`GetTotalHealthcareCost` (enumerated 2026-08-31; the checker re-enumerates):
+The existing template (`budget-analysis.html`, the `{{range .SubItems}}`
+block) renders these with no template change. Consumers of
+`ExpenseBreakdown` other than that template: the checker enumerates
+(`grep -rn ExpenseBreakdown`, including the MCP plan view and any JSON
+surface) and confirms none breaks on a populated `SubItems` under
+Healthcare.
 
-1. `engine/expense.go` `TotalExpenses` + `CalculateExpenseBreakdown`
-   (care lands in *essential*; never scaled by the phase multiplier).
-2. `engine/stepper.go:310` — `GetTotalHealthcareCost(m) * p.HealthcareMultiplier`
-   (Monte Carlo variation multiplies care too; accepted).
-3. `engine/expense.go` `TotalExpenses`/`CalculateExpenseBreakdown` is the
-   second dollar-accumulation path, consumed independently of the stepper by
-   `analysis/budget_fit.go` and `analysis/monte_carlo.go`. **Both paths must
-   include care identically** — this pair is the defect risk in this task.
-   (Corrected 2026-08-31: the spec originally named `loop_helpers.go:85`,
-   whose only healthcare logic is `MedicareEligibleAdultCountAtMonth` — an
-   IRMAA head-count, not dollars. See Rulings CC-2026-08-31a.)
-4. `analysis/budget_fit.go:132` and `metrics/metrics.go:48` — both call
-   `GetTotalHealthcareCost(0)` as the *current premium budget*. With
-   `CareStartAge` in the 80s and a younger current age, month 0 is
-   unaffected. Known consequence, accepted: if a user sets
-   `CareStartAge <= current age`, active care correctly counts as current
-   healthcare spending on the dashboard target.
-5. `whatif` results / spending-trajectory rows (`HealthcareExpense`,
-   Spend column) — care must appear in the trajectory table.
-6. MCP `get_balance_projection` / `run_scenario` — flow through the same
-   engine; verify a scenario with care shows higher expenses / earlier
-   depletion. Explicit per-field scenario *overrides* for care are OUT OF
-   SCOPE (configure via saved settings).
-7. `engine/healthcare.go` `HealthcarePV` → `analysis/present_value.go`
-   `PVExpenses` → orchestrator `fastAnalysis` (the Total-Needs /
-   coverage-ratio panel). **Computes per-person healthcare directly, not via
-   `GetTotalHealthcareCost`** — must add care via `CareCostAt` (no formula
-   re-derivation). Missed by the original enumeration; found by
-   checker-second (Rulings CC-2026-08-31b). Fix contract (attempt 2):
-   `HealthcarePV` keeps its `(person, discountRate, totalMonths)` signature
-   and adds the discounted care stream using `person.CareCostAt(m, "")` —
-   year-fallback start precision is accepted for this estimate panel and
-   must be stated in CC3's docs, not left silent. Discounting follows the
-   file's existing convention.
-8. `analysis/sensitivity.go` "Higher Healthcare" scenario — scales
-   `CurrentMonthlyCost`/`MedicareMonthlyCost`/`ACACostAfterEmployer` by 1.5×;
-   must scale `CareMonthlyCost` identically or the stress test silently
-   excludes care (checker-second observation, promoted into CC1 scope).
+### 2b. EX2 — slider note + Overview expense card (templates + one JS hook)
 
-Persistence: the two fields ride the existing `WhatIfSettings` JSON
-round-trip (save → load → identical values). Verify, don't assume.
+**(i) Slider helper text** — `web/templates/components/whatif/portfolio-settings.html:78`.
+Replace the paragraph text with, verbatim:
 
-IRMAA: care is an expense, not a premium — it must NOT enter any IRMAA or
-premium-tax-credit logic. `CoverageAt` is untouched.
+> In today's dollars; inflation is applied during projection. Excludes
+> healthcare premiums and property tax — those are entered below and added
+> on top. Plan total today: {{formatDollars .Analysis.BudgetFit.MonthlyExpenses}}/mo.
 
-### 2c. UI (`web/templates/components/whatif/`)
+Rules: keep the existing `<p>` element, classes, and position (the phase
+note paragraph stays directly after it). The final sentence renders ONLY
+when `.Analysis` and `.Analysis.BudgetFit` are present — the template is
+also rendered in tests and partials without them
+(`living_expenses_phase_note_test.go`, `monthly_living_expenses_rounding_test.go`
+render `whatif-portfolio-settings` with a bare map). The figure is
+server-rendered and refreshes with the card's existing oob swap
+(`pages/whatif.html:240`); it is NOT updated live during slider drag — do
+not add JS arithmetic for it. `formatDollars` is deliberate: it matches the
+slider's own display span beside it; the panel keeps cents.
 
-In the healthcare card, one "Late-life care" row per healthcare person:
+**(ii) One partial for the expense rows.** Extract the Expenses section of
+`budget-analysis.html` — the "EXPENSES" header row through the end of the
+`{{range .Analysis.BudgetFit.ExpenseBreakdown}}` block (sub-rows
+included) — into `{{define "whatif-expense-rows"}}` in the same file, and
+have `whatif-budget-analysis` include it where the markup was. Byte-for-
+byte identical output for the Cash Flow panel is the acceptance test
+(render before/after with the existing fixtures and diff).
 
-- Number input for start age (blank/0 = off; sensible min 60, max 100) and a
-  dollar input for monthly cost in today's dollars, wired through the
-  existing healthcare settings hx-post path (extend the handler to parse the
-  new fields).
-- A short helper line: "Assisted living / home care, in today's dollars.
-  Inflates at this person's post-Medicare healthcare rate and runs to the
-  end of the projection."
-- All displayed dollar values go through the existing single formatting path
-  (`formatDollars` server-side / `formatWholeDollars` client-side as the
-  card already uses) — no new formatter (dual-formatter defect class, W2).
-- Spending-phases card blurb gains one sentence: healthcare and late-life
-  care are modeled separately and are not reduced by these multipliers.
-- Quick Adjust panel: OUT OF SCOPE this run.
+**(iii) Overview card.** New `{{define "whatif-expense-summary"}}` in a
+new file `web/templates/components/whatif/expense-summary.html`, included
+in `pages/whatif.html` in the Overview panel between the projection chart
+and the failure-points card:
 
-### 2d. Docs / assumptions honesty
+- Card chrome identical to the budget-analysis card
+  (`bg-white dark:bg-gray-800 rounded-lg shadow p-4`).
+- `<h2>` "Monthly Expenses Today" (same heading classes as the panel's).
+- One `<p class="text-xs …">` under it, verbatim: "Living expenses come
+  from the slider; healthcare from the Healthcare card; property tax from
+  its field. Income, taxes, and the monthly gap are under Cash Flow."
+- `{{template "whatif-expense-rows" .}}`.
+- A footer link `<a href="#" data-wf-goto="cashflow" class="text-xs …">`
+  with text "Full cash flow →". It must be a real link/button with a
+  visible focus ring and ≥24×24 px target, not a bare span.
+- Guard: render the card only when `.Analysis.BudgetFit` is present and
+  `len .Analysis.BudgetFit.ExpenseBreakdown > 0`; otherwise render nothing
+  (no empty card).
 
-- `whatif://assumptions` MCP resource: replace whatever it currently implies
-  about late-life costs with the true state: late-life care is modeled only
-  when configured per person; mortality is still not modeled; care runs to
-  the projection horizon.
-- Same statement wherever the app's help/docs describe spending phases.
+**(iv) JS hook** — `web/static/js/whatif-tabs.js`, inside the existing
+container click listener in `wire()`: after the `[data-wf-tab]` branch,
+add a `[data-wf-goto]` branch that `preventDefault()`s and calls
+`activateTab(value, true)`. Do NOT reuse `data-wf-tab` on the link — the
+tab code toggles `aria-selected`/`wf-tab-active` on every `[data-wf-tab]`
+and the link is not a `role="tab"`. No inline `onclick`.
+
+**Tests (Go, `internal/templates/`):** (1) the Cash Flow panel render is
+byte-identical before/after the extraction for the existing sub-item
+fixtures; (2) the Overview card renders the same row strings as the panel
+for one fixture with Living/Healthcare(+2 sub-rows)/Property Tax, and
+renders nothing for an empty breakdown; (3) the slider note contains
+"Plan total today: $10,714/mo." for `MonthlyExpenses: 10714.15` and omits
+the sentence when `Analysis` is absent.
+
+### 2c. Accessibility (budget2 `ACCESSIBILITY.md` governs; agents2's is the dashboard's)
+
+New text uses the sibling helper-text token pair already on the card
+(`text-gray-500 dark:text-gray-400` on `dark:bg-gray-800` passed the CC2
+audit; on `dark:bg-gray-700` it did NOT — CC-2026-08-31c — so match the
+element's actual background). Heading order on Overview stays h2 under the
+page h1. The link is keyboard-operable and announced as a link.
 
 ## 3. Out of scope (this run)
 
-- Quick Adjust sliders for care; MCP `run_scenario` per-field care
-  overrides; care duration / mortality modeling; survivor spending
-  adjustment; essentials-floor-from-ledger; smooth phase interpolation;
-  trajectory sparkline. Candidates for later runs.
+- Making the slider's plan-total figure live during drag.
+- Reconciling the slider's whole-dollar display (`$7,793`) with the
+  panel's cents (`$7,792.85`) — pre-existing, both from one float.
+- Moving the whole Monthly Budget Analysis card to Overview.
+- Any change to `sync.go`, the sync preview, or the dashboard.
+- The `check #996570` question (possible property-tax double count) —
+  a data question for the user, not a code change.
 
 ## 4. Worker constraints (paste into every dispatch)
 
-- Repo: `/home/darrell/bin/ai/budget2`, branch `feat/care-cost` (lead
-  creates it before dispatch; workers commit nothing — the lead commits).
-- **Never run the built budget2 binary** — any invocation, even
-  `--help`, starts a server and kills the live :8080 instance. `go test`
-  and `go build` only. Browser verification happens against the demo
-  instance on :8081 (`run-demo.sh`) if needed, never :8080.
-- Today's-dollars inputs, one formula per figure, one formatter per value.
+- Work ONLY in `/home/darrell/bin/ai/budget2/.claude/worktrees/expense-clarity`
+  (branch `feat/expense-breakdown-clarity`). Do not touch
+  `/home/darrell/bin/ai/budget2` itself. Workers commit nothing — the lead
+  commits.
+- **Never run the built budget2 binary directly** — it kills the live
+  :8080 instance. `go build ./...` and `go test ./...` only. If you need a
+  browser check, use `scripts/whatif-verify.sh start 8099` from the
+  worktree (isolated data copy) and `stop` when done. Never :8080.
+- One formatter per value, one rounding path per figure, no JS arithmetic
+  over rendered strings, no new formatting helpers.
 - Write your manifest to
-  `<agents2 worktree>/.swarm/manifests/<task>.<attempt>.files`
+  `/home/darrell/work/agents2/.claude/worktrees/expenses-health-insurance-clarify-0e9d34/.swarm/manifests/<task>.<attempt>.files`
   (budget2-repo-relative paths, one per line).
 
 ## 5. Task breakdown
 
 | ID  | Task | Tier | Checks | Acceptance criteria |
 |-----|------|------|--------|---------------------|
-| CC1 | Model + engine: `CareStartAge`/`CareMonthlyCost` on `HealthcarePerson`, `CareCostAt`, `GetTotalHealthcareCost` integration, tests | 2 | tests,second | (a) `go build ./...` and `go test ./...` pass. (b) New unit tests: zero-config returns 0; year-fallback start month; BirthMonth month-precise start; inflation formula exact at care start and +N years; legacy single-person branch unchanged. (c) A projection-level test proves care raises `TotalExpenses` after care age and not before, is absent from discretionary in `CalculateExpenseBreakdown`, and is NOT scaled by an enabled `SpendingPhaseConfig`. (d) A test proves stepper and loop_helpers paths agree on healthcare including care for the same month (the §2b.3 pair). (e) Settings JSON round-trip preserves both fields. (f) Checker enumerates §2b consumers and confirms each sees care or is knowingly month-0-exempt. |
-| CC2 | UI: per-person care inputs in healthcare card + handler parsing + phases-card blurb sentence | 2 | a11y,second | (a) Inputs render per healthcare person, labeled, keyboard-operable, pass ACCESSIBILITY.md checks on the changed card. (b) Posting the form persists values (visible after reload); blank/0 disables care. (c) Dollar displays use the existing formatter path only — checker greps for any new formatting call sites. (d) Phases blurb sentence present exactly once. (e) Trajectory table (Show → rows) reflects care in years ≥ care age when configured on the demo instance (:8081). |
-| CC3 | Assumptions honesty: `whatif://assumptions` resource + any help text | 1 | content | (a) Resource text states: care modeled only when configured, per person, to horizon; mortality not modeled. (b) No remaining text claims spending only declines with age. (c) Wording matches §2d substance (checker verifies against this spec section). |
+| EX1 | Per-person Healthcare sub-rows in `budget_fit.go` (+ `CoverageType.Label()` if absent) + tests | 2 | tests,second | (a) `go build ./...` and `go test ./...` pass. (b) New test in `internal/services/retirement/analysis/`: two persons (Medicare 600, ACA 1655.30) → Healthcare row 2255.30 with two sub-rows named `<name> (Medicare)` / `<name> (ACA)` at those amounts, in person order. (c) Fractional-cent fixture whose naive rendered sum differs from the rendered total — 600.006 and 1655.306 (renders 600.01 + 1655.31 vs total 2255.31; NOT 600.005/1655.305, whose residual is zero — ruling EX-2026-09-03a): rendered sub-row strings (formatMoney) sum exactly to the rendered Healthcare row string, and the last row shows the absorbed cent. (d) A person with month-0 cost 0 still gets a row at 0; legacy scalar healthcare gets no sub-rows; the `$0 / employer covered` branch is unchanged. (e) Care cost at month 0 (CareStartAge ≤ current age) is included in that person's sub-row — fixture must put the care person in a NON-last position, since the last row is re-derived from the total (ruling EX-2026-09-03a). (f) Exactly one coverage-label mapping exists (checker greps for a second). (g) Checker enumerates every consumer of `ExpenseBreakdown`/`SubItems` and confirms none regresses. |
+| EX2 | Slider note, `whatif-expense-rows` partial, Overview "Monthly Expenses Today" card, `data-wf-goto` hook, template tests | 2 | a11y,second | (a) `go build ./...` and `go test ./...` pass; the three tests in §2b exist and pass. (b) Cash Flow panel render byte-identical before/after extraction (checker diffs). (c) Overview card shows the same row strings as the panel for the same fixture; hidden when breakdown empty. (d) Slider note text verbatim per §2b(i), figure via `formatDollars`, sentence absent without `.Analysis`. (e) "Full cash flow →" activates the Cash Flow tab by keyboard and mouse on the :8099 verify instance; no inline handlers; no `data-wf-tab` on the link. (f) Contrast of every new text node ≥4.5:1 in light and dark on its actual background (real axe/contrast run, not eyeballed). (g) No new formatting call sites (checker greps the diff for `printf "%.`/`toLocaleString`/`Math.round`). |
 
-Dependency: CC2 and CC3 depend on CC1's fields existing; CC1 dispatches
-first, CC2/CC3 in parallel after CC1 is accepted.
+Independent — dispatch in parallel. EX2's Overview card renders EX1's
+sub-rows automatically once both merge; neither needs the other to pass.
 
-Outcome note (2026-08-31): CC1's tier column above is the Phase-0
-assignment; the gate escalated CC1 to **Tier 3** (critical-glob) after its
-first verdicts landed, and it was accepted under the full oracle contract at
-attempt 2 — the ledger is the authority on final tiers.
-
-Tier rationale (TIERS.md): all tasks reversible pre-merge and oracle-strong;
-CC1/CC2 blast radius is shared (every projection consumer / user-visible
-dollars) → Tier 2. Money on screen → `second` on both (defect-history
-surfaces: dual formatters, split classification, rendered figures). CC3 is
-small, reversible, strong oracle → Tier 1.
+Tier rationale (TIERS.md): both reversible pre-merge and oracle-strong;
+blast radius is user-visible dollars on the plan's main page → Tier 2.
+Money on screen and rendered-string arithmetic (EX1 sub-row identity,
+EX2 duplicated rows across two surfaces) → `second` on both. Primary
+verifier: `tests` for the Go change, `a11y` for the markup change.
 
 ## 6. Lean-experiment bookkeeping
 
-Record every catch in §7 with the mechanism that caught it (primary checker /
-second / judge / gate). At run end: `swarm/gate.sh stats` and report the
-first-attempt clean rate to the user verbatim.
+Record every catch in §7 with the mechanism that caught it (primary
+checker / second / judge / gate). At run end: `swarm/gate.sh stats` and
+report the first-attempt clean rate to the user verbatim.
 
 ## 7. Rulings
 
-- **CC-2026-08-31a** (catch — mechanism: WORKER report, CC1 attempt 1): the
-  spec's §2b.3 named `engine/loop_helpers.go:85` as the second healthcare
-  dollar-accumulation path. It is not — its only healthcare logic is
-  `MedicareEligibleAdultCountAtMonth` (IRMAA head-count). The real pair is
-  `stepper.go` vs `expense.go` (consumed by `analysis/budget_fit.go` and
-  `analysis/monte_carlo.go`). Spec corrected; the worker had already written
-  the agreement test against the correct pair. A brief-level error — exactly
-  the class no model strength in verification would have fixed; caught
-  before any checker ran.
-- **CC-2026-08-31b** (catch — mechanism: SECOND CHECKER, CC1 attempt 1,
-  FAIL CONCEDED): `engine/healthcare.go` `HealthcarePV` (→ `PVExpenses` →
-  Total-Needs/coverage-ratio panel) computes per-person healthcare dollars
-  without `GetTotalHealthcareCost`, so a $5,000/mo active care cost left
-  `PVExpenses` bit-identical while month-by-month expenses billed it — a
-  split-classification defect AND a second spec-enumeration miss (§2b
-  originally listed six consumers; this was the seventh). Lead conceded
-  without a panel. Escalation: gate flagged CC1 → Tier 3 (critical-glob);
-  attempt 2 runs under the full Tier-3 oracle contract. Secondary
-  observation promoted into scope: `sensitivity.go` "Higher Healthcare"
-  must scale `CareMonthlyCost` 1.5× like its sibling fields. The
-  checker's throwaway PV probe is promoted to a permanent regression test
-  (V3 pattern).
-- **CC-2026-08-31c** (catch — mechanism: PRIMARY CHECKER checker-a11y, CC2
-  attempt 1, FAIL CONCEDED): the new care helper paragraph used
-  `dark:text-gray-400` on the card's `dark:bg-gray-700` — 4.05:1 in dark
-  mode, below the 4.5:1 minimum (light passed at 7.23:1). Measured by a
-  real axe run on the actually-rendered page, including catching its own
-  harness bug (the page's theme-detection script silently overrode the
-  forced theme class). Fix: `dark:text-gray-300`, matching the sibling
-  labels; applied lead-direct under the lean exception (attempt 2,
-  worker=lead), both named checkers re-run. The same failing token pairing
-  pre-exists on untouched elements — spun off as a separate backlog task
-  rather than widened into CC2.
+- **EX-2026-09-03a** (catch — mechanism: PRIMARY CHECKER checker-tests,
+  EX1 attempt 1, FAIL CONCEDED; checker-second PASSed the same attempt):
+  the implementation was correct on every criterion, but two of the
+  worker's tests were vacuous under mutation. (c) used the spec's own
+  example pair 600.005/1655.305, whose residual is zero, so deleting the
+  residual-absorption branch left the whole suite green — a spec-level
+  defect (the lead wrote the fixture). (e) used a single person, who is
+  by construction the last row and therefore re-derived from the total,
+  so dropping `CareCostAt` from the per-person sum still passed; the
+  checker's two-person probe showed $3,000 of care billed to the wrong
+  person. Fix applied lead-direct (attempt 2, worker=lead): discriminating
+  pair 600.006/1655.306 with per-row assertions, and a two-person care
+  fixture with care on the first person. Both checkers re-run.
+  Backlog from the same verdict: (F1) EX2 must run `make css` —
+  `tailwind.css is stale` fails `make check` on the EX2 templates;
+  (F2, pre-existing on master) `healthcare-person.html:260` labels any
+  non-employer coverage "ACA", a second coverage→label mapping that
+  `CoverageType.Label()` should replace.
+- **EX-2026-09-03b** (catch — mechanism: PRIMARY CHECKER checker-a11y,
+  EX2 attempt 1, FAIL CONCEDED; first surfaced as an observation by
+  checker-tests on EX1 attempt 1; checker-second PASSed EX2 attempt 1
+  without noticing): the worker never ran `make css`, so the committed
+  `web/static/css/tailwind.css` lacked the three new utility classes
+  (`min-h-[24px]`, `min-w-[24px]`, `-mx-2`) that give the "Full cash
+  flow →" link its 24×24 px target — the safeguard was dead code as
+  shipped, and `make check` (css-verify) fails on the diff. The link
+  cleared 24 px only by coincidence of line-height and padding. Fix
+  applied lead-direct (attempt 2, worker=lead): `make css`,
+  `tailwind.css` added to the EX2 manifest. Both checkers re-run.
+  Process note: the spec's worker constraints did not mention `make css`
+  or `make check`; a build-artifact check belongs in the worker
+  constraints for any task that adds Tailwind classes.
