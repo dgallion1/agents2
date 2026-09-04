@@ -185,8 +185,12 @@ page h1. The link is keyboard-operable and announced as a link.
 | EX1 | Per-person Healthcare sub-rows in `budget_fit.go` (+ `CoverageType.Label()` if absent) + tests | 2 | tests,second | (a) `go build ./...` and `go test ./...` pass. (b) New test in `internal/services/retirement/analysis/`: two persons (Medicare 600, ACA 1655.30) → Healthcare row 2255.30 with two sub-rows named `<name> (Medicare)` / `<name> (ACA)` at those amounts, in person order. (c) Fractional-cent fixture whose naive rendered sum differs from the rendered total — 600.006 and 1655.306 (renders 600.01 + 1655.31 vs total 2255.31; NOT 600.005/1655.305, whose residual is zero — ruling EX-2026-09-03a): rendered sub-row strings (formatMoney) sum exactly to the rendered Healthcare row string, and the last row shows the absorbed cent. (d) A person with month-0 cost 0 still gets a row at 0; legacy scalar healthcare gets no sub-rows; the `$0 / employer covered` branch is unchanged. (e) Care cost at month 0 (CareStartAge ≤ current age) is included in that person's sub-row — fixture must put the care person in a NON-last position, since the last row is re-derived from the total (ruling EX-2026-09-03a). (f) Exactly one coverage-label mapping exists (checker greps for a second). (g) Checker enumerates every consumer of `ExpenseBreakdown`/`SubItems` and confirms none regresses. |
 | EX2 | Slider note, `whatif-expense-rows` partial, Overview "Monthly Expenses Today" card, `data-wf-goto` hook, template tests | 2 | a11y,second | (a) `go build ./...` and `go test ./...` pass; the three tests in §2b exist and pass. (b) Cash Flow panel render byte-identical before/after extraction (checker diffs). (c) Overview card shows the same row strings as the panel for the same fixture; hidden when breakdown empty. (d) Slider note text verbatim per §2b(i), figure via `formatDollars`, sentence absent without `.Analysis`. (e) "Full cash flow →" activates the Cash Flow tab by keyboard and mouse on the :8099 verify instance; no inline handlers; no `data-wf-tab` on the link. (f) Contrast of every new text node ≥4.5:1 in light and dark on its actual background (real axe/contrast run, not eyeballed). (g) No new formatting call sites (checker greps the diff for `printf "%.`/`toLocaleString`/`Math.round`). |
 
+| EX3 | Follow-up (backlog F2 from EX-2026-09-03a): the healthcare person card's coverage timeline labels its first segment with a template-local `{{if eq .CurrentCoverage "employer"}}Employer{{else}}ACA{{end}}` — a second coverage→label mapping that labels COBRA (and any future type) "ACA". Replace with `{{.CurrentCoverage.Label}}`; add a render test. Lead-direct. | 2 | a11y,second | (a) `go build ./...`, `go test -count=1 ./...`, `make check` pass. (b) Exactly one coverage→display-label mapping remains in Go and templates (`<option>` lists are input choices, not labels — allowed; the colour classes on lines 16–17 are styling, out of scope). (c) Render test: ACA→"ACA $1,234", Employer→"Employer $1,234", COBRA→"COBRA $1,234" and never "ACA"; Medicare renders no pre-Medicare timeline. (d) Rendered timeline for ACA and Employer persons is byte-identical to master (only COBRA's output changes). (e) No contrast/structure change (same element, text-only). |
+
 Independent — dispatch in parallel. EX2's Overview card renders EX1's
 sub-rows automatically once both merge; neither needs the other to pass.
+EX3 was added after EX1/EX2 merged (simpleBudget PR #91) and ships on
+its own branch `fix/coverage-label-single-source`.
 
 Tier rationale (TIERS.md): both reversible pre-merge and oracle-strong;
 blast radius is user-visible dollars on the plan's main page → Tier 2.
@@ -234,3 +238,16 @@ report the first-attempt clean rate to the user verbatim.
   Process note: the spec's worker constraints did not mention `make css`
   or `make check`; a build-artifact check belongs in the worker
   constraints for any task that adds Tailwind classes.
+- **EX-2026-09-03c** (EX3, lead-direct, first attempt clean — both lanes
+  PASS, gate OK): the F2 follow-up. Correction to the F2 premise: the
+  inline branch sat inside a block already guarded by
+  `ne .CurrentCoverage "medicare"`, so a Medicare person was never
+  labelled "ACA"; the real victim was COBRA (and any future type), which
+  is unreachable from the UI's `<option>` list but valid JSON. One
+  finding from checker-second, backlog: with `CurrentCoverage == ""`
+  (legacy JSON) `Label()`'s default branch returns `""`, so the timeline
+  segment renders `" $1,234"` where master rendered `"ACA $1,234"`;
+  unreachable through any live handler (AddPerson defaults the field,
+  the migration sets ACA/Medicare, updates never blank it). If it is
+  ever reachable, `Label()` should map `""` to "ACA" — that is the
+  engine's own default coverage.
