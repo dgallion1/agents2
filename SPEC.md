@@ -1,216 +1,412 @@
-# SPEC.md — budget2 "Retirement Smile": per-person late-life care costs
+# SPEC.md — CB7/CB8/CB9 run: range totals, velocity baseline, negative zero (budget2)
 
-Run prefix: **CC** (care cost). Target repo: `/home/darrell/bin/ai/budget2`
-(all manifest paths and globs in this run are budget2-repo-relative).
-Previous run's spec (Swarm Mission Control dashboard) is preserved in git
-history on master; its `.swarm` is archived as `.swarm-archive-dash`.
+Run of 2026-09-03 against `/home/darrell/bin/ai/budget2`, shipped as
+simpleBudget PR #93 (branch `fix/cb7-cb8-signed-range-totals-velocity`,
+commits 6d6dc41 CB8 → b1f0f36 CB7 → af8b1a0 CB9). Lean-verification
+experiment (CLAUDE.md 2026-08-31) in force. The full run spec, rulings,
+manifests and verdicts live in budget2 `.swarm/CB7-RUN-SPEC.md`,
+`.swarm/manifests/CB{7,8,9}.*`, `.swarm/verdicts/CB{7,8,9}.*`; the
+constitution text is reproduced below verbatim as of run close.
 
-## 1. Motivation
+## Outcome (gate.sh, verbatim)
 
-The what-if projection models the falling half of the retirement spending
-curve (Go-Go → No-Go phase multipliers on living + discretionary expenses)
-and healthcare *premium* inflation, but not the late-life **utilization
-jump** — assisted living / home care, typically $6–9k/mo in today's dollars,
-starting in the mid-80s. A flat 65% No-Go multiplier with no care event makes
-the projection optimistic in exactly the years portfolio depletion matters
-most. Research basis: Blanchett's "retirement smile" — total real spending is
-U-shaped, with the late rise driven by care, not premiums.
-
-Design decision (user-approved 2026-08-31): model care as a **per-person
-healthcare cost**, not a spending phase and not an ExpenseSource. Care is
-per-person (one spouse in assisted living while the other lives at home),
-must NOT be scaled down by spending-phase multipliers, and should inflate at
-healthcare rates, not CPI.
-
-## 2. Architecture
-
-### 2a. Model (`internal/models/healthcare.go`)
-
-`HealthcarePerson` gains two optional fields:
-
-```go
-CareStartAge    int     `json:"care_start_age,omitempty"`    // 0 = care not modeled
-CareMonthlyCost float64 `json:"care_monthly_cost,omitempty"` // today's dollars
 ```
+OK: CB8 accepted at tier 2 (attempt 1)
+OK: CB7 accepted at tier 2 (attempt 3)
+OK: CB9 accepted at tier 2 (attempt 2)
+stats: CB7 tier=2 first-attempt=2 failed (now: status=accepted attempt=3)
+stats: CB8 tier=2 first-attempt=1 clean (now: status=accepted attempt=1)
+stats: CB9 tier=2 first-attempt=1 failed (now: status=accepted attempt=2)
+first-attempt clean: 71/115 (no-evidence rows: 0)   # whole shared ledger
+```
+This run: 1/3 first-attempt clean. `gate.sh done` exits 1 on the shared
+budget2 ledger because of three stale rows from earlier runs (A7 missing
+checker-tests PASS, R6 missing checker-a11y PASS, Z5 unresolved
+escalation flag) — none from this run; "gate.sh done belongs to whichever
+run finishes last" (CLAUDE.md, concurrent runs).
 
-New method `CareCostAt(month int, startDate string) float64`:
+## Catches, by mechanism (the experiment's real output)
+| Task/attempt | Mechanism | What |
+|---|---|---|
+| CB7.1 | worker self-flag (brief-mandated) | four legacy tests pinned the old Abs contract; rulings a/b, not a defect |
+| CB7.2 | **checker-second, real-ledger byte-identity sweep** | `-sum` of an exactly-zero window = IEEE -0 → "$-0.00" on the live Healthcare KPI (every window has no HI rows). tests + a11y lanes both PASSED the same attempt. |
+| CB7.3 | checker-second observation | formatMoney belt does not cover the KPI CSV export (raw %.2f) → CB9 |
+| CB8.1 | none | — |
+| CB9.1 (lead-authored) | **checker-tests AND checker-second, independently** | lead's grep pattern missed an indexed negation (spending-trend chart); chart-walk sites had no endpoint test and two were observable in chart JSON; velocity → MCP round2 `-0` leak |
+| CB9.2 | checker-tests observation | a second unobservable survivor (`spentSoFar`) the lead's manifest had not stated |
 
-- Returns 0 when `CareStartAge == 0` or `CareMonthlyCost <= 0`.
-- Care starts at the projection month the person reaches `CareStartAge`,
-  computed with the same month-precision rules as Medicare eligibility:
-  BirthMonth+startDate → month-precise (mirror `monthsUntilMedicareEligible`,
-  generalized to an arbitrary age); otherwise the year-based fallback
-  `(CareStartAge − CurrentAge) * 12`, clamped at 0.
-- From care start onward:
-  `CareMonthlyCost * (1 + PostMedicareInflation/100) ^ (month/12)`.
-  Inflation compounds from **month 0** (the amount is entered in today's
-  dollars), using the person's `PostMedicareInflation` — no new inflation
-  knob. This is the ONE formula; no other file may re-derive it.
-- Care runs to the end of the projection. No duration, no mortality — the
-  engine does not model mortality, and running to the horizon is the
-  conservative choice. Say so in the docs task (CC3), not silently.
+Lean-exception verdict from this run: the lead-authored task was the one
+whose FIRST attempt failed both lanes on the lead's own enumeration
+blind spot. Non-author verification is doing exactly the job W4
+predicted; the machinery stays.
 
-### 2b. Engine integration (`internal/models/whatif.go`)
+---
 
-`GetTotalHealthcareCost(month)` adds `CareCostAt(month, startDate)` for each
-`HealthcarePerson`, in the multi-person branch only. The legacy single-person
-branch (`MonthlyHealthcare`) is unchanged — care requires `HealthcarePersons`.
+# CB7/CB8 — range-level totals and velocity baseline go signed
 
-Everything downstream inherits automatically **and must be verified, not
-assumed** — this is a split-classification surface. Known consumers of
-`GetTotalHealthcareCost` (enumerated 2026-08-31; the checker re-enumerates):
+Opened 2026-09-03 from a re-verification of three earlier findings. Two
+confirmed as defects (CB7, CB8); the third (MoM spending-trend `prev > 0`
+guard) is reclassified as a product/UI-semantics choice and is OUT OF
+SCOPE unless the user says otherwise (see "Not in scope" below).
 
-1. `engine/expense.go` `TotalExpenses` + `CalculateExpenseBreakdown`
-   (care lands in *essential*; never scaled by the phase multiplier).
-2. `engine/stepper.go:310` — `GetTotalHealthcareCost(m) * p.HealthcareMultiplier`
-   (Monte Carlo variation multiplies care too; accepted).
-3. `engine/expense.go` `TotalExpenses`/`CalculateExpenseBreakdown` is the
-   second dollar-accumulation path, consumed independently of the stepper by
-   `analysis/budget_fit.go` and `analysis/monte_carlo.go`. **Both paths must
-   include care identically** — this pair is the defect risk in this task.
-   (Corrected 2026-08-31: the spec originally named `loop_helpers.go:85`,
-   whose only healthcare logic is `MedicareEligibleAdultCountAtMonth` — an
-   IRMAA head-count, not dollars. See Rulings CC-2026-08-31a.)
-4. `analysis/budget_fit.go:132` and `metrics/metrics.go:48` — both call
-   `GetTotalHealthcareCost(0)` as the *current premium budget*. With
-   `CareStartAge` in the 80s and a younger current age, month 0 is
-   unaffected. Known consequence, accepted: if a user sets
-   `CareStartAge <= current age`, active care correctly counts as current
-   healthcare spending on the dashboard target.
-5. `whatif` results / spending-trajectory rows (`HealthcareExpense`,
-   Spend column) — care must appear in the trajectory table.
-6. MCP `get_balance_projection` / `run_scenario` — flow through the same
-   engine; verify a scenario with care shows higher expenses / earlier
-   depletion. Explicit per-field scenario *overrides* for care are OUT OF
-   SCOPE (configure via saved settings).
-7. `engine/healthcare.go` `HealthcarePV` → `analysis/present_value.go`
-   `PVExpenses` → orchestrator `fastAnalysis` (the Total-Needs /
-   coverage-ratio panel). **Computes per-person healthcare directly, not via
-   `GetTotalHealthcareCost`** — must add care via `CareCostAt` (no formula
-   re-derivation). Missed by the original enumeration; found by
-   checker-second (Rulings CC-2026-08-31b). Fix contract (attempt 2):
-   `HealthcarePV` keeps its `(person, discountRate, totalMonths)` signature
-   and adds the discounted care stream using `person.CareCostAt(m, "")` —
-   year-fallback start precision is accepted for this estimate panel and
-   must be stated in CC3's docs, not left silent. Discounting follows the
-   file's existing convention.
-8. `analysis/sensitivity.go` "Higher Healthcare" scenario — scales
-   `CurrentMonthlyCost`/`MedicareMonthlyCost`/`ACACostAfterEmployer` by 1.5×;
-   must scale `CareMonthlyCost` identically or the stress test silently
-   excludes care (checker-second observation, promoted into CC1 scope).
+Both tasks close the last two members of the refund-dominant defect class
+opened by CB1 (per-month walk), CB2 (nine month-bucket surfaces), CB3
+(per-transaction / per-period). CB1–CB3 each deliberately left the RANGE
+total and the velocity BASELINE alone; this run finishes them.
 
-Persistence: the two fields ride the existing `WhatIfSettings` JSON
-round-trip (save → load → identical values). Verify, don't assume.
+Ledger prefix: `CB7`, `CB8` (continuing the CB series; no collision).
+Territory: budget2 only. No other run is live in this tree.
 
-IRMAA: care is an expense, not a premium — it must NOT enter any IRMAA or
-premium-tax-credit logic. `CoverageAt` is untouched.
+---
 
-### 2c. UI (`web/templates/components/whatif/`)
+## CB7 — range totals: `math.Abs(range net)` → signed negated net
 
-In the healthcare card, one "Late-life care" row per healthcare person:
+### Defect (confirmed against a09c9cf)
+`internal/services/metrics/metrics.go:378`
+`totalExpenses := math.Abs(outflows.SumAmount())` — the range-level total
+is an absolute value while every per-month figure feeding the same
+surfaces has been signed since CB2. A range whose outflow-typed rows net
+POSITIVE (refunds exceed spending) therefore reports positive spending,
+understates NetSavings (income − |net| instead of income + net refund),
+understates SavingsRate, and breaks the CombinedCumulativeBalance
+partition invariant that `internal/models/dashboard.go:120-136` today
+documents as "out of scope" for exactly this case.
 
-- Number input for start age (blank/0 = off; sensible min 60, max 100) and a
-  dollar input for monthly cost in today's dollars, wired through the
-  existing healthcare settings hx-post path (extend the handler to parse the
-  new fields).
-- A short helper line: "Assisted living / home care, in today's dollars.
-  Inflates at this person's post-Medicare healthcare rate and runs to the
-  end of the projection."
-- All displayed dollar values go through the existing single formatting path
-  (`formatDollars` server-side / `formatWholeDollars` client-side as the
-  card already uses) — no new formatter (dual-formatter defect class, W2).
-- Spending-phases card blurb gains one sentence: healthcare and late-life
-  care are modeled separately and are not reduced by these multipliers.
-- Quick Adjust panel: OUT OF SCOPE this run.
+### Sibling sites (same defect class, same task — enumerated, not diffed)
+The split-classification rule: one convention, every surface. Five
+range-level `math.Abs(... SumAmount())` sites exist:
 
-### 2d. Docs / assumptions honesty
+| # | Site | Figure |
+|---|------|--------|
+| 1 | `internal/services/metrics/metrics.go:378` | `totalExpenses` |
+| 2 | `internal/services/metrics/metrics.go:406` | `healthcareTotal` |
+| 3 | `internal/services/metrics/metrics.go:436` | `livingTotal` |
+| 4 | `internal/handlers/explorer/handlers.go:191` | explorer `totalExpenses` (page) |
+| 5 | `internal/handlers/explorer/handlers.go:341` | explorer `totalExpenses` (partial/HTMX) |
 
-- `whatif://assumptions` MCP resource: replace whatever it currently implies
-  about late-life costs with the true state: late-life care is modeled only
-  when configured per person; mortality is still not modeled; care runs to
-  the projection horizon.
-- Same statement wherever the app's help/docs describe spending phases.
+All five become `-set.SumAmount()` (the SY1/CB2 convention: positive =
+net spend, negative = net refund). No new helper; the negation is the
+established idiom (`-lo.SumAmount()` at metrics.go:526 etc.).
 
-## 3. Out of scope (this run)
+Derived figures inherit the sign with NO further change and must be
+proven honest by test, not clamped:
+- `netSavings = totalIncome - totalExpenses` (refund-dominant range ⇒
+  savings EXCEED income; correct — the refund is cash in).
+- `savingsRate` (guard `totalIncome > 0` unchanged; may exceed 100).
+- `healthcareActual`, `healthcarePerMonthDelta`, `healthcareCumulativeDelta`.
+- `actualMonthly`, `perMonthDelta`, `cumulativeDelta`, `LivingExpensesTotal`.
+- `PeriodComparison.ExpensesChange` via `PercentChange` — ALREADY uses the
+  `|previous|` denominator (metrics.go:741, CB3-E); a fixture must prove
+  the sign tracks the change with a negative base. `PercentChange` itself
+  is NOT modified.
 
-- Quick Adjust sliders for care; MCP `run_scenario` per-field care
-  overrides; care duration / mortality modeling; survivor spending
-  adjustment; essentials-floor-from-ledger; smooth phase interpolation;
-  trajectory sparkline. Candidates for later runs.
+### Consumers that must change (rendering / contract)
+1. `web/templates/components/kpis.html:36` —
+   `{{formatMoney (abs .Metrics.TotalExpenses)}}` re-flips the sign in
+   the template. Drop `abs`. Value color becomes sign-aware using the
+   CB6-4 idiom (`kpi-month-detail.html:49`): `gt 0.0` → existing rose,
+   else → emerald-700/emerald-400. Card tint/border unchanged.
+   ⚠ a11y: emerald text on the rose-50 card is a contrast hazard
+   (NEXT.md records emerald-600 at 3.43:1 on tinted bands) — the worker
+   must pick a shade that meets 4.5:1 on BOTH the light rose-50 and dark
+   rose-900/20 grounds, and checker-a11y measures it.
+2. `web/templates/pages/explorer.html:755` — `{{if isPositive
+   .TotalExpenses}}` hides the Expenses chip for any refund-dominant
+   filter. Becomes `{{if ne .TotalExpenses 0.0}}` (guard against a float
+   compare helper if `ne` on float64 misbehaves — `isNonNegative`/`isNegative`
+   exist in render.go:105 area; use whatever the template funcmap already
+   supports, no new helper). Value color sign-aware as in (1), same
+   contrast rule.
+3. MCP contract — three wording sites say `total_expenses` is "always
+   non-negative (it is an absolute value)":
+   `internal/services/mcpsvc/spend/summary.go:185` (tool description),
+   `internal/services/mcpsvc/server.go:84` (server instructions),
+   `internal/services/mcpsvc/server_test.go:196` (pins the wording).
+   New contract wording: `total_expenses` is SIGNED — positive is net
+   spend; it goes NEGATIVE when this window's refunds exceed its spending
+   overall; the sum of `by_month` now EQUALS `total_expenses` exactly
+   (delete the "in MAGNITUDE / negation of each other" clause). Worker
+   also greps `~/.claude/skills/budget2-mcp/` and repo `docs/` for the
+   same phrase and reports hits (edit repo docs; report skill-dir hits
+   in the manifest for the lead — the skill lives outside the repo).
+4. `internal/models/dashboard.go:120-136` — rewrite the invariant doc:
+   the "range as a whole nets outflow-negative" precondition is REMOVED;
+   the partition holds for every range because TotalExpenses is now the
+   signed net. Also update the metrics.go:304-306 comment ("The range
+   total still runs math.Abs(...)") and the explorer handler comment
+   (handlers.go:188-190).
+5. `.swarm/NEXT.md` SY-run backlog bullet (line ~491, "CombinedCumulative
+   Balance walk assumes per-month |sum| partitions the range-level
+   |sum|") — mark resolved by CB7.
 
-## 4. Worker constraints (paste into every dispatch)
+### Not affected (worker/checker confirm, do not touch)
+- `engine.TotalExpenses` / `month.TotalExpenses` in
+  `internal/services/retirement/**` and `internal/handlers/whatif/
+  spending_trajectory.go:84` — the projection ENGINE's expense model, a
+  different type; unrelated to ledger totals.
+- `PlanExcludedTotal` (already signed, SY4).
+- Per-month series (already signed, CB2).
 
-- Repo: `/home/darrell/bin/ai/budget2`, branch `feat/care-cost` (lead
-  creates it before dispatch; workers commit nothing — the lead commits).
-- **Never run the built budget2 binary** — any invocation, even
-  `--help`, starts a server and kills the live :8080 instance. `go test`
-  and `go build` only. Browser verification happens against the demo
-  instance on :8081 (`run-demo.sh`) if needed, never :8080.
-- Today's-dollars inputs, one formula per figure, one formatter per value.
-- Write your manifest to
-  `<agents2 worktree>/.swarm/manifests/<task>.<attempt>.files`
-  (budget2-repo-relative paths, one per line).
+### Tests (committed, not throwaway)
+- `metrics_test.go`: a REFUND-DOMINANT RANGE fixture (two months, one
+  ordinary, one with a refund exceeding the whole range's spend; income
+  present; living + healthcare targets set, HI category rows included)
+  asserting: `TotalExpenses < 0` with the exact signed value;
+  `NetSavings == TotalIncome - TotalExpenses` (> TotalIncome);
+  `LivingExpensesTotal`, `HealthcareTotal`-derived deltas exact;
+  and the CombinedCumulativeBalance invariant `last == -CombinedCumulativeDelta`
+  now HOLDS in the previously-excluded case. A `math.Abs` mutant at any
+  of sites 1–3 must fail this test (checker-tests verifies by mutation).
+- `PeriodComparison`: fixture with a negative comparison-period
+  TotalExpenses proving `ExpensesChange` sign tracks the change.
+- Explorer handler test: refund-dominant filter ⇒ negative TotalExpenses,
+  NetAmount = income − (negative). Both handler paths (191, 341).
+- MCP `summary_test.go`: refund-dominant window ⇒ `total_expenses`
+  negative AND `sum(by_month) == total_expenses` exactly (the reconcile
+  test at :403 extended or a sibling added).
+- Rendered-string probe, promoted to a test (rendered-string-arithmetic
+  rule): render `kpis.html` with a refund-dominant metrics fixture and
+  assert the Expenses tile string carries the minus sign via
+  `formatMoney` (the "$-163" vs "-$163" backlog item is separate — assert
+  whatever formatMoney produces for a negative today, pinned, not
+  redesigned).
+- Existing tests whose fixtures assumed Abs (e.g. `summary_test.go:100,
+  258, 383`, `plan_exclusions_test.go:76`) are expected to keep passing —
+  their data is ordinary-signed. Any that FAIL must be reported, not
+  silently re-pinned (CB2-2026-09-02a precedent: calibration updates are
+  a lead ruling, not a worker choice).
 
-## 5. Task breakdown
+### Acceptance criteria
+(a) `go build ./... && go vet ./... && go test ./...` clean.
+(b) Zero `math.Abs(` applied to a range/filter-level `SumAmount()` remains
+    in metrics.go and explorer/handlers.go (checker greps; per-transaction
+    Abs elsewhere is out of scope).
+(c) All new tests above present and each proven load-bearing by one
+    mutation (checker-tests reverts one site at a time and shows the
+    failing test).
+(d) MCP wording at all three sites updated; `server_test.go` passes with
+    the new pin; no remaining "always non-negative" claim about
+    `total_expenses` anywhere in the repo.
+(e) Real-data check (checker-second): on the live ledger every current
+    dashboard range and the explorer default view render BYTE-IDENTICAL
+    before/after (the live ledger has no refund-dominant range — CB1
+    established zero refund-dominant months exist), AND a synthetic
+    refund-dominant range renders negative with the sign-aware color.
+(f) checker-a11y: contrast ≥ 4.5:1 for the new negative-value color on
+    both themes' card grounds, for kpis.html and explorer.html.
 
-| ID  | Task | Tier | Checks | Acceptance criteria |
-|-----|------|------|--------|---------------------|
-| CC1 | Model + engine: `CareStartAge`/`CareMonthlyCost` on `HealthcarePerson`, `CareCostAt`, `GetTotalHealthcareCost` integration, tests | 2 | tests,second | (a) `go build ./...` and `go test ./...` pass. (b) New unit tests: zero-config returns 0; year-fallback start month; BirthMonth month-precise start; inflation formula exact at care start and +N years; legacy single-person branch unchanged. (c) A projection-level test proves care raises `TotalExpenses` after care age and not before, is absent from discretionary in `CalculateExpenseBreakdown`, and is NOT scaled by an enabled `SpendingPhaseConfig`. (d) A test proves stepper and loop_helpers paths agree on healthcare including care for the same month (the §2b.3 pair). (e) Settings JSON round-trip preserves both fields. (f) Checker enumerates §2b consumers and confirms each sees care or is knowingly month-0-exempt. |
-| CC2 | UI: per-person care inputs in healthcare card + handler parsing + phases-card blurb sentence | 2 | a11y,second | (a) Inputs render per healthcare person, labeled, keyboard-operable, pass ACCESSIBILITY.md checks on the changed card. (b) Posting the form persists values (visible after reload); blank/0 disables care. (c) Dollar displays use the existing formatter path only — checker greps for any new formatting call sites. (d) Phases blurb sentence present exactly once. (e) Trajectory table (Show → rows) reflects care in years ≥ care age when configured on the demo instance (:8081). |
-| CC3 | Assumptions honesty: `whatif://assumptions` resource + any help text | 1 | content | (a) Resource text states: care modeled only when configured, per person, to horizon; mortality not modeled. (b) No remaining text claims spending only declines with age. (c) Wording matches §2d substance (checker verifies against this spec section). |
+Tier **2**, checks **tests,second,a11y**. Rationale: money figure on
+three surfaces plus a threshold (sign) classification — two
+defect-history triggers; markup color change → a11y mandatory (CB6
+precedent). Reversible, so not Tier 3.
 
-Dependency: CC2 and CC3 depend on CC1's fields existing; CC1 dispatches
-first, CC2/CC3 in parallel after CC1 is accepted.
+---
 
-Outcome note (2026-08-31): CC1's tier column above is the Phase-0
-assignment; the gate escalated CC1 to **Tier 3** (critical-glob) after its
-first verdicts landed, and it was accepted under the full oracle contract at
-attempt 2 — the ledger is the authority on final tiers.
+## CB8 — velocity `BurnRateChange` with a refund-dominant baseline
 
-Tier rationale (TIERS.md): all tasks reversible pre-merge and oracle-strong;
-CC1/CC2 blast radius is shared (every projection consumer / user-visible
-dollars) → Tier 2. Money on screen → `second` on both (defect-history
-surfaces: dual formatters, split classification, rendered figures). CC3 is
-small, reversible, strong oracle → Tier 1.
+### Defect (confirmed)
+`internal/services/insights/trends.go:348`
+`if historicalDaily > 0 { burnRateChange = ... }` — CB3-D made
+`historicalDaily` signed, then left this guard, so a ledger whose entire
+history nets a refund reports `BurnRateChange = 0` regardless of the
+current pace. The insights page then renders the amber "on pace" band
+(`insights.html:164-178`, verdict bar `insights-verdict-bar.html:14-16`)
+for a period that may be spending far faster than its history. The
+CB3-D comment itself calls this "an unreported change stat".
 
-## 6. Lean-experiment bookkeeping
+### Contract (ruling CB8-2026-09-03a, mirrors CB3-c exactly)
+```
+change := dailyAvg - historicalDaily
+switch {
+case historicalDaily != 0:
+    burnRateChange = change / math.Abs(historicalDaily) * 100
+case change > 0:  burnRateChange = 100
+case change < 0:  burnRateChange = -100
+default:          burnRateChange = 0
+}
+```
+- `|historicalDaily|` denominator so the sign ALWAYS tracks the sign of
+  the change (spending faster than history ⇒ positive ⇒ "above your
+  usual pace"), never inverting on a negative base.
+- Zero base ⇒ sign-of-change (CB3-c), NOT `PercentChange`'s unconditional
+  +100 — do not call `metrics.PercentChange` (its zero-base rule differs;
+  documented CB3-E).
+- Downstream unchanged: `insights/verdict.go` thresholds (`<0` green,
+  `>paceRedThreshold` red) and both templates already render the signed
+  value; a large positive on a negative base is honest ("+160% vs avg").
+- Rewrite the CB3-D comment block at trends.go:339-346.
 
-Record every catch in §7 with the mechanism that caught it (primary checker /
-second / judge / gate). At run end: `swarm/gate.sh stats` and report the
-first-attempt clean rate to the user verbatim.
+### Tests (committed)
+- New `TestCalculateSpendingVelocity_RefundDominantHistoryStillReportsChange`:
+  `allData` = current-period purchases PLUS an older large refund so the
+  ledger-wide `historicalDaily < 0` while the current period's `dailyAvg
+  > 0`; assert `HistoricalDaily < 0`, `DailyAverage > 0`, and
+  `BurnRateChange` equals `(dailyAvg - hist)/|hist|*100` to 0.01 and is
+  POSITIVE. The `> 0` guard mutant yields 0 and must fail. Fixture MUST
+  be dated in the current calendar month (CB3 attempt-1 lesson,
+  CB3-RUN-SPEC.md:117/141).
+- Extend `TestCalculateSpendingVelocity_RefundDominantPeriodIsNegative`
+  (trends_test.go:828) to assert `BurnRateChange == 0` there (period ==
+  allData ⇒ change is 0 — pins that identical sets report 0, not ±100).
+- Zero-base case: fixture whose ledger nets exactly zero with a spending
+  current period ⇒ `+100`; with a refund-dominant current period ⇒ `-100`.
+- Sign-inversion mutant: a `historicalDaily` (signed) denominator must
+  fail the first test (change positive, result negative).
 
-## 7. Rulings
+### Acceptance criteria
+(a) `go build ./... && go test ./internal/services/insights/... ./internal/handlers/insights/...` clean; full `go test ./...` clean.
+(b) Each new assertion proven load-bearing by mutation (checker-tests).
+(c) Real data (checker-second): live ledger `historicalDaily > 0`, so
+    `BurnRateChange` is byte-identical before/after on the live insights
+    page; synthetic refund-dominant ledger renders a non-zero signed
+    figure in the correct band.
+(d) No template or verdict.go change (checker confirms diff scope).
 
-- **CC-2026-08-31a** (catch — mechanism: WORKER report, CC1 attempt 1): the
-  spec's §2b.3 named `engine/loop_helpers.go:85` as the second healthcare
-  dollar-accumulation path. It is not — its only healthcare logic is
-  `MedicareEligibleAdultCountAtMonth` (IRMAA head-count). The real pair is
-  `stepper.go` vs `expense.go` (consumed by `analysis/budget_fit.go` and
-  `analysis/monte_carlo.go`). Spec corrected; the worker had already written
-  the agreement test against the correct pair. A brief-level error — exactly
-  the class no model strength in verification would have fixed; caught
-  before any checker ran.
-- **CC-2026-08-31b** (catch — mechanism: SECOND CHECKER, CC1 attempt 1,
-  FAIL CONCEDED): `engine/healthcare.go` `HealthcarePV` (→ `PVExpenses` →
-  Total-Needs/coverage-ratio panel) computes per-person healthcare dollars
-  without `GetTotalHealthcareCost`, so a $5,000/mo active care cost left
-  `PVExpenses` bit-identical while month-by-month expenses billed it — a
-  split-classification defect AND a second spec-enumeration miss (§2b
-  originally listed six consumers; this was the seventh). Lead conceded
-  without a panel. Escalation: gate flagged CC1 → Tier 3 (critical-glob);
-  attempt 2 runs under the full Tier-3 oracle contract. Secondary
-  observation promoted into scope: `sensitivity.go` "Higher Healthcare"
-  must scale `CareMonthlyCost` 1.5× like its sibling fields. The
-  checker's throwaway PV probe is promoted to a permanent regression test
-  (V3 pattern).
-- **CC-2026-08-31c** (catch — mechanism: PRIMARY CHECKER checker-a11y, CC2
-  attempt 1, FAIL CONCEDED): the new care helper paragraph used
-  `dark:text-gray-400` on the card's `dark:bg-gray-700` — 4.05:1 in dark
-  mode, below the 4.5:1 minimum (light passed at 7.23:1). Measured by a
-  real axe run on the actually-rendered page, including catching its own
-  harness bug (the page's theme-detection script silently overrode the
-  forced theme class). Fix: `dark:text-gray-300`, matching the sibling
-  labels; applied lead-direct under the lean exception (attempt 2,
-  worker=lead), both named checkers re-run. The same failing token pairing
-  pre-exists on untouched elements — spun off as a separate backlog task
-  rather than widened into CC2.
+Tier **2**, checks **tests,second**. Rationale: money-derived figure with
+a threshold classification on two surfaces (band + verdict bar); no
+markup change, so no a11y lane.
+
+---
+
+---
+
+## CB9 — negative-zero source sites CB7 left out; formatPercent belt; MCP doc
+
+Opened from checker-second's CB7.3 and CB8.1 observations. Lead-authored
+(lean exception), Tier 2, checks tests,second (money surfaces: CSV export
+and modal totals; no markup change → no a11y lane).
+- `internal/handlers/dashboard/handlers.go`: classifiedMonthlyTotals (feeds
+  the KPI modal rows AND the CSV export's raw `%.2f`), expAmt ×2,
+  handleKPIMonthDetail's three `-sumSigned` totals (via a new
+  `negSumSigned` wrapper), and the chart walk's hcAmt/livingMonth/spend all
+  route through `metrics.SignedNet`. Accumulator loops (`+= -t.Amount`)
+  are untouched: an accumulator starting at +0 cannot land on -0.
+- `formatPercent` gets the same -0 belt as formatMoney.
+- `mcpsvc/spend/trends.go` BurnRateChange doc states the CB8 rule.
+- Attempt 2 (both lanes FAILED attempt 1 on untested chart-walk sites, and
+  checker-tests found a fifth site the lead's grep missed —
+  buildSpendingTrendChartData's indexed `-monthlyOutflowSets[m].SumAmount()`):
+  that site fixed; chart-endpoint tests added (spending-trend and
+  budget-vs-actual with targets wired) asserting no `-0` token and
+  Signbit-clear traces; checker-second's same-class observation folded
+  in — SpendingVelocity's three negated sums (insights/trends.go) reached
+  MCP get_trends as `-0` via round2, now SignedNet with a test; and
+  formatNumber gets the belt. Re-enumeration rule: `grep -n "= -\|:= -"`
+  (the `[a-zA-Z]*[.(]` pattern missed indexed expressions).
+- Tests: exactly-cancelling February at every slicing (healthcare,
+  living, expenses); export cells "0.00" for all kinds; month-detail JSON
+  free of `-0` tokens and Signbit-clear; KPI detail response free of
+  "$-0"; chart JSON free of `-0`; velocity struct free of `-0`;
+  formatPercent(-0) == "0.0"; formatNumber(-0) == "0".
+Acceptance: `make check` green; every SignedNet site load-bearing by
+mutation or provably consumer-unobservable (CB7 precedent); live-ledger
+export/detail bytes identical except any genuine "-0.00"→"0.00" cell.
+Stated survivors (attempt 2, both proven unobservable by checker-tests):
+`spend` in the cumulative walk (`running += monthTarget - spend` absorbs
+-0 bit-for-bit) and `spentSoFar` in SpendingVelocity (reaches only
+MonthProjection, diverges only when daysRemaining==0 && dailyAvg<0, and
+is belted by formatMoney / dropped by MCP). Both converted for
+single-source consistency.
+
+## Not in scope (recorded so it is not rediscovered)
+- **MoM spending-trend `prev > 0` guard** (`internal/handlers/dashboard/
+  handlers.go:1533`), pinned by `cb2_signed_spending_trend_test.go:48`
+  under CB2 amendment CB2-c: a refund-dominant BASE month renders 0%.
+  Reclassified 2026-09-03 from defect to product semantics. If the user
+  wants surface consistency with CB3-c/CB8 (|prev| denominator,
+  sign-of-change on zero), it is a one-line change plus re-pinning that
+  test — a separate lead ruling, not silently folded into CB7/CB8.
+- `CategoryTrends` abs-based classifier (CB3 noted, still untouched).
+- `formatMoney` negative rendering "$-163" vs "-$163" (SY backlog).
+
+## Rulings
+- CB7-2026-09-03a — the three SY-era "remainder nets refund" tests
+  (`metrics/plan_exclusions_remainder_test.go` ×2, `mcpsvc/spend/
+  plan_exclusions_test.go` ×1) pinned `LivingExpensesTotal ==
+  math.Abs(remainder)` for a refund-dominant remainder — the exact
+  precondition CB7 removes. Re-pin to the SIGNED figures (-3000 /
+  -2945.56), rename `...LivingEqualsAbsRemainder` →
+  `...LivingEqualsSignedRemainder`, rewrite the prose that argued for
+  Abs. Magnitudes unchanged (got == -want in all three) confirms the
+  change is the intended sign, not new arithmetic.
+- CB7-2026-09-03b — `TestHandleTransactionsPartial_RefundReducesTotalExpenses`
+  (explorer) feeds a 7-row positive-convention CSV that the loader's
+  sign-flip heuristic never normalizes, so internally purchases are
+  positive; the old Abs masked that the fixture is non-canonical. Convert
+  the fixture to the app's canonical convention (negate every amount:
+  purchases negative, the refund +199.78), keep `want = 349.61` and the
+  NetAmount assertion. The test's intent ("refund subtracts, not adds")
+  is preserved. Not a CB7 arithmetic defect.
+- CB7-2026-09-03c (attempt 2, CONCEDED checker-second FAIL) — `-set.SumAmount()`
+  on a set whose sum is exactly 0.0 yields IEEE negative zero; `formatMoney`
+  tests `v < 0` (false for -0) then `%.2f` (honors the sign bit) → the
+  literal "$-0.00". On the live ledger every populated month/year has zero
+  Health-Insurance rows, so the Monthly Healthcare KPI (kpis.html:105/173)
+  would render "$-0.00" — a byte-identical-before/after violation
+  (criterion e). The old Abs cleared the sign bit for free. Contract for
+  attempt 3: ONE helper `metrics.SignedNet(ts) float64` = `-ts.SumAmount()`
+  with -0 normalized to +0, used at EVERY negated-sum site in metrics.go
+  (391, 422, 442, 455, 530, 536, 545, 618 — the CB2/SY4 per-month sites
+  carry the same latent idiom and are folded in as the same single-source
+  fix) and both explorer sites; plus `formatMoney` normalizes -0 to 0 as
+  a formatter-layer belt. (Coverage claim corrected by checker-second at
+  attempt 3: the belt covers the HTML modal but NOT the KPI CSV export,
+  which is raw %.2f — so the KD-era dashboard/handlers.go sites are fixed
+  at source in CB9, not left as backlog.) Boundary tests required at source (Signbit false),
+  at JSON (no "-0" token), and at the formatter ("$0.00").
+- CB8-2026-09-03a — velocity percent-change rule = CB3-c (|base|
+  denominator, sign-of-change on zero base), stated above.
+
+## Catches this run (mechanism attribution — the experiment's output)
+- CB7 attempt 1: worker self-flagged four legacy tests pinning the old
+  Abs contract (correct per brief; lead rulings a/b, not a defect).
+- CB7 attempt 2: **checker-second (adversarial lane)** — negative zero
+  "$-0.00" on the live Healthcare KPI, found by the real-ledger
+  byte-identity sweep (17/17 populated windows). Neither the worker's
+  mutation proofs nor checker-a11y's rendered probes had a zero-sum
+  window. The mechanism was the "every populated range on real data"
+  probe, not the diff.
+- CB7 attempt 3: no catch; all three lanes PASS. checker-second's re-run
+  sweep (24 windows, signbit + JSON-token checks) clean; it surfaced the
+  CSV-export gap in the ruling's coverage claim → CB9.
+- CB9 attempt 1 (lead-authored): **both lanes FAIL**, same ground —
+  checker-tests (primary) found the fifth negated site via a wider grep
+  and proved hcAmt/livingMonth observable in chart JSON; checker-second
+  proved the same three chart-walk sites both-ends against the real
+  classifier pipeline and found the velocity→MCP round2 `-0` leak. The
+  lead's own mutation sanity had covered only the sites its grep found:
+  the enumeration was the defect (lean-exception data point — non-author
+  verification caught the lead's blind spot exactly as W4 predicted).
+- CB8 attempt 1: no catch. checker-second PASS with live-ledger probe
+  (HistoricalDaily 226.17 > 0, BurnRateChange 23.358011 byte-identical
+  before/after); five mutants killed.
+
+## Observations (backlog, not FAIL grounds)
+- [checker-tests, CB9.2] `mcpsvc/spend/summary.go:91/121/144` `round2(-…)`
+  per-row negations (by_category/by_merchant/by_month) can emit a JSON
+  `-0` for an exactly-cancelling row; pre-existing, self-documented, a
+  JSON consumer reads -0 == 0. Same class; route through SignedNet when
+  next touching summarize_spending.
+- [checker-tests, CB9.2] accumulators at `insights/trends.go:45/50` and
+  dashboard `:403/:1598` are -0-safe (start at +0) — enumerated here so
+  they are not re-audited.
+- [checker-second, CB7] the registered budget2 MCP server still serves the
+  OLD "always non-negative" wording — it runs a binary built from another
+  worktree; rebuild/redeploy after merge (deploy note, not a code defect).
+- [checker-second, CB7] `kpi-month-detail` handler's `-sumSigned(...)`
+  (KD-2026-08-30d) has the same latent negative-zero idiom at source;
+  covered on the rendered surface by the formatMoney belt, source fix is
+  backlog.
+- [checker-a11y, CB7] explorer chip's PRE-EXISTING positive-value
+  `text-rose-600` / `text-emerald-600` at 14px measures ~4.28:1 on the
+  tinted chips, below 4.5:1 AA — byte-identical to master (joins the
+  NEXT.md tinted-band contrast backlog). CB7's new negative-value shades
+  pass (6.99:1 light, 9.43–11.02:1 dark).
+- [checker-second, CB8] `internal/services/mcpsvc/spend/trends.go:80-82`
+  doc comment still describes the pre-CB8 unconditional formula for the
+  velocity row (value is a correct passthrough). → CB9, Tier 1 doc fix.
+- [checker-second, CB8] Near-zero-residual hazard shared with CB3-c: a
+  ledger that truly nets to zero can leave a ~1e-10 float residual and
+  take the division branch, yielding an astronomical percent. Inherited
+  from the CB3-c rule CB8 was told to mirror; not introduced here. Fix
+  candidate: compare |base| against a cent epsilon in BOTH classifiers.
