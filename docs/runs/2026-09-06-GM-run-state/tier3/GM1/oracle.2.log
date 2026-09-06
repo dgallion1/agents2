@@ -1,0 +1,7 @@
+ok   - go build
+ok   - go vet
+ok   - go test whatif+templates
+  results page: hash=ac25ea610ca6c574 bytes=272532
+  list rows: [('36', 'Cut', '90', '$28,225.37', '$25,402.84')]
+ok   - rendered-surface checks
+ORACLE PASS
