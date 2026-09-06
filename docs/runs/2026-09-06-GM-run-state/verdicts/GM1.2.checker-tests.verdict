@@ -1,0 +1,258 @@
+VERDICT: PASS
+CHECKER: checker-tests
+FAMILY: anthropic
+TASK: GM1
+ATTEMPT: 2
+---
+All work run from the worktree /home/darrell/bin/ai/budget2/.claude/worktrees/guardrail-markers
+(branch feat/guardrail-chart-markers, HEAD 4543368) and from throwaway `cp -a` copies under
+the session scratchpad. No file in the shared tree was modified; the only write is this verdict.
+Confirmed the shared worktree is byte-identical to its pre-check state at the end
+(`git status --porcelain` = the same 4 " M" rows; `git diff master --stat` = the same 423/1 counts).
+
+────────────────────────────────────────────────────────────────────────
+CRITERION 1 — build / vet / tests clean
+────────────────────────────────────────────────────────────────────────
+$ cd <worktree> && go build ./...        -> BUILD_EXIT=0, no output
+$ cd <worktree> && go vet ./...          -> VET_EXIT=0, no output
+$ cd <worktree> && go test -count=1 ./internal/handlers/whatif/... ./internal/templates/...
+    TEST_EXIT=0
+    ok  	budget2/internal/handlers/whatif	11.892s
+    ok  	budget2/internal/templates	1.056s
+Extra (not required, run as regression insurance):
+$ cd <worktree> && go test -count=1 ./...   -> FULL_EXIT=0 (whole repo green)
+RESULT: MET.
+
+────────────────────────────────────────────────────────────────────────
+CRITERION 2 — unit tests on the builder's map, (a)-(e)
+────────────────────────────────────────────────────────────────────────
+$ go test -count=1 -v -run 'Guardrail' ./internal/handlers/whatif/...  -> EXIT=0
+    --- PASS: TestBuildProjectionChartData_NoGuardrailEvents_NoTrace              (a)
+    --- PASS: TestBuildProjectionChartData_GuardrailMarkers_CutAndRaise           (b)
+    --- PASS: TestBuildProjectionChartData_GuardrailMarkerY_FollowsDisplayMode    (c)
+    --- PASS: TestBuildProjectionChartData_GuardrailMarker_NoPreviousMultiplier_NoMoneyLine (d)
+    --- PASS: TestBuildProjectionChartData_GuardrailEventsOnly_GetHeadroom        (e)
+
+Read the assertions (handlers_test.go +9..+249 of `git diff master`), confirmed they assert
+what their names claim:
+ (a) asserts findTraceByName(...,"Guardrail cuts / raises") == nil for BOTH nil and
+     non-nil-empty GuardrailEvents, plus "Portfolio Balance" still present with
+     len(y)==len(projection.Months) and an unchanged trace count.
+ (b) asserts x[0]==29 && x[1]==15 (deliberately NON-monotonic, so it pins event order,
+     not sort order); symbols ["triangle-down","triangle-up"]; colors ["#ef4444","#22c55e"];
+     marker size 11; marker.line {"#ffffff",1}; hoverinfo=="text"; cliponaxis==false;
+     and the two hover strings compared with `!=` against the exact literals
+       "Year 29: cut 10% (99% of plan)<br>$26,722.44/mo → $24,050.19/mo"
+       "Year 15: raise 10% (110% of plan)<br>$15,008.83/mo → $16,509.71/mo"
+ (c) fixture has PortfolioBalance=2_000_000-1000m and PortfolioBalanceReal=1_800_000-900m so
+     the two series differ at every month; asserts nominal y and real y separately AND
+     t.Fatal if they are equal (guards a non-distinguishing fixture).
+ (d) asserts text[0] == "Year 3: cut (90% of plan)" exactly.
+ (e) strips IncomeSources/HealthcarePersons/ScenarioChain and sets age 80 so `events` is
+     empty, then asserts yaxis["range"] == [0, maxBalance*1.18] with maxBalance recomputed
+     independently from projection.Months.
+
+MUTATION PROOF (all in scratch copies, never the shared tree). Each mutation was applied to
+the worker's own source and the tests re-run; every one FAILED, so none of these tests is vacuous:
+ A. `if len(projection.GuardrailEvents) > 0` -> `if false && ...` (trace removed entirely)
+    per-test exits: CutAndRaise=1, MarkerY_FollowsDisplayMode=1,
+    NoPreviousMultiplier=1, GuardrailMarkersReachJSON=1
+    (NoGuardrailEvents_NoTrace=0 and NoGuardrails_NoGuardrailMarkerTrace=0 — correct,
+     those assert ABSENCE; EventsOnly_GetHeadroom=0 — it guards the yaxis line, see D)
+ B. cut colour "#ef4444" -> "#dc2626"
+    --- FAIL: ...CutAndRaise: "expected colors [#ef4444, #22c55e], got [#dc2626 #22c55e]"
+ C. hover money line "→" -> "->"
+    --- FAIL: ...CutAndRaise: cut hover text = "...$26,722.44/mo -> $24,050.19/mo",
+              want "...$26,722.44/mo → $24,050.19/mo"  (both cut and raise lines failed)
+ D. yaxis condition reverted to master's `if len(events) > 0 && maxBalance > 0`
+    --- FAIL: ...GuardrailEventsOnly_GetHeadroom: "expected y-axis range headroom with
+              guardrail-only events, got <nil>"
+ F. y computed with hardcoded "nominal" instead of displayDollars
+    --- FAIL: ...MarkerY_FollowsDisplayMode: "real marker y = 1.88e+06, want 1.692e+06"
+              (proves the expectation really resolves to PortfolioBalanceReal, 1.692e6,
+               not to whatever the impl returns)
+ H. y multiplied by 1.02 (the "Key events" nudge the spec forbids here)
+    --- FAIL: ...MarkerY_FollowsDisplayMode: "nominal marker y = 1.9176e+06, want 1.88e+06";
+              "real marker y = 1.72584e+06, want 1.692e+06"
+RESULT: MET, and mutation-proven.
+
+Note on the brief's own wording for (d): the "Required change" prose says
+"When Prev <= 0: `Year N: cut` / `Year N: raise` with NO PERCENTAGE", but acceptance
+criterion 2(d) demands "Year 3: cut (90% of plan)". The implementation produces the
+criterion-2(d) string. I checked the authoritative surface, the Guardrail Events list
+template (web/templates/components/whatif/guardrails.html:100-106): the
+`{{if gt .PreviousMultiplier 0.0}}...{{else}}Cut{{end}}` only suppresses the CHANGE
+percentage; the `({{printf "%.0f" (mul .Multiplier 100)}}% of plan)` span sits OUTSIDE
+that conditional and always renders. So the implementation matches criterion 2(d) AND
+matches the existing list surface. Scored on criterion 2(d).
+
+────────────────────────────────────────────────────────────────────────
+CRITERION 3 — handler test proves the trace reaches /whatif/chart/projection JSON
+────────────────────────────────────────────────────────────────────────
+TestHandleWhatIfProjectionChart_GuardrailMarkersReachJSON — PASS.
+Read it: it saves settings with Guardrails{FloorDropPct:1, FloorCutPct:10} and
+InvestmentReturn=0 so a cut is guaranteed, busts the analysis cache, calls
+handleWhatIfProjectionChart via httptest, json.Unmarshals the RESPONSE BODY (not the
+builder's map), and requires a trace named "Guardrail cuts / raises" with len(x)>0.
+Mutation A (trace removed) -> this test exits 1. Not vacuous.
+$ go test -count=1 -run '^TestHandleWhatIfProjectionChart_GuardrailMarkersReachJSON$' ...
+    (clean tree) exit=0   |   (mutation A) exit=1
+RESULT: MET.
+
+────────────────────────────────────────────────────────────────────────
+CRITERION 4 — test proves /whatif/chart/projection/no-guardrails has NO such trace
+────────────────────────────────────────────────────────────────────────
+TestHandleWhatIfProjectionChartNoGuardrails_NoGuardrailMarkerTrace — PASS.
+It sets the same firing guardrail config, calls handleWhatIfProjectionChartNoGuardrails,
+and asserts !strings.Contains(body, "Guardrail cuts / raises").
+Mutation E (`if len(projection.GuardrailEvents) > 0` -> `if true`, trace emitted
+unconditionally):
+    --- FAIL: ...NoGuardrailMarkerTrace: "no-guardrails response must not contain a
+              'Guardrail cuts / raises' trace"    exit=1
+    --- FAIL: ...NoGuardrailEvents_NoTrace: "expected no 'Guardrail cuts / raises' trace
+              when GuardrailEvents is empty"      exit=1
+Both absence-assertions are therefore live, not vacuous.
+RESULT: MET.
+
+────────────────────────────────────────────────────────────────────────
+CRITERION 5 — rendered check on a live server
+────────────────────────────────────────────────────────────────────────
+Ran from a fresh `cp -a` of the worktree with a `data` symlink to the real data dir
+(the worktree itself has no data/ link, so `scripts/whatif-verify.sh start 8099` failed
+there with "cp: cannot stat .../data"; the script's own `cp -rL` then dereferenced my
+symlink into the isolated throwaway copy, so real data was only READ):
+$ bash scripts/whatif-verify.sh start 8099
+    READY http://localhost:8099   data copy: /tmp/budget2-whatif-verify-8099/data
+$ curl .../whatif/chart/projection?display_dollars=nominal
+$ curl .../whatif/chart/projection?display_dollars=real
+$ curl .../whatif/chart/projection/no-guardrails?display_dollars=nominal
+Trace names per response:
+    nominal -> ['Portfolio Balance', 'Key events', 'Guardrail cuts / raises']
+    real    -> ['Portfolio Balance', 'Key events', 'Guardrail cuts / raises']
+    nog     -> ['Portfolio Balance', 'Key events']
+  => the new trace is appended AFTER "Key events" (spec's ordering requirement), and the
+     no-guardrails endpoint has no such trace on the real server, not just in a test.
+
+*** FIXTURE DISCREPANCY IN THE BRIEF (finding, not an implementation defect) ***
+The brief states "The live plan's guardrails are 20/10/20/10 with floor 75 / ceiling 120,
+and its deterministic projection has a raise at year 15 and cuts at years 29, 33, 35, 37."
+That is NOT what the saved plan contains today. From the throwaway copy of the live data:
+$ python3 -c "...json.load('/tmp/budget2-whatif-verify-8099/data/settings/whatif.json')..."
+    {"enabled": true, "floor_drop_pct": 10, "floor_cut_pct": 10,
+     "ceiling_rise_pct": 20, "ceiling_raise_pct": 10,
+     "min_spending_pct": 70, "max_spending_pct": 100}
+    portfolio 2400000  return 0  years 39  monthly 8900
+i.e. 10/10/20/10 with floor 70 / ceiling 100 (max_spending_pct 100 makes a RAISE
+impossible by construction), and investment_return 0. The engine therefore produces
+exactly ONE guardrail event, not five. This is corroborated by an INDEPENDENT surface on
+the same instance — the Guardrail Events list, which this task did not touch:
+$ curl http://localhost:8099/whatif   (then tag-stripped)
+    ROW: Year 36: Cut by 10% (90% of plan) $28,225.37/mo → $25,402.84/mo
+         (today: $7,120.00 → $6,408.00) Portfolio: $3,029,757.20
+One row. So the "5 points" in the brief is a stale/incorrect fixture, and the substance of
+criterion 5 was verified against the events the engine actually emitted:
+
+  nominal response, "Guardrail cuts / raises":
+    x        = [36]
+    y        = [3024130.173443734]
+    symbol   = ['triangle-down']        (event type "cut" -> correct)
+    color    = ['#ef4444']              (cut -> correct)
+    size     = 11 ; line = {'color': '#ffffff', 'width': 1}
+    type=scatter, mode=markers, hoverinfo='text', cliponaxis=False
+    text     = 'Year 36: cut 10% (90% of plan)<br>$28,225.37/mo → $25,402.84/mo'
+    "Portfolio Balance" trace y at x==36 = 3024130.173443734   -> MATCH=True (exact, |d|<1e-9)
+    layout.yaxis.range = [0, 4059453.1949642524]; max(balance y)=3440214.572003604;
+                          3440214.572003604*1.18 = 4059453.1949642524  -> headroom exact.
+
+  real response, same trace:
+    x        = [36]
+    y        = [762852.8434311618]
+    "Portfolio Balance" trace y at x==36 = 762852.8434311618      -> MATCH=True (exact)
+    layout.yaxis.range = [0, 2837286.117173364]; max=2404479.76031641; *1.18 = 2837286.117173364
+    text     = 'Year 36: cut 10% (90% of plan)<br>$28,225.37/mo → $25,402.84/mo'
+               -- IDENTICAL to nominal, i.e. the money is nominal regardless of display
+               mode, exactly as the spec requires. (The list's extra "(today: ...)" line is
+               correctly NOT in the hover text.)
+
+  Hover money vs. the Guardrail Events list, same instance, same year:
+    hover : $28,225.37/mo → $25,402.84/mo
+    list  : $28,225.37/mo → $25,402.84/mo      -> byte-identical RENDERED strings.
+    Percentages agree too: hover "10% (90% of plan)" vs list "Cut by 10% (90% of plan)".
+
+$ bash scripts/whatif-verify.sh stop 8099   -> "stopped and cleaned :8099"
+$ curl --max-time 2 localhost:8099/api/health -> exit 7 (down)
+$ curl --max-time 2 localhost:8080/api/health -> exit 0 (LIVE instance untouched)
+:8098 was never contacted. The budget2 binary was never invoked directly.
+
+RESULT: MET on substance, with a DISCLOSED GAP: because max_spending_pct is 100 in the
+saved plan, no RAISE fires, so the triangle-up / #22c55e path and multi-point ORDER were
+NOT exercised on the live server. Both are covered by unit test 2(b) (x=[29,15]
+non-monotonic + both symbols + both colours) and that test is mutation-proven (mutation B).
+The brief's "5 points / raise@15 / cuts@29,33,35,37" claim is reported as a finding
+against the brief, not against the worker.
+
+────────────────────────────────────────────────────────────────────────
+CRITERION 6 — scope
+────────────────────────────────────────────────────────────────────────
+$ cd <worktree> && git diff master --stat
+     internal/handlers/whatif/handlers.go      |  71 ++++++-
+     internal/handlers/whatif/handlers_test.go | 340 ++++++++++++++++++++++++++++++
+     internal/templates/render.go              |   3 +
+     internal/templates/render_helpers_test.go |  10 +
+     4 files changed, 423 insertions(+), 1 deletion(-)
+Exactly the four paths in .swarm/manifests/GM1.2.files, nothing more.
+$ git status --porcelain   -> the same four " M" rows, ZERO untracked ("??") entries.
+   (Worker output is uncommitted, so the working-tree diff above is the real evidence;
+    git diff master...HEAD would be empty and prove nothing.)
+No .js / .html / .css / .tmpl path appears in the diff -> no JS/HTML/CSS changes.
+$ gofmt -l internal/handlers/whatif/handlers.go internal/handlers/whatif/handlers_test.go \
+          internal/templates/render.go internal/templates/render_helpers_test.go
+    (empty output = all four clean)
+RESULT: MET.
+
+────────────────────────────────────────────────────────────────────────
+RULING GM-2026-09-06b — exactly ONE money formatter
+────────────────────────────────────────────────────────────────────────
+$ grep -rn 'func FormatMoney\|func formatMoney' --include=*.go .
+    ./internal/templates/render.go:432:func formatMoney(v float64) string {
+    ./internal/templates/render.go:474:func FormatMoney(v float64) string { return formatMoney(v) }
+    ./internal/handlers/dashboard/handlers_http_test.go:2603:func formatMoneyExpected(...)  <- PRE-EXISTING on master, a test helper, out of scope
+$ grep -rE 'formatMoney|FormatMoney|\$%|Sprintf\("\$|Comma|humanize' internal/handlers/whatif/ --include=*.go | grep -v _test.go
+    handlers.go:529: ... templates.FormatMoney(e.MonthlySpendingBefore), templates.FormatMoney(e.MonthlySpendingAfter)
+    (the only other hits are pre-existing Plotly hovertemplate strings "$%{y:,.0f}" and
+     humanizeScenarioFilename — neither is a money formatter)
+FormatMoney is a one-line pure wrapper; no algorithm is copied into the whatif package.
+MUTATION G: `func FormatMoney(v float64) string { return fmt.Sprintf("$%.2f", v) }`
+    --- FAIL: TestFormatMoney_ExportedWrapper: FormatMoney(26722.44) = "$26722.44",
+              want "$26,722.44"                                          (templates pkg, exit 1)
+    --- FAIL: ...CutAndRaise: cut hover text = "...<br>$26722.44/mo → $24050.19/mo",
+              want "...<br>$26,722.44/mo → $24,050.19/mo"                (whatif pkg, exit 1)
+=> the wrapper's pass-through property is guarded on BOTH sides. Ruling satisfied.
+
+────────────────────────────────────────────────────────────────────────
+OBSERVATIONS (not failures; for the lead's backlog)
+────────────────────────────────────────────────────────────────────────
+O1. BRIEF FIXTURE STALE (criterion 5). The brief's "guardrails are 20/10/20/10 with floor 75
+    / ceiling 120 ... raise at year 15 and cuts at 29, 33, 35, 37" does not describe the
+    currently-saved plan (10/10/20/10, floor 70 / ceiling 100, return 0 -> one cut at year 36).
+    Any future oracle or checker brief that hardcodes live-plan figures will drift the same way.
+O2. The live-server check could not exercise the RAISE marker (triangle-up / #22c55e) because
+    max_spending_pct=100 forbids raises in the saved plan. Covered only by unit test 2(b).
+O3. The `y <= 0 -> maxBalance * 0.05` fallback (handlers.go:711, mirroring the identical
+    Key-events fallback at :673) is implemented per spec but has NO test. It is not one of the
+    enumerated acceptance criteria (2a-e), so it is not scored — but it is untested code.
+O4. Test 2(c) derives its expectation by calling the same projectionValueAtYear helper the
+    implementation calls, which is mildly tautological. Mutations F and H both killed it and
+    the failure messages print concrete values (want 1.692e+06 / 1.88e+06) that match the
+    fixture's PortfolioBalanceReal/PortfolioBalance by hand, so it is not vacuous in practice.
+O5. Criterion 2(a)'s "existing traces unchanged" is verified shallowly (Portfolio Balance
+    present + len(y) == len(Months) + stable trace count between nil and empty). It would not
+    catch a change to the balance trace's VALUES. Mutation E still killed it.
+O6. On the live instance the Guardrail Events list shows "Portfolio: $3,029,757.20" for year 36
+    while the chart marker sits at y=3,024,130.17. These are different quantities by design:
+    the event's Portfolio field is the balance at the TRIGGER MONTH, the marker y is
+    projectionValueAtYear(projection, 36.0) i.e. month 432, which is exactly what the spec
+    mandates. Not a defect, but a viewer comparing the two surfaces will see a ~$5.6k gap.
+O7. internal/handlers/whatif/handlers.go is listed in .swarm/critical.globs. The task is
+    explicitly about that file and is Tier 2 with checks "tests,second" (dual-lane), so the
+    touch is authorised; flagged only so the lead sees it acknowledged.

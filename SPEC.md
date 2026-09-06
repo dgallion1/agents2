@@ -544,3 +544,160 @@ report the first-attempt clean rate verbatim.
   affected handler/template suites green). Seven of eight criteria had
   passed with evidence at attempt 1; the checker re-verifies at attempt 2.
 
+
+---
+
+# Run GM — guardrail markers on the What-If projection chart (2026-09-06)
+
+Constitution for a one-task run in budget2. Approved by the user in chat
+2026-09-06 ("yes, go ahead") after a bounded design was presented.
+
+## GM.1 Territory
+
+- Repo `/home/darrell/bin/ai/budget2`; run worktree
+  `/home/darrell/bin/ai/budget2/.claude/worktrees/guardrail-markers` on
+  branch `feat/guardrail-chart-markers` (off master 4543368). Workers commit
+  nothing; the lead commits.
+- Files in scope: `internal/handlers/whatif/handlers.go`
+  (`buildProjectionChartData`, new helper),
+  `internal/handlers/whatif/handlers_test.go`, and — from attempt 2
+  (ruling GM-2026-09-06b) — `internal/templates/render.go` for a one-line
+  exported `FormatMoney` wrapper only. No JS, no HTML templates, no CSS.
+
+## GM.2 Task GM1 — guardrail cut/raise markers (Tier 2, checks: tests,second)
+
+Context. `buildProjectionChartData` (handlers.go ~592) emits a Plotly
+figure: trace "Portfolio Balance" plus, when present, a "Key events"
+markers+text trace whose x is a projection-year offset and whose y is
+`projectionValueAtYear(projection, year, displayDollars)` nudged up 2%.
+The engine records every guardrail trigger in
+`projection.GuardrailEvents` (`models.GuardrailEvent`: `Year` int = m/12
+projection-year index, same units as chart x; `Type` "cut"|"raise";
+`Multiplier`, `PreviousMultiplier`; `MonthlySpendingBefore/After` nominal;
+`CumulativeInflation`). The no-guardrails comparison endpoint calls the
+same builder with `Guardrails=nil`, so its projection has no events.
+
+Change. Add one trace to the figure when `len(projection.GuardrailEvents)
+> 0`, appended AFTER the "Key events" trace:
+
+- `type: scatter`, `mode: markers`, `name: "Guardrail cuts / raises"`,
+  `hoverinfo: "text"`, `cliponaxis: false`.
+- `x[i] = float64(event.Year)`; `y[i] = projectionValueAtYear(projection,
+  x[i], displayDollars)` — ON the curve (no nudge). If that value is `<= 0`,
+  use `maxBalance * 0.05` exactly as Key events does.
+- Per-point marker arrays: `marker.symbol[i]` = `"triangle-down"` for a cut,
+  `"triangle-up"` for a raise; `marker.color[i]` = `"#ef4444"` for a cut,
+  `"#22c55e"` for a raise; `marker.size` 11 (scalar); `marker.line`
+  `{color: "#ffffff", width: 1}` so red/green triangles stay visible on the
+  green fill in both themes.
+- `text[i]` (hover text) is built by ONE helper
+  `guardrailEventHoverText(e models.GuardrailEvent) string` and reads
+  exactly:
+  `Year 29: cut 10% (99% of plan)<br>$26,722.44/mo → $24,050.19/mo`
+  where the first percentage is the single-year change
+  `|Multiplier-PreviousMultiplier|/PreviousMultiplier*100` rounded with
+  `%.0f`, "(NN% of plan)" is `Multiplier*100` with `%.0f`, and the money
+  line is present only when both spending figures are `> 0`, formatted
+  through the SAME money path the templates use (`formatMoney` from
+  `internal/templates` or the whatif package's equivalent — find the one
+  formatter the What-If templates already route money through and call it;
+  do NOT add a second `$%,.0f`-style formatter). When `PreviousMultiplier
+  <= 0` the single-year change percentage is omitted (`Year N: cut (NN% of
+  plan)`), matching the Guardrail Events list's fallback (ruling GM-2026-09-06d).
+  Money in the hover is nominal (that year's dollars), same as the list;
+  do NOT convert to today's dollars even in real display mode — the y
+  position follows the display mode, the hover text does not (the list
+  users compare against is nominal).
+- The y-axis headroom rule (`range = [0, maxBalance*1.18]` when events
+  exist) must also apply when ONLY guardrail events exist and there are no
+  key events — fold the condition to `len(events) > 0 ||
+  len(projection.GuardrailEvents) > 0`.
+
+Acceptance criteria (every one must be proven by a named command):
+1. `go build ./... && go vet ./...` clean; `go test ./internal/handlers/whatif/...`
+   green (bare, no pipe).
+2. Unit tests in `handlers_test.go`, each asserting on the JSON-ready map:
+   a. projection with zero guardrail events → no trace named
+      "Guardrail cuts / raises"; existing traces unchanged.
+   b. one cut (Year 29, Prev 1.10, Mult 0.99, Before 26722.44, After
+      24050.19) and one raise (Year 15, Prev 1.0, Mult 1.1, Before
+      15008.83, After 16509.71) → trace present, x = [29, 15] in event
+      order, symbols ["triangle-down","triangle-up"], colors
+      ["#ef4444","#22c55e"], hover text EXACTLY
+      `Year 29: cut 10% (99% of plan)<br>$26,722.44/mo → $24,050.19/mo` and
+      `Year 15: raise 10% (110% of plan)<br>$15,008.83/mo → $16,509.71/mo`
+      (cents preserved — `formatMoney` in internal/templates/render.go is
+      the formatter the Guardrail Events list uses; ruling GM-2026-09-06a).
+   c. real display mode → marker y equals the real-dollar balance at that
+      year (`PortfolioBalanceReal`), nominal mode → nominal balance.
+   d. event with `PreviousMultiplier` 0 → hover `Year 3: cut (90% of plan)`
+      (no money line when Before/After are 0).
+   e. guardrail events present, key events absent → yaxis range headroom
+      applied.
+3. `TestHandleWhatIfProjectionChart` (or a new sibling) proves the trace
+   reaches the HTTP JSON when the fixture settings enable guardrails and
+   the run produces at least one event.
+4. `handleWhatIfProjectionChartNoGuardrails` output contains NO
+   "Guardrail cuts / raises" trace (test it).
+5. Rendered check (checker, not worker): with
+   `scripts/whatif-verify.sh start 8099` on a copy of live data, GET
+   `/whatif/chart/projection?display_dollars=nominal` returns the trace
+   with 5 points for the current plan (raise y15; cuts y29, y33, y35,
+   y37) and the hover text for y29 matches the Guardrail Events list's
+   figures for that year after `formatMoney` rounding.
+
+Defect-history surfaces touched: money formatting shown to users (dual
+formatter class) → `second` named. Blast radius: one builder shared by two
+endpoints → Tier 2.
+
+## GM.3 Rulings
+
+- **GM-2026-09-06a** (catch — mechanism: WORKER stop, GM1 attempt 1; a
+  brief-level error): the spec's literal hover strings showed whole dollars
+  (`$26,722/mo`) while naming `formatMoney` as the required formatter;
+  `formatMoney` (internal/templates/render.go, the function the Guardrail
+  Events list routes through) preserves cents (`$26,722.44`). The worker
+  probed, stopped, and asked instead of picking one. Ruling: the hover uses
+  `formatMoney` and shows cents, because the figure the user compares the
+  hover against is the Guardrail Events list, which shows cents; two
+  renderings of one figure on two surfaces is the dual-formatter class this
+  run's `second` lane exists to catch. Literal strings in GM.2 corrected.
+  Attempt count unchanged (no code was written).
+- **GM-2026-09-06b** (catch — mechanism: WORKER self-report on GM1 attempt
+  1, upheld by the lead before any checker ran; a brief-level error): the
+  brief said "call the one formatter, do NOT add a second" but restricted
+  files to the whatif handler package, and `formatMoney` is unexported in
+  `internal/templates`. The worker resolved the contradiction by copying
+  the algorithm into `guardrailHoverMoney` and flagged it. A byte-identical
+  copy is still a second formatter (W2 class; it drifts the first time
+  `formatMoney` changes). Ruling: scope expands to
+  `internal/templates/render.go` for exactly one exported wrapper
+  `func FormatMoney(v float64) string { return formatMoney(v) }`; the hover
+  helper calls `templates.FormatMoney`; `guardrailHoverMoney` is deleted.
+  Re-dispatched as attempt 2.
+- **GM-2026-09-06c** (mechanism: GATE escalate-scan, critical-glob): the
+  lead's own `.swarm/critical.globs` named `internal/handlers/whatif/handlers.go`,
+  so the scan flagged GM1 to Tier 3 after both lanes had passed at Tier 2.
+  Honoured rather than edited away: ledger bumped to Tier 3, oracle
+  `.swarm/tier3/GM1/accept.sh` written post-hoc and validated at both ends
+  (master fails on exactly "trace missing" in both display modes; the branch
+  passes; `oracle.2.log`). Lesson for the next constitution: a chart builder
+  is reversible and not a money/auth/deploy path — the glob should have named
+  the settings-write and deploy paths, not the handler file wholesale.
+- **GM-2026-09-06d** (observation — mechanism: PRIMARY CHECKER checker-tests,
+  GM1 attempt 2, not a FAIL): the GM.2 prose says `PreviousMultiplier <= 0`
+  yields "`Year N: cut` with no percentage" while criterion 2d demands
+  `Year 3: cut (90% of plan)`. The implementation follows 2d, and so does the
+  list template (`(NN% of plan)` sits outside the `gt .PreviousMultiplier 0`
+  guard). Prose corrected here: only the single-year change percentage is
+  suppressed; the "of plan" clause is always present.
+- **GM-2026-09-06e** (observations for the backlog — mechanism: PRIMARY
+  CHECKER): (1) the `y <= 0 → maxBalance*0.05` fallback has no test; (2) the
+  Guardrail Events list shows the trigger-month `Portfolio` figure while the
+  marker sits at the year's chart balance (`projectionValueAtYear`), so the two
+  surfaces differ by a few thousand dollars for the same event — by design per
+  GM.2, but a candidate for a shared figure if a user ever compares them.
+- **GM-2026-09-06f** (harness — mechanism: GATE schema check): both checkers
+  wrote a blank line where the verdict schema requires a literal `---`
+  separator; each checker corrected its own file on request. The checker agent
+  briefs should state the separator explicitly.
