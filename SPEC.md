@@ -1099,7 +1099,9 @@ Acceptance:
 - **Run closed 2026-09-07**: `gate.sh done` exit 0; `gate.sh stats`
   first-attempt clean 4/4 (no-evidence rows 0); `make check` green;
   agents2 `smoketest/gate/run_tests.sh` ALL PASS. Shipped as budget2 PR #97
-  (branch `feat/layout-tightening`, commit 5334385); live :8080 untouched.
+  (branch `feat/layout-tightening`, commit 5334385), merged as master
+  344cb30 and deployed to live :8080 the same day (pid 3108001, health
+  commit v1.4.0-1101-g344cb30).
   Lesson for the next constitution: three of the four worker stops were
   brief-level errors by the lead (pixel ceilings derived from pinned
   classes, a pinned class failing contrast) — when classes are pinned

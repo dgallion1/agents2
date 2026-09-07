@@ -2,7 +2,8 @@
 
 Evidence snapshot of `.swarm/` (gitignored) for the four-task run described
 in SPEC.md "Run LT". Target repo: budget2, branch `feat/layout-tightening`
-(commit 5334385 off master c0b8476), shipped as simpleBudget PR #97.
+(commit 5334385 off master c0b8476), shipped as simpleBudget PR #97, merged
+as master 344cb30 and deployed to :8080 on 2026-09-07.
 
 - `ledger.tsv` — LT1, LT2, LT5, LT6, all Tier 2, all accepted at attempt 1.
 - `critical.globs` — storage/dataloader/engine/transfers/accounts/confirm/backup
