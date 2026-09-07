@@ -1,0 +1,262 @@
+VERDICT: PASS
+CHECKER: checker-tests
+FAMILY: anthropic
+TASK: LT5
+ATTEMPT: 1
+---
+Method: all work done in `cp -a` copies under
+/tmp/claude-1000/.../scratchpad/lt5-tests/{branch,oracle,mutA,mutB,mutC}.
+The real worktree was never written to (final `git status --porcelain` there
+shows only worker output). `.git` was removed from every scratch copy before
+use so no git command could reach the shared gitdir. Verify servers on 8103
+(branch) and 8113 (master templates) only; both torn down; live :8080
+confirmed healthy afterwards.
+
+Baseline "master" = branch copy with `git archive master web/templates | tar -x`
+over web/templates (i.e. LT1's and LT2's template edits reverted too), so the
+recurring-height and link-parity comparisons are against true master markup.
+Data copies for 8103 and 8113 verified identical:
+  `diff -r /tmp/budget2-whatif-verify-8103/data /tmp/budget2-whatif-verify-8113/data`
+  -> DATA COPIES IDENTICAL
+
+--------------------------------------------------------------------
+ITEM 1 — build / vet / test green bare; DI fixtures unmodified.  PASS
+--------------------------------------------------------------------
+$ (scratch/branch) rtk proxy go build ./...   -> BUILD_EXIT=0
+$ (scratch/branch) rtk proxy go vet ./...     -> VET_EXIT=0
+$ (scratch/branch) rtk proxy go test -count=1 ./internal/templates/... ./internal/handlers/insights/...
+    ok  	budget2/internal/templates	1.182s
+    ok  	budget2/internal/handlers/insights	1.232s
+    TEST_EXIT=0
+(bare, never piped to grep; -count=1 defeats the test cache)
+
+Whole suite and the repo's own composite target, also in the scratch copy:
+$ rtk proxy go test -count=1 ./...   -> EXIT=0, no non-`ok` lines
+$ rtk proxy make check               -> last line "✓ all checks passed", EXIT=0
+  (`check: vet static vuln css-verify test`; css-verify printed
+   "tailwind.css is up to date", confirming the worker's claim that
+   tailwind.css needs no rebuild — no new Tailwind classes were introduced.
+   Run separately as well: `rtk proxy make css-verify` -> EXIT=0.)
+
+DI fixtures unmodified:
+$ (worktree) rtk proxy git diff master --stat -- internal/
+    (empty output — zero tracked changes under internal/)
+$ (worktree) rtk proxy git status --porcelain -- internal/
+    ?? internal/templates/render_insights_lt5_test.go
+    ?? internal/templates/render_period_context_lt1_test.go   [LT1, foreign]
+So `recurring_render_di5_test.go`, `estimate_sums_di5_test.go`,
+`http_links_di5_test.go` (all in internal/handlers/insights) and
+`render_recurring_di1_test.go` (internal/templates) are byte-unchanged from
+master and pass in the run above. No existing test needed the per-row-sentence
+edit acceptance 1 allowed for:
+$ grep -rn "may differ from the median" --include=*.go .
+    -> only internal/templates/render_insights_lt5_test.go:177 (the new test).
+   No Go test on master asserted the per-row sentence.
+
+--------------------------------------------------------------------
+ITEM 2 — new test file covers acceptance 2 (a)(b)(c); real oracle.  PASS
+--------------------------------------------------------------------
+File read in full: internal/templates/render_insights_lt5_test.go (245 lines).
+Clause-by-clause mapping (line numbers in that file):
+
+2(a) TestLT5RecurringRowEvidenceDisclosure (l.60-126)
+  - "two-row fixture with cents (1655.30 / 27.35)": l.63-80, PaymentEstimate
+    1655.30 and 27.35, MonthlyEstimate 137.94 / 20.30, Annual 1655.30 / 243.70.
+  - "each row's first cell contains exactly one <details": l.96-98
+    `strings.Count(row,"<details") != 1`.
+  - "a <summary whose text is Evidence": l.99-102 regex capture == "Evidence".
+  - "the three evidence lines occur after that row's <details": l.103-109,
+    index of ClassificationReason / "occurrences" / "Expected payment estimate"
+    each >= index of "<details".
+  - "money cells render exactly >$1,655.30</td>-style strings equal to
+    formatMoney, hardcoded": l.91-94 wantMoney + l.110-115 Contains.
+  - Extra (contract B, line-1 placement): l.117-125 asserts the literal
+    `<span class="text-gray-600 dark:text-gray-400">Major Expense: Household</span>`
+    and that it precedes `<details`.
+
+2(b) TestLT5OtherRecurringCollapsedSubscriptionsOpen (l.130-171)
+  - "<details without open that contains <table": l.147-154 (no "<details open",
+    detailsAt < tableAt).
+  - "its `Show all 2 series` summary": l.155-158.
+  - "subscriptions group renders <table with no <details before it": l.164-170.
+
+2(c) TestLT5PriceCreepCaveatRendersOnce (l.175-244)
+  - "one creep and one outlier finding": l.181-202, 223.
+  - "renders ... exactly once": l.224-226 Count == 1.
+  - "after id=\"findings-preview\"'s closing </ul>": l.227-238.
+  - "with zero creep findings, zero times": l.240-243.
+
+ORACLE PROOF (a) — whole change reverted (master's web/templates, branch's
+test file), scratch/oracle:
+$ rtk proxy go test -count=1 -run 'TestLT5' ./internal/templates/
+    --- FAIL: TestLT5RecurringRowEvidenceDisclosure (0.01s)
+        render_insights_lt5_test.go:97: row 0: 0 <details, want 1
+        render_insights_lt5_test.go:101: row 0: summary text = [], want "Evidence"
+        render_insights_lt5_test.go:97: row 1: 0 <details, want 1
+        render_insights_lt5_test.go:101: row 1: summary text = [], want "Evidence"
+        render_insights_lt5_test.go:119: missing inline Major Expense span on line 1
+        render_insights_lt5_test.go:123: Major Expense annotation rendered after the Evidence disclosure, not on line 1
+    --- FAIL: TestLT5OtherRecurringCollapsedSubscriptionsOpen (0.01s)
+        render_insights_lt5_test.go:153: expected a <details> wrapping <table>: detailsAt=-1 tableAt=484
+    --- FAIL: TestLT5PriceCreepCaveatRendersOnce (0.01s)
+        render_insights_lt5_test.go:237: caveat at 7050 occurs before findings-preview's closing </ul> at 7675
+    FAIL	budget2/internal/templates	0.039s   EXIT=1
+All three tests fail on master. None is vacuous.
+
+ORACLE PROOF (b) — targeted single-token mutations of the branch templates:
+  mutA: `<details>` -> `<details open>` on the "other" wrapper
+    -> render_insights_lt5_test.go:148: other-recurring group's wrapping
+       <details> must not be open   [FAIL]
+  mutB: delete the `{{if $hasCreep}}<p ...>` line from pages/insights.html
+    -> render_insights_lt5_test.go:225: caveat occurred 0 times with a creep
+       finding present, want 1   [FAIL]
+  mutC: delete the `<details class="mt-1">`/`<summary>Evidence</summary>`
+       wrapper from the row cell
+    -> render_insights_lt5_test.go:97/101/123 [FAIL]
+Each guard fails when the exact thing it guards is mutated.
+
+--------------------------------------------------------------------
+ITEM 3 — HTMX partial parity.  PASS
+--------------------------------------------------------------------
+Consumer enumeration (not trusting the diff):
+$ grep -rn "insights-recurring-partial\|insights-recurring-group\|insights-recurring-table" web/templates/ internal/ --include=*.html --include=*.go | grep -v _test.go
+    web/templates/pages/insights.html:86       -> insights-recurring-group
+    web/templates/components/insights-investigation.html:20/29/32/38/92/97
+    internal/handlers/insights/handlers.go:317 -> RenderPartial "insights-recurring-partial"
+$ grep -rn 'r.Get("/insights' internal/handlers/insights/handlers.go
+    /insights/recurring is the ONLY partial route that renders recurring groups
+    (trends/velocity/income do not touch these defines).
+So the full page and GET /insights/recurring are the two and only two
+consumers, and both reach the rows through the same `insights-recurring-group`
+define.
+
+Proven, not inferred. Fetched with the same range from both servers and
+extracted each group `<section aria-labelledby="recurring-*">` with a
+nesting-aware scanner:
+$ curl .../insights?start=2026-06-01&end=2026-08-31  and  .../insights/recurring?...
+  port 8103: page groups=3 partial groups=3 ids=['subscriptions','bills','other']
+    page-vs-partial group markup byte-identical: True
+     [subscriptions] page/part: <details=3 open=0 Evidence=3 rows=3
+     [bills]         page/part: <details=4 open=0 Evidence=4 rows=4
+     [other]         page/part: <details=27 open=0 Evidence=26 rows=26
+  port 8113 (master): identical page-vs-partial too, but <details=0 everywhere.
+The "other" group's 27th <details> is the wrapper; 0 of them carry `open`.
+Summary inventory in the partial:
+$ grep -o '<summary[^>]*>[^<]*</summary>' partial.8103.html | ... | uniq -c
+      33 Evidence      1 Period details [LT1, foreign]      1 Show all 26 series
+Master partial: 1 "Data freshness" only.
+
+--------------------------------------------------------------------
+ITEM 4 — rendered height, caveat counts, summary keyboard.  PASS
+--------------------------------------------------------------------
+Master measured live on port 8113 in my scratch copy (NOT the LT.0 4,815 px
+baseline), same data copy, same range, Playwright 1280x900 both themes:
+    8103-light recH=1023   8113-light recH=4689  -> 21.8 %  (ceiling 40 %)
+    8103-dark  recH=1023   8113-dark  recH=4689  -> 21.8 %
+    scrollWidth == innerWidth == 1280 on both (no horizontal overflow)
+
+Caveat, counted on the RAW HTML source (innerText would hide the closed
+#all-findings rows):
+$ grep -o 'Price-creep findings: ... may differ from the median\.' page.8103.html | wc -l  -> 1
+$ grep -o 'The linked transaction is the latest in this full-history group; ...' page.8103.html | wc -l -> 0
+$ same two greps on page.8113.html (master) -> 0 and 11
+So: new sentence exactly once, old per-row phrasing exactly zero times on the
+branch; master carried it 11 times. Position (branch):
+    findings-preview </ul> at 22200, #all-findings </details> at 38388,
+    caveat at 38477 -> after both, and inside #insights-findings (True).
+
+Every <summary> in #insights-recurring toggles on Enter and Space
+(Playwright, real key events, per-summary open-state read before/after):
+    wrapper summary text: "Show all 26 series"; open initially: false
+    wrapper Enter-> true  Enter-> false  Space-> true  Space-> false
+    total summaries under #insights-recurring: 34
+    focusable: 34/34   Enter toggled: 34/34   Space toggled: 34/34
+    Tab sequence from the first recurring link:
+      ["SUMMARY:Evidence","A:netflix","SUMMARY:Evidence","A:openai",...]
+(focus-ring visibility is the a11y lane's; not asserted here.)
+
+Contract C, header stays visible outside the disclosure (branch, live DOM):
+    otherH3 = "Other recurring spending", visible True
+    otherTotals = "26 retained series · Estimated monthly $6,784.18 ·
+                   Estimated annual $81,410.35", visible True
+    headerOutsideDetails = True, detailsOpen = False, tableInsideDetails = True
+The empty-group sentence sits in the `{{else}}` of `{{if .Group.Rows}}`
+(insights-investigation.html:34), structurally outside any <details>; the live
+data has no empty group so this is a source-level, not rendered, observation.
+
+At 390 px (both servers): scrollWidth == innerWidth == 390 on both; the
+`min-w-[640px]` tables overflow inside their `overflow-x-auto` regions with an
+identical element count on branch and master (642 each) — master-native.
+#insights-recurring 1343 px vs master 8169 px (16.4 %).
+
+--------------------------------------------------------------------
+ITEM 5 — a[href] parity in #insights-recurring and #insights-findings.  PASS
+--------------------------------------------------------------------
+My own diff (checker-second owns the money strings). Ordered list of
+[href, normalised textContent] per section, branch (8103) vs master (8113),
+same data copy and same range, both themes:
+    recLinks  branch n=33 sha=f843aefc87ea9516 | master n=33 sha=f843aefc87ea9516 | equal=True
+    finLinks  branch n=26 sha=e04aad0b846b8ac2 | master n=26 sha=e04aad0b846b8ac2 | equal=True
+    dark: recLinks equal True   finLinks equal True
+(sha = sha256 of the JSON-serialised ordered list, first 16 hex; equality is
+list ==, order-sensitive, including links inside the collapsed "other" details
+because querySelectorAll ignores visibility.)
+Sample, branch: ['/explorer?search=anthropic.com&type=Outflow&start=2026-06-01&end=2026-08-31','anthropic.com'] …
+
+Corroborating "nothing lost": trimmed-text-node multiset over
+#insights-recurring, branch vs master:
+    branch 356 nodes, master 289
+    ADDED (branch only): {'·': 33, 'Evidence': 33, 'Show all 26 series': 1}
+    REMOVED (master only): {}
+i.e. every existing sentence survives; the only additions are the separator
+the contract prescribes, the 33 disclosure labels, and the wrapper summary.
+`Major Expense: {name}` moved from a <p> to the inline span with an unchanged
+text node (it does not appear in either set). Table region a11y attributes
+unchanged: the three `aria-label="… estimates"` values and the count of
+`<div class="overflow-x-auto" tabindex="0" role="region"` (7) are identical on
+branch and master.
+
+--------------------------------------------------------------------
+SCOPE
+--------------------------------------------------------------------
+Manifest LT5.1.files = insights-investigation.html, insights.html,
+render_insights_lt5_test.go. Reconciled against the working tree (worker output
+is uncommitted; `git diff master --` used, not master...HEAD):
+  LT5-attributable: web/templates/components/insights-investigation.html
+    (hunks only in the `insights-finding` sentence and the recurring
+    group/table defines — `insights-trends-table` and the other defines
+    untouched); web/templates/pages/insights.html (+2 lines at @@ -70, inside
+    #insights-findings); internal/templates/render_insights_lt5_test.go (new).
+  Foreign, attributed, NOT counted against LT5: charts.js + dashboard.html
+    (LT1/LT2); shared/period-context.html + render_period_context_lt1_test.go
+    (LT1 — this is the source of the "Period details" summary I saw);
+    styles.css + insights.js + render_insights_lt6_test.go and 17 further added
+    lines in pages/insights.html inside #insights-supporting (LT6 tab markup,
+    which appeared mid-verification).
+  Re-checked after LT6 started: LT5's insights.html hunk is still exactly the
+  2 lines at @@ -70, and insights-investigation.html is byte-identical to my
+  snapshot (md5 9dce8b69810e2f88a3dec14cc07c63e0 in both), so all evidence
+  above still describes the current tree.
+  .swarm/critical.globs: nothing under internal/services/{storage,dataloader,
+  retirement/engine,transfers,mcpsvc/confirm}, internal/services/accounts/
+  accounts.go or internal/handlers/backup/ is touched — `git diff master --stat
+  -- internal/` is empty.
+
+--------------------------------------------------------------------
+OBSERVATIONS (not failures; for the backlog)
+--------------------------------------------------------------------
+OBS-1 (test strength, 2(c)): with the contract's prescribed fixture (ONE creep
+  finding) the `Count == 1` assertion also passes on master, because master
+  renders the sentence once per creep row and there is only one such row. Only
+  the position assertion discriminates against master; the count assertion is
+  exercised by mutB. A two-creep-finding fixture would make the count assertion
+  discriminate on its own. The test as written matches the contract exactly, so
+  this is not a defect against acceptance 2.
+OBS-2 (test strength, 2(a)): the money assertions are `strings.Contains` over
+  the whole `<tr>`, not per-cell in order, and wantMoney[0] repeats
+  ">$1,655.30<" (Payment and Annual share the fixture value), so cell ORDER is
+  unasserted. The contract only requires the hardcoded formatMoney strings;
+  ordered per-cell money parity is checker-second's item 3.
+OBS-3 (pre-existing, master-native): 642 elements extend past a 390 px viewport
+  inside `overflow-x-auto` regions on /insights — identical count on master and
+  branch, page scrollWidth == innerWidth on both. No page-level overflow.

@@ -1,0 +1,34 @@
+VERDICT: PASS
+CHECKER: checker-second
+FAMILY: adversarial
+TASK: LT5
+ATTEMPT: 1
+---
+Scope: web/templates/pages/insights.html, web/templates/components/insights-investigation.html, internal/templates/render_insights_lt5_test.go (per manifest). Diffed with raw `diff -u` against `git show master:<path>` (not `git diff`, to rule out the known rtk git-diff falsification) — confirmed identical to `git diff master --`.
+
+1. Build/tests: `go build ./...` and `go vet ./...` clean; `go test -count=1 ./internal/templates/... ./internal/handlers/insights/...` → both `ok` (not cached — forced rerun). DI1/DI4/DI5 fixture files present and passing unmodified (recurring_render_di5_test.go, estimate_sums_di5_test.go, http_links_di5_test.go, render_recurring_di1_test.go, investigation_di4_test.go, pricecreep_di5_test.go, recurring_scope_di4_test.go).
+
+2. Money/link parity (attack 1, 3, 5, 6): built branch server (whatif-verify 8106) and a `cp -a` scratch copy with `git checkout master -- web/templates` (whatif-verify 8114), same live-data copy, both `/insights` (default) and `/insights?start=2026-01-01&end=2026-08-27&preset=`. Extracted with a standalone regex/HTML script (no lxml/bs4 available):
+   - `td.num` text list in #insights-recurring: 102 entries, byte-identical master vs branch, both ranges.
+   - 3 group-total lines ("N retained series · Estimated monthly … · Estimated annual …"): identical.
+   - "Retained estimates: … monthly … annual. Totals sum…" line: identical.
+   - `a[href]` inside #insights-recurring (34) and #insights-findings (73 default / 52 ranged): identical, both ranges.
+   - Anchor visible text (merchant names) in #insights-recurring: 34/34 identical, in order.
+   - "Actual transaction: …" strings (73/52): identical.
+   - Creep "→" arrow money strings (14): identical.
+   - GET /insights/recurring (HTMX partial, `insights-recurring-partial` → same `insights-recurring-group`/`insights-recurring-table` templates): td.num list (102) byte-identical master vs branch, confirming the shared-template fix reaches this second consumer too.
+
+3. Evidence-text parity (attack 2): per-row evidence text (ClassificationReason; occurrences·frequency·last-observed; expected-payment·confidence), extracted from inside each `<tr>`, compared in row order across all 34 rows on live data: 0 diffs once the sanctioned "Major Expense: {name}" line (moved from a `<p>` to an inline `<span>` per LT5.B, spec-authorized) is excluded from the comparison. Separately verified the 34 Major Expense names match master's `<p>Major Expense: X</p>` list byte-for-byte against branch's inline `<span>Major Expense: X</span>`.
+
+4. Caveat-once (attack 4): live data has 14 creep findings on default range. `grep -c "actual amount may differ from the median"`: master 14 (once per row), branch 1. The branch's single footnote text matches the spec's literal required string exactly. Confirmed via source read that the guard is `{{range .Findings}}` (the FULL set), not `.Preview` — so a creep finding located only in `.Remaining` (beyond the preview) still trips `$hasCreep`. Per-row creep clause (`grep -oP` on the → arrow clause) still ends in "…, {date} to {date}." — trailing "The linked transaction is the latest…" sentence removed from every one of the 14 per-row instances (`grep -c "The linked transaction is the latest"`: branch 0, master 14) and rendered exactly once at the placement the spec names (after `#findings-preview`'s closing `</ul>`, confirmed by the new test's own index-position assertion, which I read rather than trusted by name).
+
+5. Group ID / collapse (attack 3): confirmed in internal/handlers/insights/investigation.go:143 the three Group.ID values are exactly "subscriptions", "bills", "other". Rendered branch page: "Other recurring spending" wrapped in a closed `<details>` (no `open` attribute) whose `<summary>` reads "Show all 26 series" matching the live 26-row count; "Detected subscriptions" (3 rows) and "Recurring bills" (5 rows) render `<table` with no `<details` preceding it. Read (not just grepped) the template: the empty-group sentence is a sibling of the `{{if .Group.Rows}}` branch, independent per group — an empty "other" with a non-empty sibling group cannot land inside that sibling's `<details>` structurally, and vice versa.
+
+6. Rendered height (attack criterion LT5.4): Playwright (specified executable/args), 1280px, live data: #insights-recurring height master 4814px, branch 1092px = 22.7% of master, well under the ≤40% ceiling.
+
+7. Test-file fidelity (attack 7): render_insights_lt5_test.go renders through the REAL templates via `NewFromFS` (not a hand-rolled string check) and hardcodes `formatMoney`-shaped strings (">$1,655.30<" etc.) for a fractional-cent fixture; the mirrored `lt5Row`/`lt5Group` field names verified against the real `models.RecurringPayment` / `RecurringRowView` structs (internal/models/insights.go, internal/handlers/insights/investigation.go) — no field-name drift that would silently no-op the assertions. Gap noted as OBSERVATION only (not a FAIL): the fixture amounts (1655.30, 27.35, 137.94, 20.30, 243.70) contain no exact half-cent tie, so a half-up-vs-half-even regression at a .xx5 boundary would not be caught by this fixture — but LT5 does not touch `formatMoney` itself (internal/templates/render.go:432, untouched by this diff) and the spec's own acceptance text names exactly these two example values, so this is a pre-existing test-design gap, not a defect this task introduced.
+
+No defect found in scope. Both whatif-verify instances I started (8106, 8114) were stopped and their scratch dirs/copies removed; :8080 and the other in-flight tasks' ports (8092 LT2, 8101/8103 other checkers) were left untouched.
+
+OBSERVATIONS (not FAILs, out of LT5's scope):
+- Formatter-tie coverage gap noted above belongs to a future test-hardening task, not LT5.

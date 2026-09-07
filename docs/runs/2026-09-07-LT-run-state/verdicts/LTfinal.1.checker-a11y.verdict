@@ -1,0 +1,169 @@
+VERDICT: PASS
+CHECKER: checker-a11y
+FAMILY: anthropic
+TASK: LTfinal
+ATTEMPT: 1
+---
+Scope: site-wide final a11y pass for run LT (branch feat/layout-tightening,
+diff --stat: period-context.html, dashboard.html, charts.js,
+insights-investigation.html, insights.html, insights.js, styles.css + 3 new
+test files — confirmed via `/usr/bin/git diff master --stat` at start).
+Constitution: budget2/.claude/worktrees/layout-tightening/ACCESSIBILITY.md
+(17 numbered points) + agents2 .swarm/LT-RUN-SPEC.md (rulings a-e).
+
+METHOD: real render, real stylesheet. Branch server on :8107
+(scripts/whatif-verify.sh start 8107, live data copy, torn down at end with
+`stop 8107`). Master-baseline attribution server on :8117 served from a
+`cp -a` copy in scratch with `git checkout master -- web` applied IN THE
+COPY ONLY (verified via `git diff --stat master -- web` in the copy showing
+zero diff after checkout). Playwright chromium
+(/home/darrell/.cache/ms-playwright/chromium-1243/chrome-linux64/chrome,
+--no-sandbox) + axe-core (axe.js from the U12 scratch node_modules) via
+addScriptTag, wcag2a/2aa/21aa/22aa tags. Dark via
+documentElement.classList.toggle('dark', true) + 400ms wait. All <details>
+force-opened before each axe run. Scratch:
+.../scratchpad/ltfinal-a11y/{audit.js, branch-results.json,
+master-results.json, check_*.js, *.png}.
+
+1. AXE SWEEP — 9 pages x 2 viewports (1440/390) x 2 themes (light/dark),
+   plus /insights?start=2026-06-01&end=2026-06-30 with each of the 5
+   supporting tabs (trends/income/anomalies/pricecreep/pace) activated
+   before the scan = 62 total axe runs, both branch and master.
+   Result: branch violation set is IDENTICAL to master's, page-for-page,
+   rule-for-rule, node-for-node (`python3` set-diff over both JSON dumps:
+   "total diffs: 0"). All hits are PRE-EXISTING (OBSERVATIONS, not FAILs):
+     - `scrollable-region-focusable` on dashboard@390 (chart data tables)
+       and transfers@390 (`.mt-3.overflow-x-auto`) — matches the named
+       pre-existing item.
+     - `target-size` on major-expenses@390 (approve/reject submit buttons,
+       untouched file, not in this branch's diff).
+   axe found ZERO `color-contrast` VIOLATIONS anywhere; the dark preset-
+   button / 390px KPI-region contrast the brief calls out shows only as an
+   axe "incomplete" (manual-review) `color-contrast` finding on Plotly SVG
+   chart text (bgOverlap — axe can't resolve contrast against SVG chart
+   backgrounds; expected/known limitation) plus one `.text-xl` bgGradient
+   item, present on both branch and master. Direct getComputedStyle probe
+   of the actual preset-range buttons and `[data-kpi-detail]` links (both
+   themes, both viewports) computed 6.99:1 (dark) / 9.37:1 (light) —
+   passing 4.5:1; I could not reproduce a sub-4.5:1 hit on the current
+   static classes (`text-gray-700 dark:text-gray-300` on
+   `bg-gray-100 dark:bg-gray-700`), consistent with this being an
+   inactive/JS-driven state not present in the static markup I probed.
+   Recorded as OBSERVATION per the "not my call to reclassify a
+   already-named pre-existing item" rule — not re-litigated as a FAIL or
+   a clean bill; still present in the same form as master.
+   axe found ZERO other violations on any LT-touched surface (dashboard,
+   insights default, insights?range with all 5 tabs) at any
+   viewport/theme.
+
+2. PERIOD-CONTEXT PARTIAL PARITY — checked every named consumer via curl:
+   /dashboard/kpis, /insights/recurring, /insights/trends,
+   /insights/velocity, /insights/income (all with
+   ?start=2026-06-01&end=2026-06-30, stale live data ⇒ HasData+Stale
+   fixture in practice). Every one renders: exactly one "Period details"
+   string, zero "Data freshness" strings, "Selected period:" and the
+   stale sentence both appear before the first `<details`, "Prior
+   period:"/"evidence bounds" after it. /dashboard/kpis has a second
+   unrelated `<details>` ("Plan explanation and comparison" — pre-existing,
+   not period-context's). Full-page /dashboard and /insights: exactly one
+   "Period details", zero "Data freshness", zero `<details open`.
+   HTMX range-change parity: Playwright clicked the "1M" preset on
+   /dashboard, `#kpis-container` swap confirmed 2 details
+   (Period details + Plan explanation), no "Data freshness" post-swap.
+   All consumers structurally identical — PASS on this item.
+
+3. STYLES.CSS FOCUS RULE — `git diff master -- web/static/css/styles.css`
+   shows exactly one line added, `[data-ins-tab]:focus-visible,`, inserted
+   into the existing What-If focus-outline selector list; no other change.
+   Spot-checked real keyboard-focus (el.focus() + `:focus-visible` match
+   confirmed true) on a What-If tab and an Insights tab in both themes:
+   identical outline color/width per theme (light: rgb(79,70,229) 2px;
+   dark: rgb(165,180,252) 2px) on both `[data-wf-tab]` and
+   `[data-ins-tab]` elements — confirms shared rule, no regression to the
+   What-If tabs. Screenshots (tab-focus-light.png, tab-focus-dark.png)
+   show a clearly visible ring around the Insights tab in both themes.
+
+4. STRUCTURE — one `<h1>` per page confirmed on all 9 pages at every
+   viewport/theme combination scanned (h1 count = 1 in all 62+ axe runs,
+   see branch-results.json / master-results.json). Heading order checked
+   on all 9 pages: no skipped levels (h1→h2→h3→h4 progressions only)
+   including the LT5-touched insights heading sequence and the LT6 tab
+   panels (headings inside tabpanels unaffected — server markup unchanged
+   per spec). main/nav present on all 9 pages; footer present on 8/9
+   (missing on /explorer on BOTH branch and master — pre-existing,
+   untouched template, OBSERVATION only, out of scope).
+   Horizontal overflow at 390: page-level `documentElement.scrollWidth`
+   vs `clientWidth` checked on all 9 pages, both themes. Zero overflow on
+   dashboard, insights (default + ranged, all 5 tabs), explorer, accounts,
+   transfers, filemanager, duplicates. major-expenses (411 vs 390) and
+   whatif (476 vs 390) DO overflow at 390 in both themes, but identically
+   on master (same numbers, same elements) — these templates are not in
+   this branch's diff --stat, so PRE-EXISTING, OBSERVATION not FAIL.
+
+5. MANUAL CHECKS BEYOND AXE:
+   - LT6 tabs: `role="tab"`/`role="tabpanel"` count = 5/5, every
+     `aria-controls`↔panel id and `aria-labelledby`↔tab id pair correct,
+     `aria-selected`/roving `tabindex` correct on activation, keyboard
+     ArrowRight/Home/End all move focus AND activate (verified: trends→
+     income via ArrowRight, End→pace, Home→trends). JS-off context
+     (`javaScriptEnabled: false`): all 5 panels visible, zero `hidden`
+     attributes in server markup — point 16 progressive enhancement holds.
+   - LT1/LT5 disclosures: "Period details", "Evidence" (per recurring
+     row), and "Show all N series" summaries are all keyboard-reachable,
+     Enter and Space both toggle `open`, and each renders a real (non-
+     `outline:none`) focus ring in both themes — confirmed via
+     `:focus-visible` match + screenshots (focus-light.png,
+     focus-dark.png show a clear box around "Period details").
+   - LT2 Major Expense card: the "View chart data" `<details>` dashboard.js
+     appends lands inside the chart's own grid cell (not a third grid
+     item) — confirms ruling LT-2026-09-07c's fix is in the shipped
+     markup. First breakdown row is a focusable `<button>` with visible
+     focus ring; click opens `role="dialog"` `aria-modal="true"`
+     `aria-labelledby="major-expense-drilldown-title"` with focus moved
+     inside — identical structure/attributes on branch and master (dialog
+     wiring untouched by this branch, point 17 satisfied, unaffected).
+   - LT5 footnote: "actual amount may differ from the median" appears
+     exactly once on /insights (was previously per-row per LT-RUN-SPEC.md);
+     "Other recurring spending" group renders inside a closed `<details>`
+     with summary "Show all 26 series" (live data), subscriptions/bills
+     groups render open (unwrapped `<table>`, no details).
+   - No `<img>` without `alt` found on any scanned page.
+   - No new `prefers-reduced-motion`-relevant CSS/JS was added by this
+     branch (styles.css diff is the single focus-selector line only; the
+     pre-existing `.transition-all`/`transform 80ms` rules are unchanged
+     and out of scope).
+   - No hidden-text abuse found: no new `sr-only`/`aria-hidden` misuse
+     introduced; the LT6 tab pattern correctly uses `hidden` attribute
+     (removed via JS, present with JS off) rather than visual-only hiding,
+     satisfying point 16.
+
+FAILURES: none.
+
+OBSERVATIONS (all pre-existing, confirmed byte-identical to master via
+`git diff master --stat` scope and/or parallel master render — not this
+task's introduction, not blocking):
+  - `scrollable-region-focusable` on dashboard "View chart data" tables
+    (390px) and on /transfers (390px) — named pre-existing item.
+  - `target-size` on /major-expenses (390px) approve/reject buttons —
+    untouched template.
+  - axe "incomplete" `color-contrast` on Plotly SVG chart text (bgOverlap,
+    manual-review-only, not a violation) on dashboard@390:dark — same on
+    master; the specific dark-preset-button / KPI-region contrast concern
+    named in the brief did not reproduce as a live sub-4.5:1 ratio on the
+    current static button classes when probed directly, but is left as an
+    observation per the named pre-existing-item convention rather than
+    reclassified.
+  - Page-level horizontal overflow at 390px on /major-expenses (411px) and
+    /whatif (476px), identical on master — templates not touched by this
+    branch.
+  - `<footer>` landmark absent on /explorer, identical on master —
+    template not touched by this branch.
+  - Pre-existing `.transition-all` (0.2s) and `transform 80ms` CSS
+    transitions have no `prefers-reduced-motion` guard; unchanged by this
+    branch (styles.css diff is one selector line), so out of scope for
+    this run, flagged for a future accessibility backlog item.
+
+VERDICT: PASS — no FAIL introduced or replicated by run LT's changes on
+any of the nine pages, both themes, both viewports, or the insights
+supporting-tab states; all constitution points 1, 4 (n/a — no new forms),
+7-17 checked directly on the branch's new markup/JS and hold.

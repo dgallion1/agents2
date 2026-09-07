@@ -701,3 +701,408 @@ endpoints → Tier 2.
   wrote a blank line where the verdict schema requires a literal `---`
   separator; each checker corrected its own file on request. The checker agent
   briefs should state the separator explicitly.
+
+# Run LT — Dashboard and Insights layout tightening (2026-09-07)
+
+Constitution for a four-task run in budget2. The user chose "option 1"
+(layout-only tightening) in chat on 2026-09-07 after three options were
+presented; this section is that option written as contracts. Tiers were
+assigned by the lead under that approval and are open to user override;
+mid-run they move only up.
+
+## LT.0 Motivation (measured 2026-09-07 at 1280 px, live data, dark theme)
+
+| Page | Height | Largest block |
+|---|---|---|
+| Dashboard | 4,176 px | charts grid 2,088 px (Major Expense card's 35-row "Other categories" list stretches the left column; right column empty for ~1,500 px) |
+| Insights | 10,862 px | recurring spending 4,815 px (34 rows × 5 evidence lines); supporting section 4,449 px (five full-width cards always open) |
+
+Rules that hold for every task (from the approved 2026-09-06 design):
+- Every sentence, figure, link, and id that exists today still exists
+  after the change unless a task below names it. Caveats move; they are
+  not deleted. Figures are never re-formatted: the `formatMoney` path in
+  Go and the existing `Intl.NumberFormat` in charts.js are the only
+  formatters, and neither gains a sibling.
+- Information order (period → figures → details → charts on Dashboard;
+  period → what changed → review → recurring → supporting on Insights)
+  is unchanged.
+- Progressive enhancement: any content hidden by JS must be visible with
+  JS off (ACCESSIBILITY.md point 16). `<details>` is the preferred
+  disclosure; a `<summary>` is the only control that may toggle it.
+- Both themes, 1280 and 390 px, no horizontal overflow, axe clean
+  (WCAG 2.2 AA tags), one `<h1>` per page.
+
+## LT.1 Territory
+
+- Repo `/home/darrell/bin/ai/budget2`; run worktree
+  `/home/darrell/bin/ai/budget2/.claude/worktrees/layout-tightening` on
+  branch `feat/layout-tightening` (off master c0b8476). The worktree has a
+  `data` symlink to the main checkout's live data (the verify script
+  dereferences it into a throwaway copy) and `tmp/tailwindcss-3.4.17`.
+- Workers commit nothing; the lead commits. The main checkout and the
+  other worktrees (`.worktrees/dashboard-insights`, `/tmp/budget2-lifestyle-build`)
+  are off limits.
+- File ownership (a file is edited by exactly one task per wave):
+  - LT1: `web/templates/components/shared/period-context.html`,
+    `web/templates/pages/dashboard.html` (title row, drop zone, date-filter
+    card only).
+  - LT2: `web/templates/pages/dashboard.html` (charts grid only; runs
+    after LT1), `web/static/js/charts.js` (`renderMajorExpenseBreakdown`,
+    `renderMajorExpenseCredits` only).
+  - LT5: `web/templates/pages/insights.html` (`insights-content`'s
+    `#insights-findings` and `#insights-recurring` sections) and
+    `web/templates/components/insights-investigation.html` (where the
+    `insights-finding` / `insights-recurring-group` defines actually live —
+    corrected 2026-09-07 after dispatch; the brief named only the page).
+  - LT6: `web/templates/pages/insights.html` (`#insights-supporting` only;
+    runs after LT5), `web/static/js/insights.js`, `web/static/css/styles.css`.
+  - Every task: its own new test file(s) and the rebuilt
+    `web/static/css/tailwind.css` (`make css`; `make css-verify` must pass).
+- Waves: W1 = LT1 ∥ LT5. W2 = LT2 ∥ LT6.
+
+## LT.2 Worker constraints (paste into every dispatch)
+
+- Work ONLY in the run worktree above. Never `git checkout`, `stash`,
+  `commit`, or touch the index. Never edit a file another task owns.
+- **Never run the built budget2 binary directly** — any invocation starts a
+  server and kills the live :8080 instance. Use `go build ./...`,
+  `go vet ./...`, `go test` (bare, or with `set -o pipefail`; never
+  `go test … | grep`). For a rendered check run, from the worktree,
+  `scripts/whatif-verify.sh start <your port>` (copies data, builds, serves;
+  `scripts/whatif-verify.sh stop <port>` tears down). Ports: LT1 8091,
+  LT2 8092, LT5 8095, LT6 8096; checkers use 8101–8106. Never :8080/:8081.
+- Headless browser for probes: Playwright at
+  `/home/darrell/.npm/_npx/e41f203b7505f1fb/node_modules/playwright` with
+  `executablePath` `/home/darrell/.cache/ms-playwright/chromium-1243/chrome-linux64/chrome`
+  and `args:['--no-sandbox']`. axe-core: `npx --yes @axe-core/cli` or the
+  `axe.min.js` under `/tmp/claude-1000/-home-darrell-work-agents2/fdc3d3ad-6feb-42fa-95ef-64e528e5cac8/scratchpad/a11y-u12/node_modules/axe-core/` (if absent, `npx --yes axe-core` and addScriptTag).
+- Templates changed → `make css` and include the rebuilt
+  `web/static/css/tailwind.css` in the manifest; `make css-verify` passes.
+- ACCESSIBILITY.md (budget2 root) applies to every element you touch.
+- Manifest: `/home/darrell/work/agents2/.claude/worktrees/retired-couple-ui-layout-397a9a/.swarm/manifests/<task>.<attempt>.files`
+  (budget2-repo-relative paths, one per line, complete).
+- Return STATUS / FILES / VERIFICATION (commands and their output) / NOTES.
+  If the spec is ambiguous or an existing test contradicts it, STOP and
+  return BLOCKED with the question; do not guess.
+
+## LT.3 Tasks
+
+| ID | Task | Files | Tier | Checks | Why this tier |
+|----|------|-------|------|--------|---------------|
+| LT1 | Period context to one line + disclosure; Dashboard toolbar merge | `shared/period-context.html`, `pages/dashboard.html` | 2 | tests,a11y | Shared partial (both pages + four HTMX partials) → shared blast radius; oracle is render tests + axe; reversible. |
+| LT2 | Dashboard charts grid: Major Expense card full width, breakdown in columns | `pages/dashboard.html`, `static/js/charts.js` | 2 | a11y,second | Money and percent strings re-rendered by JS (dual-formatter surface) → `second`; visual oracle. |
+| LT5 | Insights findings footnote; recurring rows compact with evidence disclosure; "Other recurring spending" collapsed | `pages/insights.html` | 2 | tests,a11y,second | Money table restructured (rendered-string surface) → `second`; disclosure semantics → a11y; DI1/DI4/DI5 fixtures → tests. |
+| LT6 | Insights supporting section behind tabs | `pages/insights.html`, `static/js/insights.js`, `styles.css` | 2 | tests,a11y | New interactive pattern (tabs, persistence, Plotly resize) → JS behavior is the tests lane's; ARIA pattern → a11y. |
+
+### LT1 — Period context and Dashboard toolbar (Tier 2, checks: tests,a11y)
+
+**A. `shared/period-context`** (consumed by `dashboard-period-kpis`,
+`insights-content`, `insights-recurring-partial`, `insights-income-partial`,
+`insights-trends-partial`, `category-trends`, `spending-velocity` — all via
+`{{template}}`, so one edit covers them). Keep the outer `<section>` and
+its classes. New structure, every sentence byte-identical to today's:
+
+1. First child, always visible, ONE `<p class="text-sm …">`:
+   `Selected period: {SelectedStart} to {SelectedEnd} ({SelectedDays} calendar days)`
+   then ` · Latest transaction: {LatestTransaction}` when `.HasData`, else
+   ` · No transaction data available.` (today's sentence, same words).
+2. When `.Stale`: a second visible `<p>` with today's exact sentence
+   `Data is more than seven calendar days old ({DataAgeDays} days). Current-month forecast is unavailable.`
+   The `<details open>`/`<summary>Data freshness</summary>` wrapper is
+   removed (the notice is approved policy and must not be collapsible).
+3. Then ONE `<details>` (closed) with `<summary class="text-sm text-accent cursor-pointer">Period details</summary>`
+   containing, as today's `<p>` elements verbatim: the `Prior period: …`
+   line (with its `— same period last year` / `— clamped to the prior
+   month's last day` suffixes), the `{{.HistoryReason}}` line when
+   `not .HistoryAvailable`, and the `First and last transaction dates are
+   evidence bounds, …` sentence.
+
+**B. Dashboard toolbar** (`pages/dashboard.html`, above `#kpis-container`).
+Keep the `<h1>Dashboard</h1>` row as-is but WITHOUT the Import button in
+it. Replace the separate drop-zone block and date-filter card with ONE
+card (`bg-white dark:bg-gray-800 rounded-lg shadow p-4 space-y-3`):
+- Row 1: the existing `#date-filter-form` (range picker, Compare select,
+  `#loading-indicator`) with `#import-csv-btn` moved into the same flex row,
+  pushed right with `ml-auto`. The button element, its id, classes, text
+  and SVG are unchanged. Keep the button OUTSIDE the `<form>` element
+  (dashboard.js wires it to `#file-input`; a button inside the form must
+  not submit it) — the card wraps a `flex flex-wrap items-end gap-4`
+  div that contains the form and the button as siblings.
+- Row 2: `#drop-zone` unchanged in ids, role, tabindex, child ids and
+  text, restyled as a one-line strip (`px-3 py-1.5`, `text-body-sm`).
+- `#unassigned_banner` stays where it is (between the h1 and the card).
+- `dashboard.js` is not edited. Every id it selects still exists once:
+  `import-csv-btn`, `file-input`, `drop-zone`, `drop-zone-content`,
+  `drop-zone-uploading`, `drop-zone-success`, `drop-zone-error`,
+  `drop-zone-error-msg`, `date-filter-form`, `dashboard-date-start`,
+  `dashboard-date-end`, `dashboard-comparison`, `loading-indicator`,
+  `kpis-container`. `#kpis-container`'s hx-* attributes are unchanged.
+
+Acceptance (each proven by a named command):
+1. `go build ./... && go vet ./...` clean; `go test ./internal/templates/... ./internal/handlers/dashboard/... ./internal/handlers/insights/...` green, bare.
+2. New `internal/templates/render_period_context_lt1_test.go` renders
+   `shared/period-context` with (i) a stale fixture (HasData, Stale,
+   DataAgeDays 11, HistoryAvailable false, HistoryReason "Not enough
+   history to compare") and (ii) a fresh fixture with history, asserting on
+   the rendered string: exactly one `<details` and no `<details open`;
+   summary text `Period details`; `Selected period:` and `Latest
+   transaction:` both occur before the first `<details`; in (i) the stale
+   sentence occurs before `<details` and in (ii) not at all; `Prior
+   period:`, `evidence bounds`, and (in (i)) `Not enough history to
+   compare` occur after `<details`; `Data freshness` occurs nowhere.
+3. Text-node parity: for the same fixture, the multiset of trimmed text
+   nodes rendered by the partial before and after the change is identical
+   except for the added `Period details` and removed `Data freshness`
+   (checker: render on master and branch with one fixture and diff).
+4. Rendered on the verify server, 1280 px, both themes: `#period-context`
+   height ≤ 100 px on the live data (stale state; today 172); the
+   Dashboard content above `#kpis-container`, measured from the top of the
+   page's `space-y-6` wrapper, ≤ 230 px (today 244) — ceilings relaxed by
+   ruling LT-2026-09-07a; the classes in A/B are authoritative;
+   `#drop-zone` still opens the file chooser on Enter and `#import-csv-btn`
+   on click (Playwright `filechooser` event); whole-page drop still targets
+   `#file-input` (dashboard.js unchanged suffices — cite `git diff --stat`).
+5. axe clean on `/dashboard` and `/insights`, both themes, 1280 and 390;
+   `<summary>` reachable by Tab, toggles on Enter and Space, focus ring
+   visible in both themes; no horizontal overflow at 390.
+6. `make css` run; `make css-verify` passes.
+
+### LT2 — Dashboard charts grid (Tier 2, checks: a11y,second)
+
+`pages/dashboard.html`, charts grid only. Today: a 2-column grid with
+Major Expense (col 1), Spending Trend (col 2), Top Spending (col 1),
+Cumulative Balance (span 2). New:
+
+- Row 1: Major Expense card with `Class "lg:col-span-2"`. Its body is a
+  `grid grid-cols-1 lg:grid-cols-2 gap-6 items-start`: left cell a plain
+  `<div>` holding `#chart-major-expense` (unchanged id/attrs/placeholder;
+  the wrapper exists because dashboard.js inserts the "View chart data"
+  `<details>` with `plot.after()`, which must land inside the cell, not
+  as a third grid item — ruling LT-2026-09-07c), right cell
+  `#chart-major-expense-breakdown` followed by `#chart-major-expense-credits`
+  (ids, `mt-3` on credits only, text classes unchanged).
+- Row 2: Spending Trend and Top Spending side by side (unchanged cards).
+- Row 3: Cumulative Balance `lg:col-span-2` (unchanged).
+- `charts.js`: `renderMajorExpenseBreakdown` and `renderMajorExpenseCredits`
+  each append the header div as today, then ONE list container
+  `<div class="grid grid-cols-1 md:grid-cols-2 gap-x-6">` into which the
+  row buttons are appended. Row markup (button element, classes, name
+  span, amount + percent formatting via the existing `Intl.NumberFormat`,
+  click → `triggerMajorExpenseDrilldown`) is byte-for-byte what it is
+  today. No other JS changes. The `View chart data` `<details>` that
+  dashboard.js appends after each chart is untouched.
+
+Acceptance:
+1. `go build ./... && go vet ./...`; `go test ./internal/handlers/dashboard/... ./internal/templates/...` green; `node --test web/static/js/` green (existing `*.test.cjs`).
+2. Parity (checker-second): run master and branch verify servers on the
+   same data copy and range; `GET /dashboard/charts/data/major-expense`
+   bodies byte-identical; the ordered list of row texts in
+   `#chart-major-expense-breakdown` and `#chart-major-expense-credits`
+   (button `textContent`, whitespace-normalised) identical; count of
+   `<button>` rows identical.
+3. Layout (1280, both themes): the Major Expense card's width equals the
+   grid's width; Spending Trend and Top Spending cards have equal
+   `getBoundingClientRect().top`; the grid's height ≤ 70 % of master's on
+   the same data (was 60 %; relaxed by ruling LT-2026-09-07c); no element in `main` extends past `innerWidth`; at 390
+   single column, no horizontal overflow.
+4. Clicking the first breakdown row opens the same drilldown as on master
+   (a `[role="dialog"]` or the `#major-expense-drilldown-container`
+   content appears; compare its heading text to master); Tab reaches the
+   rows; focus ring visible on the `dark:bg-gray-800` card in both themes.
+5. axe clean `/dashboard`, both themes, 1280 and 390.
+6. `make css`; `make css-verify` passes.
+
+### LT5 — Insights lists compaction (Tier 2, checks: tests,a11y,second)
+
+`pages/insights.html`. Three changes; every money string, link href and
+link text unchanged.
+
+**A. Price-creep caveat once.** In `insights-finding`, the `{{with .Creep}}`
+clause keeps `: {FirstAmount} → {CurrentAmount} ({PctChange}% increase),
+{FirstDate} to {LastDate}.` and DROPS the trailing sentence `The linked
+transaction is the latest in this full-history group; its actual amount
+may differ from the median.` That sentence is rendered ONCE, inside
+`#insights-findings` after the preview list and the `#all-findings`
+details, as `<p class="text-sm text-gray-600 dark:text-gray-400">Price-creep
+findings: the linked transaction is the latest in its full-history group;
+its actual amount may differ from the median.</p>`, only when at least one
+entry of `.Findings` has a non-nil `Creep` (compute in the template with a
+`{{$hasCreep := false}}{{range .Findings}}{{if .Creep}}{{$hasCreep = true}}{{end}}{{end}}`
+guard, or expose a `HasCreep` bool from the handler if the view struct is
+the cleaner place — say which in NOTES). If an existing test asserts the
+sentence per row, change it to assert the sentence exactly once per page
+and name the test in NOTES.
+
+**B. Recurring rows compact.** In `insights-recurring-group`, the first
+`<td>` becomes: line 1 — the existing `<a>` (href and text unchanged),
+then, when `.MajorExpenseName`, ` · ` and the name in a
+`text-gray-600 dark:text-gray-400` span (the words `Major Expense:` are
+kept inside the span so the text node is unchanged: `Major Expense: {name}`);
+line 2 — a `<details class="mt-1">` with `<summary class="text-sm
+text-accent cursor-pointer">Evidence</summary>` wrapping today's three
+`<p>` lines verbatim (`{{.ClassificationReason}}`; `{n} occurrences ·
+{freq} · Last observed {date}`; `Expected payment estimate as of {date}:
+{date} · Detection confidence {n}%`). The three money `<td>`s and the
+`<thead>` are unchanged.
+
+**C. "Other recurring spending" collapsed.** For the group whose label is
+`Other recurring spending` (key on its ID if the handler defines one —
+check `internal/handlers/insights` and say which in NOTES), keep the
+`<h3>` and the `{n} retained series · Estimated monthly … · Estimated
+annual …` line visible, and wrap the `overflow-x-auto` table region in a
+closed `<details>` whose `<summary class="text-sm text-accent
+cursor-pointer">` reads `Show all {{len .Group.Rows}} series`. The
+subscriptions and bills groups render open exactly as today (no details).
+The empty-group sentence is unchanged and never inside a details.
+
+Acceptance:
+1. `go build ./... && go vet ./...`; `go test ./internal/templates/... ./internal/handlers/insights/...` green bare — DI1/DI4/DI5 fixtures (`recurring_render_di5_test.go`, `estimate_sums_di5_test.go`, `http_links_di5_test.go`, `render_recurring_di1_test.go`) pass unmodified except the per-row-sentence case in A.
+2. New `internal/templates/render_insights_lt5_test.go`: (a) render
+   `insights-recurring-group` for a two-row fixture with cents
+   (e.g. 1655.30 / 27.35): each row's first cell contains exactly one
+   `<details` and a `<summary` whose text is `Evidence`; the three evidence
+   lines occur after that row's `<details`; the money cells render exactly
+   `>$1,655.30</td>`-style strings equal to `formatMoney` of the fixture
+   (hardcode the expected strings); (b) the other-recurring group renders a
+   `<details` without `open` that contains `<table`, and its
+   `Show all 2 series` summary; the subscriptions group renders `<table`
+   with no `<details` before it in that section; (c) `insights-content`
+   with an Investigation whose `.Findings` has one creep and one outlier
+   finding renders `actual amount may differ from the median` exactly once,
+   after `id="findings-preview"`'s closing `</ul>`; with zero creep findings,
+   zero times.
+3. Parity (checker-second): master vs branch on the same data — ordered
+   list of `td.num` texts per group, the group total lines, and every
+   `a[href]` inside `#insights-recurring` and `#insights-findings` identical.
+4. Rendered (1280, both themes): `#insights-recurring` height ≤ 40 % of
+   master's on the same data; every `<summary>` keyboard-operable with a
+   visible focus ring; at 390 the tables still scroll inside their
+   `overflow-x-auto` region (no page overflow).
+5. axe clean `/insights`, both themes, 1280 and 390.
+6. `make css`; `make css-verify` passes.
+
+### LT6 — Supporting section tabs (Tier 2, checks: tests,a11y)
+
+`#insights-supporting` keeps its `<section id>`, `aria-labelledby` and
+`<h2>`. Below the h2:
+
+- `<div role="tablist" aria-label="Supporting charts and tables" class="flex flex-wrap gap-1 border-b border-gray-200 dark:border-gray-700">`
+  with five `<button type="button" role="tab" id="insights-tab-{key}"
+  aria-controls="insights-panel-{key}" aria-selected="false"
+  data-ins-tab="{key}" class="px-3 py-2 text-sm font-medium border-b-2
+  border-transparent text-gray-600 dark:text-gray-400 hover:text-gray-700
+  dark:hover:text-gray-100">` (gray-600/400, the What-If tab convention;
+  ruling LT-2026-09-07d) for keys/labels `trends` "Spending trends",
+  `income` "Income sources", `anomalies` "Anomalies", `pricecreep` "Price
+  creep", `pace` "Spending pace".
+- Each of the five existing cards becomes (or is wrapped by) a
+  `<div role="tabpanel" id="insights-panel-{key}" aria-labelledby="insights-tab-{key}" data-ins-panel="{key}" tabindex="0">`.
+  The cards' inner markup — headings, paragraphs, `#chart-trends` with its
+  hx-* attributes, tables, `anomalies-section`, `pricecreep-section`,
+  `shared/period-forecast` — is unchanged. Server markup carries NO
+  `hidden` attribute and no `aria-selected="true"`: with JS off all five
+  panels show (point 16).
+- `insights.js`: on `DOMContentLoaded` and after every `htmx:afterSwap`
+  whose target contains `#insights-supporting`, initialise: read
+  `localStorage['insightsActiveTab']` (default `trends`; unknown → `trends`),
+  activate it. Activate = set `hidden` on every other panel, remove it on
+  the chosen one, set `aria-selected` true/false, roving `tabindex`
+  (`0` on the active tab, `-1` on the rest), toggle the `wf-tab-active`
+  class (reused from styles.css so both themes are already covered), persist
+  the key, and call `Plotly.Plots.resize` on `#chart-trends` when it exists
+  and has `.data` (same try/catch as whatif-tabs.js `resizeChartsIn`).
+  Click, Enter and Space on a tab activate it; ArrowLeft/ArrowRight move
+  focus to the previous/next tab (wrapping) and activate it; Home/End go
+  to first/last. Wrap all `localStorage` access in try/catch.
+- `styles.css`: add `[data-ins-tab]:focus-visible` to the existing
+  What-If focus-outline rule (same outline), nothing else.
+
+Acceptance:
+1. `go build ./... && go vet ./...`; `go test ./internal/templates/... ./internal/handlers/insights/...` green (`investigation_di4_test.go` pins `id="insights-supporting"`).
+2. New `internal/templates/render_insights_lt6_test.go`: rendered
+   `insights-content` has exactly five `role="tab"` and five
+   `role="tabpanel"`; every tab's `aria-controls` equals a panel id and
+   every panel's `aria-labelledby` equals a tab id; no `hidden` attribute
+   and no `aria-selected="true"` in the server output; `#chart-trends`
+   still carries its `hx-get`/`hx-trigger="load"`.
+3. Behaviour (checker-tests, Playwright on the verify server): default →
+   only `insights-panel-trends` visible; click "Anomalies" → only that
+   panel visible, `aria-selected` correct, localStorage key set; reload →
+   anomalies still active; click "Spending trends" → `#chart-trends` has
+   `.data` and `offsetWidth > 0` (chart drawn after resize); ArrowRight
+   from a focused tab moves focus AND activates the next; Home/End work;
+   change the date range via a preset button (HTMX outerHTML swap of
+   `#insights-wrapper`) → the active tab survives; with
+   `javaScriptEnabled:false` all five panels visible.
+4. `#insights-supporting` height at 1280 ≤ the tallest single panel's
+   height + 120 px (only one panel shown).
+5. axe clean `/insights`, both themes, 1280 and 390; focus ring visible on
+   tabs in both themes.
+6. `make css`; `make css-verify` passes.
+
+## LT.4 Rulings
+
+(recorded as they happen; each catch names its mechanism)
+
+- **LT-2026-09-07a** (catch — mechanism: WORKER stop, LT1 attempt 1; a
+  brief-level error): LT1 acceptance 4 set `#period-context` ≤ 90 px and
+  the dashboard toolbar region ≤ 200 px, but the classes the same section
+  pins verbatim (`p-4` section, three mandatory `text-sm` rows; `p-4
+  space-y-3` card, unchanged 64 px form row, `py-1.5` drop strip, the
+  page's `space-y-6` rhythm) produce 92 px and 222 px. The ceilings were
+  the lead's estimate, not a design goal; the classes are what the user
+  sees. Ruling: classes authoritative, ceilings relaxed to 100 px / 230 px
+  (measured from the `space-y-6` wrapper). No code changed; attempt count
+  unchanged.
+- **LT-2026-09-07b** (observation — mechanism: PRIMARY CHECKER
+  checker-tests, LT1 attempt 1, not a FAIL): acceptance 3's literal
+  "multiset of trimmed text nodes identical" cannot hold because section
+  A.1 itself mandates merging the `Selected period` and `Latest
+  transaction` sentences into one node with ` · `. The checker proved
+  parity at sentence level (split on ` · `) on four fixtures: the only
+  differences are +`Period details` −`Data freshness`. Ruling: sentence-
+  level parity is the property; the acceptance wording is read that way.
+  No code changed.
+- **LT-2026-09-07c** (catch — mechanism: WORKER, LT2 attempt 1; two
+  items). (1) A structural defect in the brief: placing `#chart-major-expense`
+  directly as a grid item made dashboard.js's `plot.after(details)` insert
+  the chart's data-table disclosure as a THIRD grid item, breaking the
+  two-column layout (measured 1,708 px). The worker wrapped the chart in a
+  plain div cell and flagged it; accepted, spec text corrected above.
+  (2) The 60 % height ceiling was the lead's estimate; with the pinned
+  two-column list and the unchanged second/third rows the floor is
+  1,384 px (66 %). Same class as ruling a: ceiling relaxed to 70 %; a
+  third list column was considered and rejected (at 1280 the cell is
+  ~600 px, three columns would truncate long category names). No code
+  changed for (2); attempt count unchanged.
+- **LT-2026-09-07d** (catch — mechanism: WORKER stop, LT6 attempt 1; a
+  brief-level error): the brief pinned inactive tabs as `text-gray-500
+  dark:text-gray-300`; `text-gray-500` on the page's `bg-gray-100` body is
+  4.39:1, failing ACCESSIBILITY.md point 7. The worker measured it with axe,
+  found the existing What-If tabs use `text-gray-600 dark:text-gray-400`
+  (6.87:1), and stopped instead of substituting. Ruling: use the What-If
+  pair; spec text corrected. Attempt count unchanged.
+- **LT-2026-09-07e** (observations for the backlog — mechanism: the a11y
+  and second lanes on LT1/LT2/LT5, all attributed to master by parallel
+  master renders, none a FAIL): (1) dark theme `color-contrast` on the
+  range-picker preset buttons (~3.45:1) and, at 390 px, on parts of the
+  Dashboard KPI region (`#dashboard-budget-details`, `button[data-kpi-detail]`);
+  (2) `scrollable-region-focusable` on the "View chart data" tables that
+  dashboard.js appends, at 390 px; (3) a synthetic Playwright click on a
+  donut wedge does not fire `plotly_click` on master either (real pointer
+  clicks do); (4) from the final site-wide pass (LTfinal, PASS, violation
+  set identical to master across 62 axe runs per side): `target-size` on
+  `/major-expenses`, 390 px page overflow on `/major-expenses` and
+  `/whatif`, no `<footer>` landmark on `/explorer`, `scrollable-region-
+  focusable` on `/transfers`. Candidates for a follow-up run; not in LT's
+  scope.
+- **Run closed 2026-09-07**: `gate.sh done` exit 0; `gate.sh stats`
+  first-attempt clean 4/4 (no-evidence rows 0); `make check` green;
+  agents2 `smoketest/gate/run_tests.sh` ALL PASS. Shipped as budget2 PR #97
+  (branch `feat/layout-tightening`, commit 5334385); live :8080 untouched.
+  Lesson for the next constitution: three of the four worker stops were
+  brief-level errors by the lead (pixel ceilings derived from pinned
+  classes, a pinned class failing contrast) — when classes are pinned
+  verbatim, either omit derived pixel targets or state that the classes
+  win; and a chart container that page JS decorates with `after()` must
+  sit in its own wrapper cell inside any grid.

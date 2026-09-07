@@ -1,0 +1,247 @@
+VERDICT: PASS
+CHECKER: checker-tests
+FAMILY: anthropic
+TASK: LT1
+ATTEMPT: 1
+---
+All work verified in a `cp -a` scratch copy of the run worktree at
+/tmp/claude-1000/-home-darrell-work-agents2--claude-worktrees-retired-couple-ui-layout-397a9a/5f1798f7-0ebe-4e24-a3e8-2690e59504b6/scratchpad/wt
+(mutation copy: .../wt2). The real worktree was never written to. Verify
+server on :8101 only (started and stopped via scripts/whatif-verify.sh);
+the built binary was never invoked directly.
+
+FOREIGN TERRITORY (attributed, not failed): web/templates/pages/insights.html
+and web/templates/components/insights-investigation.html are LT5's (ledger:
+LT5 in-progress). web/templates/pages/dashboard.html ALSO carries a second,
+LT2-shaped hunk (charts grid) — see SCOPE below.
+
+=== ACCEPTANCE 1 — build / vet / scoped tests ===  PASS
+cmd: (in scratch wt) `go build ./...`            -> "Go build: Success" / BUILD_OK
+cmd: (in scratch wt) `go vet ./...`              -> "Go vet: No issues found" / VET_OK
+cmd: `go test -count=1 ./internal/templates/... ./internal/handlers/dashboard/... ./internal/handlers/insights/...`
+     -> ok  budget2/internal/templates        1.282s
+        ok  budget2/internal/handlers/dashboard 1.213s
+        ok  budget2/internal/handlers/insights  1.254s
+     (bare, never piped to grep; -count=1 defeats the test cache)
+cmd: `go test -count=1 ./...` (informational, whole repo, output filtered of
+     ok/no-test-files lines) -> no remaining lines, i.e. zero FAIL packages.
+Note: these runs include LT5's uncommitted edits, which ride along in the copy.
+
+=== ACCEPTANCE 2 — new test asserts everything listed, and fails on master === PASS
+File read in full: internal/templates/render_period_context_lt1_test.go
+(TestLT1RenderPeriodContextDisclosure, two subtests "stale"/"fresh" using the
+exact fixtures the spec names: HasData, Stale, DataAgeDays 11,
+HistoryAvailable false, HistoryReason "Not enough history to compare"; and a
+fresh HistoryAvailable=true / ComparisonKind "year" fixture).
+Assertion-by-assertion against the spec's list:
+  - exactly one `<details`                     line 84  strings.Count(out,"<details") != 1
+  - no `<details open`                         line 87  Contains(out,"<details open")
+  - summary text `Period details`              line 90  exact string
+        `<summary class="text-sm text-accent cursor-pointer">Period details</summary>`
+  - `Data freshness` nowhere                   line 93
+  - `Selected period:` AND `Latest transaction:` before the first `<details`
+                                               lines 97-107 (searched in out[:detailsAt])
+  - (i) stale sentence before `<details`; (ii) absent entirely
+                                               lines 109-116
+  - `Prior period:` and `evidence bounds` after `<details` AND not before
+                                               lines 118-125 (both directions asserted)
+  - (i) `Not enough history to compare` after `<details` and not before;
+    (ii) absent                                lines 127-136
+Every item in acceptance 2 is covered; no listed item is missing.
+
+PASS on branch:
+cmd: `go test -count=1 -v -run TestLT1RenderPeriodContextDisclosure ./internal/templates/`
+  --- PASS: TestLT1RenderPeriodContextDisclosure (0.01s)
+      --- PASS: .../stale (0.00s)
+      --- PASS: .../fresh (0.00s)
+
+MUTATION PROOF (the test guards the thing it names): in scratch copy wt2 the
+partial was replaced by master's version
+(`git show master:web/templates/components/shared/period-context.html`), nothing
+else changed, then:
+cmd: `go test -count=1 -run TestLT1RenderPeriodContextDisclosure ./internal/templates/` (in wt2)
+  --- FAIL: TestLT1RenderPeriodContextDisclosure/stale
+      :88 details must be closed by default
+      :91 missing 'Period details' summary
+      :94 'Data freshness' wrapper must be gone
+      :112 stale sentence must occur before <details>
+      :120 "Prior period:" must occur after <details>
+      :123 "Prior period:" must not occur before <details>
+  --- FAIL: TestLT1RenderPeriodContextDisclosure/fresh
+      :85 want exactly one <details, got 0
+      :91 missing 'Period details' summary
+      :99 no <details found
+  FAIL  budget2/internal/templates   EXIT=1
+The test does NOT survive reverting the fix.
+
+=== ACCEPTANCE 3 — text-node parity ===  PASS at sentence level;
+    the LITERAL text-node reading is NOT satisfiable — see FINDING F1.
+Method: a throwaway dump test (scratch only, both trees) rendered
+`shared/period-context` for four fixtures (stale / fresh / clamped / nodata);
+a python html.parser walker collected trimmed text nodes and diffed the
+Counter multisets master-vs-branch.
+Literal node-level result:
+  stale : ADDED ['Selected period: 2026-08-01 to 2026-08-31 (31 calendar days) · Latest transaction: 2026-08-20', 'Period details']
+          REMOVED ['Selected period: 2026-08-01 to 2026-08-31 (31 calendar days)', 'Latest transaction: 2026-08-20', 'Data freshness']
+  fresh / clamped / nodata: same shape (the two nodes merge into one; nodata
+          merges 'No transaction data available.' the same way), ADDED
+          'Period details', REMOVED nothing else.
+That single divergence is exactly the merge that section A.1 of the LT1 block
+MANDATES verbatim (" · Latest transaction: …" / " · No transaction data
+available." appended into the one always-visible <p>). No sentence is lost or
+reworded.
+Sentence-level result (same script, splitting each text node on " · "):
+  stale:   added=['Period details'] removed=['Data freshness'] -> MATCH
+  fresh:   added=['Period details'] removed=[]                 -> MATCH
+  clamped: added=['Period details'] removed=[]                 -> MATCH
+  nodata:  added=['Period details'] removed=[]                 -> MATCH
+  SENTENCE_PARITY: PASS
+Branch sentence list for the stale fixture (all seven of master's sentences
+present, order preserved, 'Period details' inserted before the disclosed ones):
+  'Selected period: 2026-08-01 to 2026-08-31 (31 calendar days)'
+  'Latest transaction: 2026-08-20'
+  'Data is more than seven calendar days old (11 days). Current-month forecast is unavailable.'
+  'Period details'
+  'Prior period: 2026-07-01 to 2026-07-31 (31 calendar days)'
+  'Not enough history to compare'
+  'First and last transaction dates are evidence bounds, not proof that all accounts or transactions were imported.'
+
+=== ACCEPTANCE 4 — rendered checks on :8101 ===  PASS
+Live data is stale: /insights renders "Data is more than seven calendar days
+old (11 days)." (curl http://localhost:8101/insights), so the stale state is
+the measured state.
+Playwright (chromium-1243, --no-sandbox), viewport 1280x900, both themes:
+  [light] /insights #period-context height = 92 px (inner section 92)   <= 100  PASS
+  [dark ] /insights #period-context height = 92 px (inner section 92)   <= 100  PASS
+  [light] /dashboard wrapper=".space-y-6" above #kpis-container = 222 px (wrapperTop 88, kpisTop 310)  <= 230  PASS
+  [dark ] /dashboard  same, 222 px                                              <= 230  PASS
+  (ceilings per ruling LT-2026-09-07a: 100 px / 230 px measured from the
+   page's space-y-6 wrapper. #period-context is a master-native id living on
+   /insights line 41 — confirmed with `git show master:web/templates/pages/insights.html | grep -n period-context`;
+   the dashboard's copy of the same section measures 92 px too.)
+Section-B id census (querySelectorAll('[id="…"]').length), identical light/dark:
+  {"import-csv-btn":1,"file-input":1,"drop-zone":1,"drop-zone-content":1,
+   "drop-zone-uploading":1,"drop-zone-success":1,"drop-zone-error":1,
+   "drop-zone-error-msg":1,"date-filter-form":1,"dashboard-date-start":1,
+   "dashboard-date-end":1,"dashboard-comparison":1,"loading-indicator":1,
+   "kpis-container":1}  — all 14, exactly once each.
+Button kept OUTSIDE the form: `form#date-filter-form.contains(#import-csv-btn)`
+  -> false (both themes); URL after clicking it is still
+  http://localhost:8101/dashboard (no form submit / navigation).
+Classes pinned by section B, read off the live DOM:
+  toolbar card  = "bg-white dark:bg-gray-800 rounded-lg shadow p-4 space-y-3"
+  drop-zone     = "… rounded-lg px-3 py-1.5 text-center …" (py-2 -> py-1.5)
+  import button = "ml-auto inline-flex items-center gap-2 rounded-lg border …"
+                  (only `ml-auto` prepended, as section B requires)
+File chooser (Playwright `filechooser` event):
+  PASS import-csv-btn click     -> filechooser on element id = file-input
+  PASS drop-zone Enter (focused element id = drop-zone) -> filechooser on element id = file-input
+#kpis-container hx-* byte-identical to master:
+  cmd: `git show master:web/templates/pages/dashboard.html | grep -A8 'id="kpis-container"'` vs the branch file —
+  both read exactly:
+    hx-get="/dashboard/kpis" hx-trigger="change from:#date-filter-form"
+    hx-include="#date-filter-form" hx-swap="innerHTML"
+    hx-indicator="#loading-indicator"
+  and the live DOM reports
+    {"hx-get":"/dashboard/kpis","hx-trigger":"change from:#date-filter-form",
+     "hx-include":"#date-filter-form","hx-swap":"innerHTML",
+     "hx-indicator":"#loading-indicator"}
+dashboard.js unchanged:
+  cmd: `git diff master -- web/static/css/tailwind.css web/static/js/dashboard.js`
+  -> EMPTY output (exit 0). dashboard.js is byte-identical to master, so
+  whole-page drop still targets #file-input.
+No horizontal overflow: scrollWidth == innerWidth (390 and 1280, /dashboard
+and /insights); exactly one <h1> per page.
+
+=== HTMX PARTIAL PATH (explicitly requested) ===  PASS
+cmd: `curl -sS "http://localhost:8101/dashboard/kpis?start=2026-01-01&end=2026-08-27"`
+The `dashboard-period-kpis` partial opens with the NEW structure:
+  <section …><p …>Selected period: 2026-01-01 to 2026-08-27 (239 calendar days) · Latest transaction: 2026-08-27</p>
+  <p …>Data is more than seven calendar days old (11 days). …</p>
+  <details><summary class="text-sm text-accent cursor-pointer">Period details</summary> … </details></section>
+Counts on that response: 'Data freshness' 0, '<details open' 0, 'Period details' 1,
+'Selected period:' 1, 'evidence bounds' 1, stale sentence 1. Two `<details`
+total — the second is master-native "Plan explanation and comparison" in
+components/kpis.html:78 (`git grep -n "Plan explanation and comparison" master`).
+Every other consumer of the shared partial was enumerated and hit live:
+  /insights/recurring [200] details=36 open=0 PeriodDetails=1 DataFreshness=0
+      (36 details are LT5's evidence disclosures — foreign, attributed)
+  /insights/trends    [200] details=1  open=0 PeriodDetails=1 DataFreshness=0
+  /insights/velocity  [200] details=1  open=0 PeriodDetails=1 DataFreshness=0
+  /insights/income    [200] details=1  open=0 PeriodDetails=1 DataFreshness=0
+  `category-trends` is a template define (insights.html:250), not a route; it
+  is covered by internal/templates/render_test.go (green above).
+
+=== ACCEPTANCE 6 (asked as 5) — make css-verify ===  PASS
+cmd: (in scratch wt) `make css-verify`
+  ./tmp/tailwindcss-3.4.17 -c tailwind.config.js -i web/static/css/tailwind.src.css -o tmp/tailwind.check.css --minify
+  Done in 581ms.
+  tailwind.css is up to date        EXIT=0
+Every utility the new markup relies on is present in the committed css:
+  .text-body-sm{font-size:.875rem;line-height:1.25rem}  (identical metrics to
+      text-sm, so the drop-zone text size is unchanged)
+  .text-accent{…}  .ml-auto{margin-left:auto}  .py-1\.5{padding:.375rem 0}
+  .space-y-3>:not([hidden])~:not([hidden]){… .75rem …}
+web/static/css/tailwind.css is listed in LT1's manifest but is byte-identical
+to master (`git diff master -- web/static/css/tailwind.css` empty) — correct
+(no new class tokens), the manifest entry is simply a no-op.
+
+Acceptance 5 (axe, focus ring, keyboard) belongs to the a11y lane. Data
+gathered incidentally, offered as corroboration only:
+  #period-context summary is a real <summary>, focusable
+  (document.activeElement.tagName === 'SUMMARY'), toggles open true -> false
+  on repeated Enter and open true on Space; no page-level horizontal overflow
+  at 390 on either page.
+
+=== FINDINGS ===
+F1 (acceptance 3, brief-level, NOT a work defect): acceptance 3 as literally
+   written ("multiset of trimmed TEXT NODES identical except +Period details
+   / -Data freshness") cannot be satisfied by any implementation of section
+   A.1, because A.1 itself mandates concatenating the "Latest transaction: …"
+   / "No transaction data available." sentence into the "Selected period: …"
+   text node with " · ". Two master text nodes therefore become one. Exact
+   divergence is quoted above. Same class as ruling LT-2026-09-07a (the
+   structural section is authoritative; the derived acceptance number was an
+   estimate). Sentence-level parity — the property the criterion exists to
+   protect, "every sentence still exists" (LT.0) — holds exactly, on all four
+   fixtures. Recommend the lead record a ruling rather than reopen LT1.
+F2 (process, no code impact): `scripts/whatif-verify.sh start 8101` reported
+   "Instance already running on :8101 — stopping it first". Another checker
+   (likely the a11y lane) may have had a server on that port; I restarted it
+   from my scratch tree and stopped it when done.
+
+=== SCOPE ===
+Working-tree diff vs master (`git diff master --stat -- .`, via `rtk proxy`
+to avoid rtk's diff rewriting):
+  web/templates/components/insights-investigation.html |  66  -> LT5 (foreign)
+  web/templates/components/shared/period-context.html  |  21  -> LT1
+  web/templates/pages/dashboard.html                   | 175  -> MIXED (see below)
+  web/templates/pages/insights.html                    |   2  -> LT5 (foreign)
+Untracked: internal/templates/render_period_context_lt1_test.go (LT1),
+  internal/templates/render_insights_lt5_test.go (LT5, foreign), data (symlink).
+LT1's manifest is honoured: period-context.html, dashboard.html and the new
+test file are all present and consistent with the manifest.
+
+SCOPE CAVEAT the lead must reconcile before committing LT1 by path:
+  `git diff master -- web/templates/pages/dashboard.html | grep '^@@'` reports
+  TWO hunks:
+    @@ -2,104 +2,107 @@   — the toolbar merge. This is LT1's, and it matches
+       section B exactly (Import button out of the h1 row, one
+       `p-4 space-y-3` card wrapping a `flex flex-wrap items-end gap-4` div
+       holding #date-filter-form and #import-csv-btn as siblings,
+       #unassigned_banner still between the h1 and the card, #drop-zone
+       restyled px-3 py-1.5 / text-body-sm with all child ids intact).
+    @@ -122,14 +125,20 @@ — the CHARTS GRID (Major Expense card gains
+       Class "lg:col-span-2", body becomes
+       `grid grid-cols-1 lg:grid-cols-2 gap-6 items-start`, breakdown/credits
+       moved into the right cell with mt-3 on credits only). That is LT2's
+       territory verbatim ("pages/dashboard.html, charts grid only"), and the
+       ledger has LT2 in-progress. It is being edited LIVE: the same hunk
+       header read "+125,18" on my first diff and "+125,20" minutes later.
+       Attributed to LT2 — not a FAIL against LT1 — but a `git add
+       web/templates/pages/dashboard.html` for LT1 would sweep LT2's
+       mid-flight work into LT1's commit.
+  It was not declared to me as foreign territory in my dispatch (only LT5 was);
+  reporting it as a fact for the lead to adjudicate.
+No file matching .swarm/critical.globs is modified (checked the porcelain
+status against every glob: zero hits). No files outside the four manifests.

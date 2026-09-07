@@ -1,0 +1,141 @@
+VERDICT: PASS
+CHECKER: checker-a11y
+FAMILY: anthropic
+TASK: LT5
+ATTEMPT: 1
+---
+Scope: budget2/.claude/worktrees/layout-tightening, branch feat/layout-tightening off
+master c0b8476. LT5 files per manifest: web/templates/components/insights-investigation.html,
+web/templates/pages/insights.html, internal/templates/render_insights_lt5_test.go.
+`git diff master -- <these two templates>` reviewed in full (66/2 line diff) before any
+judgment; every hit below is attributed against that diff. Foreign territory noted per
+brief (LT1 period-context/dashboard toolbar, LT2 dashboard charts/charts.js in progress,
+LT6 tablist markup not yet added to #insights-supporting) — none of it is inside the
+LT5-owned sections (#insights-findings, #insights-recurring) and none is FAILed here.
+
+Render method: real render, not hand-built HTML. Built and ran the branch server via
+`scripts/whatif-verify.sh start 8105` (copies live data, builds, serves) on checker port
+8105 (spec range 8101-8106) against real data, and additionally checked out master
+c0b8476 into a throwaway `git worktree add --detach` at scratch, served it on 8106, for
+attribution diffing. Both stopped cleanly afterward (`whatif-verify.sh stop`), worktree
+removed; :8080/:8081 never touched, binaries never run directly outside the verify
+script. Playwright 1.63 at the pinned path/executablePath/--no-sandbox; dark via
+`documentElement.classList.add('dark')`; axe-core from the pinned scratch path, run with
+tags wcag2a/wcag2aa/wcag21aa/wcag22aa.
+
+Build/tests (commands + output):
+- `go build ./...` — clean, no output.
+- `go test ./internal/templates/... ./internal/handlers/insights/...` — `ok budget2/internal/templates`, `ok budget2/internal/handlers/insights` (both green; DI1/DI4/DI5 fixtures pass unmodified, LT5's own test file included).
+
+1. axe wcag2a/2aa/21aa/22aa on /insights, 1280 and 390, light and dark, with every
+   `<details>` forced open before the scan (`document.querySelectorAll('details').forEach(d=>d.open=true)`):
+   branch (8105) — 0 violations in all four combinations (light-1280, light-390,
+   dark-1280, dark-390). Master (8106), same harness — 0 violations in all four
+   combinations too. LT5 introduces zero new axe violations (nothing to attribute; the
+   spec-noted pre-existing dark-theme range-picker-preset contrast hit did not register
+   under axe's automated contrast check in headless Chromium on either branch or master —
+   consistent with it being pre-existing and out of LT5's scope either way).
+
+2. Table semantics: DOM check (`node structure.js`) on all three recurring groups —
+   Detected subscriptions, Recurring bills, Other recurring spending — each `<thead th>`
+   still carries `scope="col"` (4/4 in every group), each row still exposes exactly 4
+   `<td>` cells, and only the "Other recurring spending" section has a `<details>` as a
+   direct child wrapping the whole `overflow-x-auto` table region (not a `<tbody>`);
+   subscriptions/bills render the table directly, no wrapping details, matching the
+   template's `{{if eq .Group.ID "other"}}` branch (confirmed `ID: "other"` ↔ Label
+   "Other recurring spending" in internal/handlers/insights/investigation.go:143).
+   Accessibility-tree check (`row.ariaSnapshot()`, Playwright 1.63's replacement for the
+   removed `page.accessibility.snapshot`) on a subscriptions row:
+     row "anthropic.com · Major Expense: Anthropic API (old) $136.47 $131.82 $1,581.82":
+       cell "anthropic.com · Major Expense: Anthropic API (old)": link + text + group "Evidence"
+       cell "$136.47" / cell "$131.82" / cell "$1,581.82"
+   — 4 cells exposed, the per-row `<details>`/`<summary>Evidence</summary>` appears as a
+   nested disclosure group inside cell 1 without breaking row/cell semantics. The
+   "Other" group's table (`isVisible()` on the closed details) returned false before
+   opening — confirms it wraps the whole region, is legitimately hidden until expanded,
+   and does not touch tbody structure.
+
+3. Keyboard (points 3, 9): Tab-walk script (`keyboard.js`) from page top on branch (8105):
+   every `<summary>` in DOM order is a Tab stop, in visual order (top values increase
+   monotonically within each recurring group, matching DOM order — Chromium scrolls each
+   focused element into view during the walk). Enter and Space both toggle a summary's
+   `<details open>` (`focus-toggle.js`: before=false, afterEnter=true, afterSpace=false,
+   identical in light and dark). Focus ring: `outline-style: auto` (browser default, not
+   suppressed) confirmed visually via cropped screenshots (`focus-light.png`,
+   `focus-dark.png`) — clearly visible dark ring on white in light, light ring on
+   dark-gray-800 in dark; ≥3:1 by inspection (near-black-on-white / near-white-on-dark-gray).
+   Merchant links remain focusable and stay in their original DOM position (unchanged by
+   the diff) interleaved with Evidence summaries in visual order.
+   Tab-stop count to the first "Recurring bills" link: 42 on branch (8105, includes LT1's
+   in-progress "Period details" disclosure ahead of it — foreign territory) vs 39 on
+   master (8106, same data/preset). OBSERVATION (not a FAIL — the per-row Evidence
+   disclosure is contract-mandated, LT.3 section B): the difference is +3, matching the
+   3 rows in the "Detected subscriptions" group each adding one Evidence-summary stop
+   before Recurring bills is reached — i.e., one extra stop per row, exactly as the
+   brief's own acceptance-4 anticipates and explicitly permits noting as an observation.
+   A retired reader tabbing serially through a large recurring list will encounter one
+   extra stop per row; this is a real, disclosed cost of the per-row disclosure design,
+   not a defect in this implementation.
+
+4. Contrast (points 7, 12), `contrast.js`, computed against each element's nearest
+   ancestor background, sRGB relative-luminance formula:
+   - "Major Expense: X" span (text-gray-600 / dark:text-gray-400, inside a
+     text-gray-700/300 cell, on the card bg): light rgb(75,85,99) on rgb(255,255,255) =
+     7.56:1; dark rgb(156,163,175) on rgb(31,41,55) = 5.78:1. Both ≥ 4.5:1 (point 7).
+   - "Evidence" and "Show all N series" summaries (text-accent): light rgb(79,70,229) on
+     white = 6.29:1; dark rgb(165,180,252) on rgb(31,41,55) = 7.36:1. Both ≥ 4.5:1.
+   All four pass in both themes — no theme-only-visible control.
+
+5. Point 16 (progressive enhancement): `javaScriptEnabled: false` Playwright context on
+   branch — clicking the first row's "Evidence" `<summary>` still opens its `<details>`
+   (before=false, after=true) and clicking "Show all N series" still opens the Other-group
+   table (before=false, after=true) — native `<details>` behavior, no JS dependency;
+   nothing in the LT5 diff is hidden-until-JS.
+
+6. Heading outline (point 1): `h1,h2,h3,h4` walk on branch and on master, same server,
+   same data — identical sequence (H1 Insights; H2 change/findings/recurring/supporting;
+   H3 Detected subscriptions / Recurring bills / Other recurring spending / [4 supporting
+   card headings]). One `<h1>`, no skipped levels, unchanged by LT5. Landmarks present:
+   HEADER, NAV, MAIN, FOOTER.
+
+7. Point 13 (currency sign semantics): the diff leaves all three money `<td>` cells
+   (`p-3 text-right num text-sm text-gray-800 dark:text-gray-100`, `formatMoney` calls)
+   byte-identical to master — confirmed by `git diff master` above (only the first `<td>`
+   and the wrapping/details wrapper changed; the three money cells and thead are outside
+   every changed hunk). No new markup around sign-bearing figures; nothing to check here
+   that master didn't already establish.
+
+8. 390px, both themes, with every `<details>` forced open (`overflow390.js`):
+   `document.documentElement.scrollWidth` = 390 in both light and dark (no page
+   overflow). All three recurring-group regions retain `tabindex="0"`, `role="region"`,
+   and a descriptive `aria-label` (e.g. "Detected subscriptions estimates"); each
+   region's `clientWidth` (326) < internal table `scrollWidth` (640) — the tables scroll
+   inside their own region as designed, the page itself does not.
+
+Hidden-text abuse: `git diff master -- <LT5 files>` grepped for `aria-hidden|sr-only|
+visually-hidden` — zero matches. No content suppressed from or injected only for
+assistive tech by this change.
+
+Point 2/3/A cross-check on the dropped price-creep sentence (LT.3-A, not itself an a11y
+point but touching findings structure): confirmed present once, after `#findings-preview`
+closing `</ul>`, matching the new `$hasCreep` guard in pages/insights.html — no orphaned
+or duplicated disclosure text; not an a11y defect either way.
+
+FAILURES: none.
+
+OBSERVATIONS (non-blocking):
+- Tab-stop cost of per-row Evidence disclosures: +1 stop per recurring row (42 vs 39 to
+  reach the first Recurring-bills link, on top of LT1's in-progress Period-details stop
+  which is foreign territory here). This is exactly what the contract mandates (LT.3
+  section B) and is called out per the task instructions as an observation, not a FAIL.
+  Worth the lead's attention only if a future run wants a "skip to end of group" affordance
+  for very long recurring lists — out of LT5's scope today.
+- axe's automated contrast rule did not flag the range-picker preset buttons in dark mode
+  on either branch or master in this harness; the spec's note that this is a pre-existing
+  master defect is taken on its word (out of LT5's scope regardless) and not re-litigated
+  here — flagging only that automated tooling didn't reproduce it in this run, for whoever
+  owns that pre-existing item.
+- LT1 (period-context "Period details" disclosure) and LT2 (dashboard charts, not
+  rendered on /insights) content rode along in the full-page axe scan and keyboard walk
+  because they share the page/partial; both are explicitly foreign territory per the
+  dispatch brief and scored 0 violations regardless, so nothing to attribute.
