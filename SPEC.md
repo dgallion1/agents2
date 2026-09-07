@@ -642,9 +642,12 @@ Acceptance criteria (every one must be proven by a named command):
 5. Rendered check (checker, not worker): with
    `scripts/whatif-verify.sh start 8099` on a copy of live data, GET
    `/whatif/chart/projection?display_dollars=nominal` returns the trace
-   with 5 points for the current plan (raise y15; cuts y29, y33, y35,
-   y37) and the hover text for y29 matches the Guardrail Events list's
-   figures for that year after `formatMoney` rounding.
+   with one point per row of the rendered Guardrail Events list, in list
+   order, and each point's hover text matches that row's figures after
+   `formatMoney` rounding. Do NOT hardcode the live plan's events here:
+   the saved plan is mutable, and at verification time it produced ONE
+   event (cut, y36; `oracle.2.log`), not the five the brief originally
+   listed (ruling GM-2026-09-06g).
 
 Defect-history surfaces touched: money formatting shown to users (dual
 formatter class) → `second` named. Blast radius: one builder shared by two
@@ -696,7 +699,22 @@ endpoints → Tier 2.
   Guardrail Events list shows the trigger-month `Portfolio` figure while the
   marker sits at the year's chart balance (`projectionValueAtYear`), so the two
   surfaces differ by a few thousand dollars for the same event — by design per
-  GM.2, but a candidate for a shared figure if a user ever compares them.
+  GM.2, but a candidate for a shared figure if a user ever compares them;
+  (3) the raise marker path (`triangle-up`, `#22c55e`) was never exercised on
+  a live instance — the saved plan's `max_spending_pct` is 100, which forbids
+  raises by construction — so it rests on unit test 2b alone
+  (mutation-proven by checker-tests, but a rendered raise is still unseen).
+- **GM-2026-09-06g** (catch — mechanism: PRIMARY CHECKER checker-tests AND
+  SECOND CHECKER checker-second, independently, GM1 attempt 2; a brief-level
+  error): criterion 5 hardcoded the live plan's guardrail settings
+  (20/10/20/10, floor 75 / ceiling 120) and events (raise y15; cuts y29, y33,
+  y35, y37). The saved plan at verification time was 10/10/20/10, floor 70 /
+  ceiling 100, return 0, yielding one cut at y36; both checkers verified the
+  criterion's substance against the actual event and reported the fixture as
+  a finding against the brief. Criterion 5 rewritten above to assert
+  list-vs-chart agreement without naming events. Lesson: never pin a live,
+  mutable data file's figures in a constitution — derive the expectation from
+  a second surface on the same instance, as the post-hoc oracle does.
 - **GM-2026-09-06f** (harness — mechanism: GATE schema check): both checkers
   wrote a blank line where the verdict schema requires a literal `---`
   separator; each checker corrected its own file on request. The checker agent
