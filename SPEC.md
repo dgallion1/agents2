@@ -2211,3 +2211,171 @@ Close-out: budget2 commit a849ab8 on `feat/findings-sort-by-value`
 interactive change — one sentence of body copy — and the rendered output is
 covered by the SV1 tests. Evidence snapshot in
 `docs/runs/2026-09-08-SV-run-state/`.
+
+# Run TC — Spending trends chart follows the table cap (2026-09-08)
+
+One-task run. Approved by the user in chat 2026-09-08 ("Go ahead") after
+the measured proposal.
+
+## TC.0 Facts (live :8080 = master a71e8b9)
+
+| Range | Bars | Chart height | Trends panel |
+|---|---|---|---|
+| Jan 1 – Aug 27 | 41 | 1,678 px | 2,506 px |
+| June | 33 | 1,374 px | 2,202 px |
+
+The table beneath the chart caps at the largest 12 rows with a "Show all N
+categories" toggle (run RF, `applyTrendsCap()` / `toggleTrendsCap()` in
+`web/static/js/insights.js`); the chart still draws every category.
+`handleTrendsChartData` (internal/handlers/insights/handlers.go) returns two
+bar traces (`x` = categories in the analysis order, `y` = current / previous
+amounts) and the page script sets `layout.height = max(360, n*38+120)` in
+its `htmx:afterRequest` handler before `renderChart('chart-trends', data)`.
+
+## TC.1 Territory
+
+- Worktree `/home/darrell/bin/ai/budget2/.claude/worktrees/trends-chart-cap`,
+  branch `feat/trends-chart-cap` off master a71e8b9 (`data` symlink,
+  `tmp/tailwindcss-3.4.17`). The MAIN checkout has another session's
+  uncommitted edits (Makefile, vendored htmx) — off limits, not ours.
+- TC1 (worker): `web/static/js/insights.js`, a new
+  `web/static/js/insights-trends-cap.test.cjs`, and — only if a hook is
+  needed — `web/templates/pages/insights.html` / `components/insights-investigation.html`
+  (the trends table/toggle markup). The Go endpoint is NOT changed.
+- Ports: worker 8231; checkers 8241 (tests), 8242 (a11y), 8243 (second) —
+  one port and one scratch subdirectory per agent.
+
+## TC.2 Worker constraints
+
+As BK.2: never run the binary; `scripts/whatif-verify.sh start/stop`;
+Playwright path as before; dark via a real `#theme-toggle` click at a
+1300 px viewport; axe via addScriptTag; `make css` only if template
+classes change; manifest under `.swarm/manifests/TC1.1.files`; STOP with
+BLOCKED on ambiguity. Ranges with trends data: `?start=2026-01-01&end=2026-08-27`
+(41 categories) and `?start=2026-06-01&end=2026-06-30` (33).
+
+## TC.3 Task TC1 — chart mirrors the table's visible rows (Tier 2, checks: tests,a11y,second)
+
+Design: the chart is a VIEW of the table. Whatever rows the table shows
+(the largest 12 in its current sort, or all when expanded), the chart
+draws exactly those categories, in the table's current row order, with the
+endpoint's figures unchanged.
+
+1. In `insights.js`, keep the parsed endpoint payload in a module-level
+   `trendsChartRaw` (set in the existing `htmx:afterRequest` handler for
+   `#chart-trends`; markers applied as today). Replace the direct render
+   with `renderTrendsChart()`.
+2. Two PURE functions, attached to `window.insightsTrends` so a test can
+   reach them: `visibleTrendCategories(table)` → the `data-category` of
+   every `tbody tr` that is not `hidden`, in DOM order (the rows carry
+   `data-category`); `filterTrendTraces(raw, categories)` → a deep-copied
+   payload whose traces keep only the points whose `x` is in `categories`,
+   re-ordered to match `categories`, and whose `layout.height` is
+   `max(360, categories.length*38+120)`. Marker colour arrays (per-point
+   colours on trace 0) are filtered in step with the points.
+3. `renderTrendsChart()`: if `trendsChartRaw` and the table exist, render
+   `filterTrendTraces(trendsChartRaw, visibleTrendCategories(table))` via
+   `renderChart('chart-trends', …)`; when the table is absent, render the
+   raw payload as today.
+4. `applyTrendsCap()` calls `renderTrendsChart()` after hiding rows, so
+   the chart follows the default cap, the toggle, every sort, and the
+   HTMX swap (the swap re-fetches the chart; the afterRequest handler sets
+   `trendsChartRaw` and renders through the same path).
+5. The toggle button's text/aria stay as today; the chart's caption text
+   ("Exact values and changes are in the adjacent table") stays true.
+6. No Go change; the endpoint keeps returning every category (the
+   validation command and the text alternative depend on it).
+
+Acceptance:
+1. `node --test "web/static/js/**/*.test.cjs"` green including the new
+   test: `filterTrendTraces` with a 5-category payload and a 3-category
+   subset in a different order returns exactly those 3 in that order on
+   BOTH traces with matching `y` values and per-point colours, height
+   `max(360, 3*38+120)`; an empty subset returns empty traces at height
+   360; the raw payload object is not mutated (deep-equal before/after).
+   `visibleTrendCategories` on a fake table with hidden rows returns only
+   the visible `data-category` values in order.
+2. `go build ./...`; `go test ./internal/handlers/insights/... ./internal/templates/...` green (nothing Go changed).
+3. Rendered (Playwright, 1300, both themes, both ranges): after load the
+   chart has exactly 12 bars per trace and they equal, in order, the 12
+   visible table rows' `data-category`; `#chart-trends` height ≈ 576 px
+   (`max(360, 12*38+120)`); click "Show all N categories" → N bars, height
+   `N*38+120`; click again → 12; sort by `current` → the chart's 12 equal
+   the newly visible 12 in that order; sort by `category` then expand →
+   all N in alphabetical order; change the preset (HTMX swap) → chart
+   re-fetches and shows the new table's visible 12; the bar values for a
+   given category equal the table's rendered `Selected`/`Prior` cells
+   (parse the money strings; checker-second does this exhaustively).
+4. Theme toggle after render keeps the filtered chart (the `themechange`
+   restyle must not resurrect hidden bars); the Insights tab switch
+   resize still works.
+5. axe clean on /insights (both ranges, trends tab, toggle both states) at
+   1300 and 390 both themes; the chart's text alternative (the table) is
+   in step with the chart in every state.
+6. `git diff master --stat` shows only insights.js, the new test, and (if
+   used) the template hook; `make css-verify` up to date.
+
+Why `second`: the chart is a money surface; "the 12 bars are the 12 rows"
+is a rendered-string / split-classification claim across two surfaces.
+
+## TC.4 Rulings
+
+(recorded as they happen; each catch names its mechanism)
+
+- **TC-2026-09-08a** (harness breach — mechanism: SECOND CHECKER
+  self-report): checker-second ran `git checkout -- web/static/js/insights.js`
+  in the SHARED worktree (not a copy) after a mutation probe, reverting the
+  worker's uncommitted file to master, then reconstructed it from its own
+  earlier verbatim reads. The lead could not find a pre-breach copy (the
+  checker's 15:00 scratch copy is its master baseline). What the lead
+  verified instead: the reconstructed diff matches, hunk for hunk, the
+  diff the lead read at dispatch before any checker ran; `git diff
+  master --stat` is the same +82/−2; the 16 JS tests pass; and the
+  tests-lane checker's scratch copies fingerprint the reconstructed file,
+  so its verdict judges exactly what ships. Ruling: the reconstructed file
+  is accepted as TC1's output on that evidence. Process change from now
+  on: the lead snapshots every manifest file to `.swarm/snapshots/<task>.<attempt>/`
+  the moment a worker returns DONE, before any checker is dispatched, and
+  checker briefs say "never run git checkout/restore/stash in the
+  worktree — only in a `.git`-stripped copy" in those words.
+- **TC-2026-09-08b** (catch — mechanism: PRIMARY CHECKER checker-tests,
+  TC1 attempt 1, FAIL CONCEDED): `trendsChartRaw` stores the payload WITH
+  the markers applied at fetch time, and `renderTrendsChart()` re-renders
+  from it on every table interaction — so expand/collapse/sort AFTER a
+  theme toggle repaints the bars in the stale theme (light accent on the
+  dark card, 2.41:1; reproduced in 10 of 52 states, absent on master).
+  Ruling: attempt 2 — `renderTrendsChart()` applies the CURRENT
+  `insightChartMarkers()` to the filtered copy before `renderChart`;
+  `trendsChartRaw` holds the endpoint payload without markers. Also
+  (finding B) the new test's fixtures never leave the 360 px floor, so
+  the 38 px/bar coefficient was unpinned — attempt 2 adds a 12-category
+  case asserting height 576. Finding A settles TC-a: the tests checker
+  independently reconstructed the worker's file two ways to blob
+  41c3da66…, and the lead confirmed the worktree file hashes to the same
+  blob, so the reconstruction after the breach was byte-exact.
+- **TC-2026-09-08c** (observation — mechanism: SECOND CHECKER on TC1
+  attempt 2, PASS; pre-existing, verified on a master baseline): a single
+  `#theme-toggle` click collapses `#chart-trends` to the 300 px
+  `.chart-container` min-height permanently — charts.js's generic
+  `[id^="chart-"]` themechange handler calls `Plotly.relayout` without
+  re-asserting the chart's height. Not TC1's delta (untouched files),
+  outside TC.3's acceptance (which pins height on load/toggle only).
+  Backlog: the themechange relayout should carry `height` (or the
+  insights page should re-render through `renderTrendsChart()` on
+  themechange, which already recomputes it). Also confirmed: master's
+  afterRequest handler already overwrote the endpoint's per-point
+  direction colours with the scalar theme accent, so TC1 preserves that.
+- **Run TC closed 2026-09-08**: `gate.sh done` exit 0; `gate.sh stats`
+  verbatim: `first-attempt clean: 15/20 (no-evidence rows: 0)` across
+  LT+RF+BL+BK+TC. Catches by mechanism: PRIMARY CHECKER FAIL ×1 (ruling b,
+  stale theme markers on re-render — a real regression axe cannot see),
+  SECOND CHECKER breach ×1 (ruling a, checkout in the shared worktree —
+  resolved by blob-hash proof, process hardened with snapshots), pre-
+  existing observations ×2 (theme-toggle height collapse to 300 px on
+  master; no unit guard for the marker fix — V3 candidates). Shipped per
+  the user's standing "merge it and deploy" instruction: PR #102 merged as
+  master 258f058 and deployed to :8080 (pid 4193612, health
+  v1.4.0-1113-g258f058). The main checkout carried another session's
+  uncommitted edits (Makefile, vendored htmx), so the release binary was
+  built from a clean detached worktree of origin/master and installed by
+  rename; the served htmx was confirmed identical to master's.

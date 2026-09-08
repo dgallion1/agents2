@@ -1,0 +1,144 @@
+VERDICT: PASS
+CHECKER: checker-second
+FAMILY: adversarial
+TASK: TC1
+ATTEMPT: 2
+---
+Preflight: `cmp` of worktree files (web/static/js/insights.js,
+web/static/js/insights-trends-cap.test.cjs) against
+.swarm/snapshots/TC1.2/ — IDENTICAL on both files, both before and after
+my probing (re-checked at the end). Never ran git checkout/restore/stash
+in the worktree; all mutation/height/mutation-kill probes ran in
+`cp -a`/`git archive` copies under my scratch dir, no `.git` retained.
+Ports 8243 (branch, feat/trends-chart-cap via scripts/whatif-verify.sh)
+and 8253 (master a71e8b9 baseline, `git archive master` copy) — mine
+alone, both stopped/torn down at the end; live :8080 confirmed responding
+on v1.4.0-1111-ga71e8b9 (untouched) before and after.
+
+Attempt-1 verdict's endpoint-parity, race, and no-data/7-category-edge
+findings re-confirmed unaffected by the delta (edges re-probed below);
+carried forward rather than re-run exhaustively.
+
+1. Theme x interaction matrix (attack 1): Playwright probe at 1300px,
+   both ranges (41cat/33cat), two orderings (toggle-then-interact:
+   toggle->expand->sort:current->sort:category->collapse;
+   interact-then-toggle: expand->sort:current->toggle->sort:category->
+   toggle->collapse), asserting after EVERY step that (a) the rendered
+   chart's category set/order (trace.y, since renderChart swaps x/y for
+   #chart-trends's horizontal-bar orientation, charts.js:181-183) equals
+   the table's visible data-category list, (b) height ==
+   max(360, n*38+120), (c) trace0.marker.color === current --accent
+   (non-array) and trace1.marker.color === current prior hex. Verified
+   light/dark accent values genuinely differ (rgb(79,70,229) vs
+   rgb(165,180,252); #78716c vs #a8a29e) so the marker check is
+   non-vacuous. Result across 2 ranges x 2 orderings x 5 steps = 20
+   states: ZERO category-set/order errors, ZERO marker-color errors in
+   any state or ordering -- the attempt-1 stale-theme defect
+   (TC-2026-09-08b) is fixed for every sequence tried, including the
+   adversarial "interact immediately after toggle" and "toggle mid-sort"
+   orders the ruling didn't explicitly enumerate.
+
+2. trendsChartRaw marker-free / not mutated (attack 2): confirmed by
+   code reading (JSON.parse(evt.detail.xhr.responseText) assigned
+   directly, no marker mutation before assignment -- insights.js:454-463)
+   and empirically: captured the raw XHR response for
+   /insights/trends/chart via page.on('response') and compared to the
+   rendered chart after TWO further interaction rounds (expand -> sort ->
+   collapse -> collapse) for both ranges -- table/chart category-order
+   parity held after the second round with no drift, and expanded-state
+   values matched the table to the cent for all 41 and all 33 categories
+   (Math.abs diff <=0.001 on every row, both Selected and Prior columns).
+   No accessible way to read the closure variable directly (correctly
+   not exposed, per the design's own "pure functions only" boundary), but
+   the observable behavior across repeated interactions is consistent
+   with an unmutated, marker-free source.
+
+3. Per-point marker.color array from the endpoint (attack 3): confirmed
+   by reading internal/handlers/insights/handlers.go:361-391 -- trace 0's
+   marker.color IS a per-category array of direction colors (#ef4444 up /
+   #22c55e down / #6b7280 flat); confirmed empirically the raw fetch
+   response for both ranges has trace0.marker.color as an array (33/41
+   elements). renderTrendsChart() (insights.js:437) does
+   `filtered.data.forEach((trace,i) => trace.marker = markers[i])` where
+   markers = insightChartMarkers() returns two SCALAR {color} objects
+   (insights.js:357-362) -- this wholesale-overwrites trace.marker,
+   discarding the endpoint's per-point direction-color array every
+   render. This is UNCHANGED from master: the diff shows the OLD
+   htmx:afterRequest handler did the exact same
+   `data.data.forEach((trace,i) => trace.marker = markers[i])` overwrite.
+   Parity holds -- not a regression, and not introduced or fixed by the
+   attempt-2 delta; the direction-color array has never reached the
+   rendered chart on either master or either attempt. (Observation for
+   backlog, not a TC1 defect: the endpoint computing per-point direction
+   colors that no consumer ever uses is dead computation, pre-existing on
+   master, out of TC1's scope -- Go endpoint explicitly not touched per
+   TC.3.6.)
+
+4. Value parity to the cent, expanded state (attack 4): both ranges,
+   expanded to full N (41 and 33), every visible table row's
+   Selected/Prior money string parsed and compared to the chart's
+   per-category current/prior value -- 41/41 and 33/33 rows match exactly
+   (tolerance 0.001, effectively exact since these are already floats).
+   Row-count parity also holds (table rows == chart bars) in both ranges.
+
+5. Mutation kill (attack 5): copied insights.js+test to a scratch dir,
+   changed `categories.length * 38` to `* 40` in filterTrendTraces.
+   `node --test` on the mutant: both new height tests FAIL as expected --
+   "12-of-N subset -> height 576" gets 600 (AssertionError 600 == 576),
+   "41-category full set -> height 1678" gets 1760 (AssertionError 1760
+   == 1678). Confirms the two new tests kill the 38->40 mutation cleanly.
+
+6. `git diff master --stat` (worktree, read-only): only
+   web/static/js/insights.js changed (+98/-5 per unified diff, matches
+   the described 82-insertion/2-deletion original attempt-1 body plus the
+   attempt-2 delta), plus the new test file untracked -- no template
+   touched, matches manifest and TC.3.6. `node --test
+   "web/static/js/*.test.cjs"`: 18/18 pass (16 prior + 2 new height
+   tests). `go build ./...`: clean. `go test
+   ./internal/handlers/insights/... ./internal/templates/...`: ok
+   (cached, nothing Go changed). `make css-verify`: "tailwind.css is up
+   to date".
+
+Additional adversarial probes beyond the listed attacks:
+- Edge cases re-run under the delta: 0-category range (no
+  console/page errors); 7-category range (<=12, no toggle button
+  renders, chart shows all 7 at height 386 = max(360,7*38+120)) --
+  theme-toggled on this edge too: still 7 bars, same 7 categories, no
+  resurrection, no errors. Both match attempt-1's edge findings; the
+  delta does not disturb them.
+- Insights tab switch resize (acceptance #4, second half): switched from
+  Trends to Income and back -- chart-trends height unchanged (576px
+  before and after), Plotly.Plots.resize path (insights.js:498,
+  untouched by this task) still works.
+
+FINDING (pre-existing, master-inherited, OUT OF SCOPE for TC1 -- reported
+for backlog, not grounds for FAIL): a single #theme-toggle click collapses
+#chart-trends's rendered height from its correct filtered value (e.g. 576px
+or 1678px) to 300px and it STAYS collapsed (polled 10x over 1000ms, no
+recovery) on BOTH the branch (:8243) and a clean master a71e8b9 baseline
+(:8253, built via `git archive master`, confirmed byte-identical mechanism).
+Root cause (by code reading): charts.js:615-633's GENERIC
+`window.addEventListener('themechange', ...)` handler (untouched by TC1,
+pre-existing) re-renders EVERY `[id^="chart-"]` element via
+`Plotly.relayout(el.id, themedLayoutUpdate(...))` without ever re-asserting
+`layout.height`; combined with `.chart-container { min-height: 300px }`
+(web/static/css/styles.css:85, also untouched/pre-existing), Plotly's
+relayout falls back to the CSS min-height. This is a SEPARATE themechange
+listener from insights.js's own (TC1-owned) `chart.data`-only restyle
+handler at insights.js:446-451, which does NOT touch height and is not the
+cause. Confirmed via master-baseline comparison this predates TC1 entirely
+(present on `git archive master`, not introduced by attempt 1 or attempt
+2's delta) and is not covered by TC.3's acceptance criteria (which specify
+height only for cap-toggle/load, not theme-toggle) -- so it is not a TC1
+defect under the ruling that pre-existing same-family defects outside the
+task's written scope are backlog findings, not FAIL grounds (constitution
+"Disputes in practice" / rule 5 of this brief). Row SET/ORDER is unaffected
+by this bug (confirmed above: category set and order stay correct through
+every toggle in the matrix); only the chart's visual height shrinks.
+
+No counterexample found to "the chart is a view of the table -- same rows,
+same order, same figures, current-theme markers" across the enumerated
+theme x interaction states, both orders, both ranges, the mutation probe,
+and the edge cases. Attempt 2's delta (render-time marker application)
+demonstrably fixes ruling TC-2026-09-08b's stale-theme defect without
+introducing any category-set, order, or value regression.

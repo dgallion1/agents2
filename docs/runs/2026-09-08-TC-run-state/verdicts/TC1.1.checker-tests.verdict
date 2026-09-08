@@ -1,0 +1,268 @@
+VERDICT: FAIL
+CHECKER: checker-tests
+FAMILY: anthropic
+TASK: TC1
+ATTEMPT: 1
+---
+SUBJECT UNDER TEST
+  web/static/js/insights.js at git blob 41c3da66e5aeeb7fa85b9872866e65dfedc20f02
+  (= the `index 563bf12..41c3da6` header of the worker's own `git diff master`).
+  master baseline blob = 563bf12727932a63bab7fe514bacb49e117dd25a.
+  All behaviour work was done in a private cp -a tree at
+  <scratch>/tc1-tests/tree with that exact blob in place; the served asset was
+  hash-checked each run:
+    curl -fsS http://localhost:8241/static/js/insights.js | git hash-object --stdin
+    -> 41c3da66e5aeeb7fa85b9872866e65dfedc20f02   (worker build)
+    -> 563bf12727932a63bab7fe514bacb49e117dd25a   (master baseline build)
+
+============================================================
+ACCEPTANCE 1 - node --test green; new test maps to the stated cases
+STATUS: MET as written (with a caveat, see FINDING B)
+------------------------------------------------------------
+  $ node --test "web/static/js/"*.test.cjs        (private tree, worker blob)
+    ℹ tests 16 / ℹ pass 16 / ℹ fail 0            exit=0
+  6 of the 16 are the new web/static/js/insights-trends-cap.test.cjs.
+
+  Case map (file read in full, assertions read line by line):
+   - 3-of-5 reordered subset, BOTH traces, per-point colours, height
+     (test:78) asserts data[0].x==['C','A','D'], data[0].y==[30,10,40],
+     data[0].marker.color==['gray','red','red'], data[1].x==['C','A','D'],
+     data[1].y==[3,1,4], data[1].marker.color=='#94a3b8' (scalar left alone),
+     layout.height==Math.max(360,3*38+120).
+   - raw not mutated: same test asserts JSON.stringify(raw) unchanged plus
+     notEqual identity on result and result.data[0].
+   - empty subset -> empty traces at height 360 (test:99).
+   - visibleTrendCategories order/hidden (test:123, test:134).
+
+  MUTATION KILL (private tree, each mutation applied to the worker blob, then
+  `node --test insights-trends-cap.test.cjs`, then reverted):
+   A. re-ordering removed (iterate xs in raw order, keep the wanted set)
+      -> ℹ pass 5 / fail 1; killed by "3-of-5 subset ... " KILLED
+   B. deep copy removed (`const copy = raw;`)
+      -> ℹ pass 4 / fail 2; killed by the subset test AND the empty-subset
+         test (both assert raw is unmutated)                    KILLED
+   C. 38 -> 40 in the height formula
+      -> ℹ pass 6 / fail 0                                      *SURVIVED*
+   D. per-point colour filtering dropped (`// mutated out`)
+      -> ℹ pass 4 / fail 2                                      KILLED
+   E. visibleTrendCategories stops filtering `hidden`
+      -> ℹ pass 5 / fail 1                                      KILLED
+
+============================================================
+ACCEPTANCE 2 - Go build/tests green; scope
+STATUS: MET
+------------------------------------------------------------
+  $ go build ./...                                 -> BUILD OK (exit 0)
+  $ go test -count=1 ./internal/handlers/insights/... ./internal/templates/...
+      ok budget2/internal/handlers/insights 1.297s
+      ok budget2/internal/templates          1.285s
+  Repo composite target, run in the branch worktree:
+  $ make check          (vet static vuln css-verify test)  -> "✓ all checks
+      passed", MAKE_CHECK_EXIT=0
+  $ make css-verify     -> "tailwind.css is up to date", exit 0
+  Scope, against the real branch worktree (re-checked 15:51 after the
+  transient tree incident in FINDING A):
+  $ /usr/bin/git status --porcelain
+      M web/static/js/insights.js
+      ?? data                       (pre-existing worktree symlink, TC.1)
+      ?? web/static/js/insights-trends-cap.test.cjs
+  $ /usr/bin/git diff master --stat
+      web/static/js/insights.js | 84 ++++...  1 file changed, 82 insertions(+), 2 deletions(-)
+  Matches .swarm/manifests/TC1.1.files exactly. No Go file, no template, no
+  CSS. Nothing in .swarm/critical.globs touched.
+
+============================================================
+ACCEPTANCE 3 - rendered behaviour, both ranges, both themes
+STATUS: MET (bar identity / order / height / values)
+------------------------------------------------------------
+  Playwright (1300x1000, chromium-1243, --no-sandbox, dark via a real
+  #theme-toggle click, fresh browser context per range/theme so the persisted
+  theme cannot leak), 52 recorded states over
+  ?start=2026-01-01&end=2026-08-27 (41) and ?start=2026-06-01&end=2026-06-30
+  (33), plus a 3m preset swap (38). Axis note read out of charts.js:126-186 -
+  renderChart re-maps `data.data` for #chart-trends to
+  {orientation:'h', x: trace.y, y: trace.x}, so on the RENDERED element
+  el.data[i].y holds the categories and el.data[i].x the amounts; that is what
+  was asserted (orient0 == 'h' in every state).
+
+  Machine check over all 52 states (chart-vs-table set AND order on BOTH
+  traces; height; per-point values):  FAILURES: NONE.  Representative rows:
+    state                                  trc bars vis rows layoutH rectH expH  w
+    janaug.light.default                     2   12  12   41     576   576  576 1212
+    janaug.light.expanded                    2   41  41   41    1678  1678 1678 1212
+    janaug.light.collapsed                   2   12  12   41     576   576  576 1212
+    janaug.light.sort_current                2   12  12   41     576   576  576 1212
+    janaug.light.sort_category_expanded      2   41  41   41    1678  1678 1678 1212
+    janaug.light.tab_roundtrip               2   41  41   41  ABSENT  1678 1678 1212
+    janaug.light.after_preset_3m             2   12  12   38  ABSENT   576  576 1212
+    janaug.light.after_preset_3m_expanded    2   38  38   38    1564  1564 1564 1212
+    june.dark.expanded                       2   33  33   33    1374  1374 1374 1212
+   - default = 12 bars per trace == the 12 visible data-category values in
+     DOM order, height 576 = max(360,12*38+120). Both ranges, both themes.
+   - expand -> N bars, height N*38+120: 41 -> 1678, 33 -> 1374, 38 -> 1564.
+     These rendered heights DO pin the 38 coefficient (41*40+120 = 1760).
+   - collapse -> 12 bars / 576.
+   - sort by `current`: chart order == new visible order and differs from the
+     default order (janaug default starts ['Lucid payment','Health insurance',
+     'Computer & homelab hardware',...]; after sort ['Lucid payment',
+     'Groceries','Health insurance','Amazon',...]) and is monotonic in the
+     amount.
+   - sort by `category` then expand: all N in case-insensitive alphabetical
+     order (41 and 33 both True; first 'Amazon', last 'Water (Monroe County)').
+   - preset swap to 3m (HTMX): table becomes 38 rows, chart re-fetches (first
+     three figures change from the previous range) and shows the new visible
+     12 at 576.
+   - tab away to Anomalies and back: el.data still present, 41/33 bars, width
+     1212 px (non-zero). layout.height is absent after Plotly's resize on tab
+     re-show, but the rendered box height is unchanged (1678 / 1374) - a
+     Plotly resize behaviour, not a data change.
+   - values, exhaustively for every visible row of every one of the 52 states
+     (not just the two named states): round(el.data[0].x[i],2) == the parsed
+     rendered `Selected` cell and round(el.data[1].x[i],2) == the parsed
+     rendered `Prior` cell. e.g. janaug expanded row 0 Amazon: chart
+     6074.84 / 8905.79 vs cells "$6,074.84" / "$8,905.79". FAILURES: NONE.
+   - toggle text/aria unchanged: aria-expanded false/"Show all 41 categories"
+     and true/"Show the largest 12"; the caption "Exact values and changes are
+     in the adjacent table" is present once on the page and its template is
+     byte-identical to master (no template in the diff).
+
+============================================================
+ACCEPTANCE 4 - theme toggle after render keeps the filtered chart
+STATUS: PARTLY MET -- the stated direction holds, the reverse direction
+        REGRESSES.  *** THIS IS THE FAIL ***
+------------------------------------------------------------
+  The stated claim holds. insightChartMarkers() (insights.js:353-359) returns
+  [{color: accent}, {color: prior, pattern:{shape:'/'}}] - SCALARS, no
+  per-point array - and the themechange handler calls
+  Plotly.restyle(chart, {marker: markers}), touching only `marker`, never
+  x/y. Empirically, flipping the theme while expanded kept the categories
+  identical (cats-equal: True, n=41 and n=33) in every case. The restyle
+  cannot resurrect hidden bars: CONFIRMED.
+
+  FAILING BEHAVIOUR (new in this attempt, not on master):
+  Because trendsChartRaw is frozen at htmx:afterRequest time with the markers
+  of the theme that was active AT FETCH TIME, and renderTrendsChart() now
+  re-renders from trendsChartRaw on EVERY table interaction, any expand /
+  collapse / sort performed after a theme toggle repaints the chart in the
+  STALE theme's colours.
+
+  Reproduction, worker build (blob 41c3da6), page loaded light then
+  #theme-toggle clicked to dark:
+    after theme->dark   : dark=true bars=12 m0="rgb(165,180,252)" m1="#a8a29e"
+    after expand (dark) : dark=true bars=41 m0="rgb(79,70,229)"  m1="#78716c"
+    after sort   (dark) : dark=true bars=41 m0="rgb(79,70,229)"  m1="#78716c"
+
+  Same probe against the MASTER baseline build (blob 563bf12, same server,
+  same port, rebuilt):
+    after theme->dark   : dark=true bars=41 m0="rgb(165,180,252)" m1="#a8a29e"
+    after expand (dark) : dark=true bars=41 m0="rgb(165,180,252)" m1="#a8a29e"
+    after sort   (dark) : dark=true bars=41 m0="rgb(165,180,252)" m1="#a8a29e"
+  -> master keeps the dark colours through expand and sort. The regression is
+     introduced by TC1, it is not pre-existing.
+
+  Reproduced in 10 of the 52 matrix states, all of them dark-page states
+  reached through a table interaction:
+    janaug.dark.{expanded,collapsed,sort_current,sort_category,
+                 sort_category_expanded}
+    june.dark.{expanded,collapsed,sort_current,sort_category,
+               sort_category_expanded}
+  In every one: document.documentElement.classList.contains('dark') === true
+  while marker0 == rgb(79,70,229) (light indigo-600) and marker1 ==
+  #78716c (light stone-500).
+
+  Impact, computed on the dark card background #292524 (stone-800):
+    light accent   #4f46e5 on #292524 -> 2.41:1   (below the 3:1 non-text
+                                                   minimum, WCAG 2.2 1.4.11)
+    correct accent #a5b4fc on #292524 -> 7.61:1
+    light prior    #78716c on #292524 -> 3.16:1
+    correct prior  #a8a29e on #292524 -> 6.01:1
+  BL4 chose stone-400/stone-500 per theme deliberately; this path discards
+  that choice. It also contradicts TC1 contract item 1, "markers applied as
+  today": on master the rendered markers always match the CURRENT theme.
+
+  WHAT IS MISSING (for the worker, not fixed here): renderTrendsChart() must
+  apply the CURRENT insightChartMarkers() to the filtered copy before calling
+  renderChart, instead of inheriting the markers frozen into trendsChartRaw
+  at fetch time. A regression test should assert marker colour after
+  toggle-then-expand in dark.
+
+============================================================
+ACCEPTANCE 5 (axe / text alternative) - NOT MY LANE
+------------------------------------------------------------
+  Deferred to checker-a11y. What I can report: the table remains the chart's
+  text alternative and is in step with it in all 52 states (Acceptance 3), and
+  the caption sentence is unchanged and still true. The dark-mode colour
+  regression above is a 1.4.11 contrast concern that axe cannot see (the bars
+  are SVG paths), so it will not surface in checker-a11y's scan.
+
+============================================================
+ACCEPTANCE 6 - diff scope + css-verify
+STATUS: MET
+------------------------------------------------------------
+  See Acceptance 2. `git diff master --stat` = insights.js only (+82/-2), new
+  test file untracked, `make css-verify` -> "tailwind.css is up to date".
+
+============================================================
+CONSOLE / PAGE ERRORS
+STATUS: MET (zero)
+------------------------------------------------------------
+  console(error) + pageerror + requestfailed listeners on every one of the 4
+  browser contexts covering all 52 states:  errs: []  (empty array).
+  The standalone dark probes also reported errs [] on both builds.
+
+============================================================
+FINDINGS
+------------------------------------------------------------
+FINDING A (process / tree integrity - for the lead, NOT a defect in the work)
+  Between 15:36:21 and 15:41:25 today the shared branch worktree
+  /home/darrell/bin/ai/budget2/.claude/worktrees/trends-chart-cap did NOT
+  contain the worker's change: web/static/js/insights.js had been restored to
+  master (blob 563bf12), `git status --porcelain` showed no `M`, and
+  `git diff master --stat` was EMPTY. Cause is visible in the leftovers: a
+  concurrent checker ran mutation testing IN the shared worktree
+  (/tmp/mutant-insights.js, mtime 15:36:21, = the worker file with
+  `if (colorArr) newColor.push(colorArr[i]);` replaced by `// mutated out`)
+  and restored from git rather than from a backup copy. The tree was restored
+  correctly at 15:41:25 and is now back at blob 41c3da6.
+  Two consequences the lead should weigh:
+   - checker-second's verify server (/tmp/budget2-whatif-verify-8243/
+     budget2-server) was BUILT at 15:41:39 - just inside the window's edge; if
+     its build predates the restore its rendered evidence is about master, not
+     the branch. Its build should be hash-checked before its verdict is
+     accepted (curl /static/js/insights.js | git hash-object --stdin must give
+     41c3da6...).
+   - the worktree's per-worktree reflog shows only the 15:21:37 `reset: moving
+     to HEAD` from `git worktree add`; the 15:36 revert left no reflog entry,
+     i.e. it was a path-scoped restore. CLAUDE.md's "checkers work in a cp -a
+     copy" rule was not followed by that lane.
+  My own work never wrote to the shared tree: everything ran in
+  <scratch>/tc1-tests/tree, on port 8241 only, and the subject blob was
+  reconstructed two independent ways (from the captured diff applied to
+  master, and from the mutant with the one mutated line restored) which
+  produced byte-identical files hashing to exactly 41c3da6 - the blob id the
+  worker's own diff header records.
+
+FINDING B (Acceptance 1, test strength)
+  The 38 px-per-bar coefficient is NOT mutation-killed by the unit suite:
+  changing 38 -> 40 leaves all 6 new tests green (mutation C above). The cause
+  is the spec's own fixture choice - with 3 categories max(360, 3*38+120) and
+  max(360, 3*40+120) are BOTH 360, and the "full set" case (5 categories) is
+  360 as well, so no assertion in the file is ever outside the floor region.
+  The written criterion says "height max(360, 3*38+120)" and the test asserts
+  exactly that, so criterion 1 is met AS WRITTEN; the coefficient is instead
+  pinned by Acceptance 3's rendered heights (41->1678, 33->1374, 38->1564).
+  Suggested follow-up: one more case with >= 7 categories so the unit test
+  guards the coefficient too.
+
+FINDING C (worker's two claims - both verified true)
+  - "renderChart mutates its argument": charts.js:178-181 does
+    `data.data = (data.data || []).map(function(trace){ return {...trace,
+    orientation:'h', x: trace.y, y: trace.x}; });` - it reassigns the caller's
+    `.data` property, so passing trendsChartRaw straight through would swap
+    x/y on the stored payload. Mutation B (removing the deep copy) is killed
+    by two tests, so the guard is real.
+  - "the themechange restyle sets scalar markers so it cannot resurrect bars":
+    confirmed by reading insightChartMarkers() (scalars only) and the restyle
+    call ({marker: markers}, no x/y), and empirically - theme flip while
+    expanded kept 41/33 bars. NOTE: this same scalar-marker design is what
+    makes the FAIL above possible in the opposite direction.

@@ -1,0 +1,247 @@
+VERDICT: PASS
+CHECKER: checker-tests
+FAMILY: anthropic
+TASK: TC1
+ATTEMPT: 2
+---
+SUBJECT UNDER TEST / TREE INTEGRITY
+  Snapshot vs worktree, byte compare (required first step):
+    $ cmp .swarm/snapshots/TC1.2/web/static/js/insights.js \
+          <worktree>/web/static/js/insights.js                -> identical (exit 0)
+    $ cmp .swarm/snapshots/TC1.2/web/static/js/insights-trends-cap.test.cjs \
+          <worktree>/web/static/js/insights-trends-cap.test.cjs -> identical (exit 0)
+  Subject fingerprints (sha256), re-confirmed at the END of the run too:
+    insights.js                  8fba686dc53b645085b3990ba380ac9d53a76054f5f0c462c5c02420e3c12c26
+    insights-trends-cap.test.cjs e54921e750036bf297a1bd5125aa8cb49b49fae75b5ad0e4f690266db2891fcb
+  MASTER baseline blob: 563bf12727932a63bab7fe514bacb49e117dd25a
+    ($ git show master:web/static/js/insights.js -- read-only; sha256
+     1d5e6245d90513764c3a8b3ea5fa2ce316eacfa6756a92428c96d499c9cc3041)
+  Every mutation, build and server run happened in `.git`-stripped cp -a copies
+  under <scratch>/{tc1-tests2,tc1-master,mut*}. NO git checkout/restore/stash was
+  run anywhere; the worktree's `git status --porcelain` is identical before and
+  after my run. Port 8241 only; server torn down; live :8080 still healthy; the
+  real data/ dir was never written (scratch has a dereferenced private copy, and
+  whatif-verify.sh copies that again into /tmp/budget2-whatif-verify-8241).
+  Served-asset hash checked before EVERY rendered run:
+    $ curl -fsS http://localhost:8241/static/js/insights.js | sha256sum
+      -> 8fba686d... (branch runs)   -> 1d5e6245... (master baseline runs)
+
+============================================================
+ITEM 1 - node --test green (18); the 38->40 mutation now FAILS the new tests
+STATUS: MET
+------------------------------------------------------------
+  $ cd <scratch>/tc1-tests2 && node --test "web/static/js/"*.test.cjs
+      ℹ tests 18 / ℹ pass 18 / ℹ fail 0     exit 0     (node v24.12.0)
+  8 of the 18 are web/static/js/insights-trends-cap.test.cjs (6 from attempt 1
+  plus the two new height cases):
+    ✔ filterTrendTraces: 12-of-N subset -> height 576 (12*38+120, ...)
+    ✔ filterTrendTraces: 41-category full set -> height 1678 (41*38+120, ...)
+  I read both new tests (file lines 158-176). They assert LITERALS -- 576 and
+  1678 -- not `Math.max(360, n*38+120)` recomputed in the test, so they pin the
+  coefficient rather than restating the implementation. fixtureN(20)/fixtureN(41)
+  put both cases well above the 360 floor.
+
+  MUTATION KILL (each applied to the worker file in a separate throwaway copy
+  under <scratch>/mut_*, then `node --test insights-trends-cap.test.cjs`):
+   C. 38 -> 40  (`categories.length * 40 + 120`)          -> exit 1  KILLED
+        ✖ ...height 576 ...   AssertionError actual: 600, expected: 576
+        ✖ ...height 1678 ...  AssertionError actual: 1760, expected: 1678
+      (This is exactly the mutation that SURVIVED at attempt 1 -- finding B is
+       closed.)
+   Re-confirmed the attempt-1 kills still hold on the attempt-2 file:
+   A. re-ordering removed (iterate xs, not categories)    -> exit 1, 7 ✖  KILLED
+   B. deep copy removed (`const copy = raw;`)             -> exit 1, 5 ✖  KILLED
+   D. per-point colour filtering broken (colorArr[0])     -> exit 1, 5 ✖  KILLED
+   E. visibleTrendCategories stops filtering `hidden`     -> exit 1, 3 ✖  KILLED
+   F. 360 floor -> 300                                    -> exit 1, 7 ✖  KILLED
+
+============================================================
+ITEM 2 - go build / go test -count=1 / diff scope
+STATUS: MET
+------------------------------------------------------------
+  $ go build ./...                                          exit 0
+  $ go test -count=1 ./internal/handlers/insights/... ./internal/templates/...
+      ok  budget2/internal/handlers/insights  1.270s
+      ok  budget2/internal/templates          1.318s        exit 0
+  Repo composite target (vet static vuln css-verify test), full suite, cache
+  defeated by the Makefile's own -count=1:
+  $ make check     -> "✓ all checks passed"   MAKECHECK_EXIT=0
+  $ make css-verify -> "tailwind.css is up to date"  exit 0
+  Scope, read from the real branch worktree (read-only git commands only):
+  $ git diff master --stat --
+      web/static/js/insights.js | 103 +++...  1 file changed, 98 insertions(+), 5 deletions(-)
+  $ git status --porcelain
+       M web/static/js/insights.js
+       ?? data                                  (pre-existing worktree symlink, TC.1)
+       ?? web/static/js/insights-trends-cap.test.cjs
+  $ git rev-parse HEAD = git rev-parse master = a71e8b9b4541d36e9cdc6bf1beacea82c18e3fe8
+  Exactly the two paths in .swarm/manifests/TC1.2.files. No Go file, no template,
+  no CSS. Nothing matching .swarm/critical.globs (all seven globs are
+  internal/services/* and internal/handlers/backup/**) is touched.
+
+============================================================
+ITEM 3 - the theme regression (TC-2026-09-08b) is CLOSED
+STATUS: MET
+------------------------------------------------------------
+  Harness: Playwright 1.63.0, chromium --no-sandbox, viewport 1300x1000, fresh
+  browser context per range (no persisted-theme leak), dark reached by a REAL
+  `page.click('#theme-toggle')`. Axis note: charts.js re-maps #chart-trends to
+  {orientation:'h', x: trace.y, y: trace.x}, so on the rendered element
+  el.data[i].y holds the CATEGORIES and el.data[i].x the amounts; that is what is
+  asserted (orient0 === 'h' in every state).
+  Script <scratch>/pw/theme.js, per range: load light -> record; click
+  #theme-toggle (dark) -> record; expand, collapse, sort current, sort category
+  -> record each; click #theme-toggle back to light -> record; expand, collapse,
+  sort current, sort category -> record each.  22 recorded states, and after
+  EVERY step it asserts marker0 === insightChartMarkers()[0].color computed live
+  from --accent, marker1 === (dark ? '#a8a29e' : '#78716c'), AND that BOTH traces'
+  category arrays equal the table's visible data-category list in order.
+
+  state                          dark   bars  vis   m0                 m1        themeOK setOK
+  janaug.light.load              false  12    12    rgb(79,70,229)     #78716c   true    true
+  janaug.toggled_dark            true   12    12    rgb(165,180,252)   #a8a29e   true    true
+  janaug.dark.expand             true   41    41    rgb(165,180,252)   #a8a29e   true    true
+  janaug.dark.collapse           true   12    12    rgb(165,180,252)   #a8a29e   true    true
+  janaug.dark.sort_current       true   12    12    rgb(165,180,252)   #a8a29e   true    true
+  janaug.dark.sort_category      true   12    12    rgb(165,180,252)   #a8a29e   true    true
+  janaug.toggled_light_back      false  12    12    rgb(79,70,229)     #78716c   true    true
+  janaug.light2.expand           false  41    41    rgb(79,70,229)     #78716c   true    true
+  janaug.light2.collapse         false  12    12    rgb(79,70,229)     #78716c   true    true
+  janaug.light2.sort_current     false  12    12    rgb(79,70,229)     #78716c   true    true
+  janaug.light2.sort_category    false  12    12    rgb(79,70,229)     #78716c   true    true
+  june.light.load                false  12    12    rgb(79,70,229)     #78716c   true    true
+  june.toggled_dark              true   12    12    rgb(165,180,252)   #a8a29e   true    true
+  june.dark.expand               true   33    33    rgb(165,180,252)   #a8a29e   true    true
+  june.dark.collapse             true   12    12    rgb(165,180,252)   #a8a29e   true    true
+  june.dark.sort_current         true   12    12    rgb(165,180,252)   #a8a29e   true    true
+  june.dark.sort_category        true   12    12    rgb(165,180,252)   #a8a29e   true    true
+  june.toggled_light_back        false  12    12    rgb(79,70,229)     #78716c   true    true
+  june.light2.expand             false  33    33    rgb(79,70,229)     #78716c   true    true
+  june.light2.collapse           false  12    12    rgb(79,70,229)     #78716c   true    true
+  june.light2.sort_current       false  12    12    rgb(79,70,229)     #78716c   true    true
+  june.light2.sort_category      false  12    12    rgb(79,70,229)     #78716c   true    true
+    THEME/SET FAILURES: 0     CONSOLE ERRORS: []     exit 0
+  marker0/marker1 are SCALARS in every state (markerIsArray false/false), i.e.
+  the endpoint's per-point red/green array on trace 0 is replaced by the theme
+  marker exactly as master does -- not a per-point array that could drift out of
+  step with the filtered points.
+
+  The 10 states that FAILED at attempt 1, re-run verbatim (mid-session toggle to
+  dark, THEN the interaction) -- <scratch>/pw/attempt1states.js:
+    janaug.dark.{expanded,collapsed,sort_current,sort_category,sort_category_expanded}
+    june.dark.{expanded,collapsed,sort_current,sort_category,sort_category_expanded}
+    all 10: dark=true, m0=rgb(165,180,252), m1=#a8a29e, chart set/order == visible
+    rows.   "attempt-1 failing states re-checked: 10  now failing: 0  errs []"  exit 0
+  Attempt 1 measured m0=rgb(79,70,229)/m1=#78716c in these same states (light
+  accent #4f46e5 on the dark card #292524 = 2.41:1). The rendered accent is now
+  #a5b4fc = rgb(165,180,252) (7.61:1) and prior #a8a29e (6.01:1) in every dark
+  state.
+
+============================================================
+ITEM 4 - 52-state matrix: set, order, per-point values to the cent, heights
+STATUS: MET
+------------------------------------------------------------
+  <scratch>/pw/matrixB.js -- 2 ranges x 2 themes x 13 states = 52. Theme is set
+  with a real #theme-toggle click BEFORE the trends tab is activated (see
+  OBSERVATION 1 for why the ordering matters and why it is master-native).
+  Per state it asserts: nTraces==2; orient0=='h'; trace0 AND trace1 category
+  arrays == the table's visible data-category list, in order; for EVERY visible
+  row round(chart amount,2) == the parsed RENDERED `Selected` / `Prior` money
+  cell; layout.height (when Plotly has not cleared it) == max(360, n*38+120);
+  the element's rendered box height == max(360, n*38+120); box width > 100;
+  marker0/marker1 == the live insightChartMarkers() for the current theme.
+
+  state                                    bars vis total layoutH rectH expH   w    aria  ok
+  janaug.light.default                     12   12  41    576     576   576    1212 false OK
+  janaug.light.expanded                    41   41  41    1678    1678  1678   1212 true  OK
+  janaug.light.collapsed                   12   12  41    576     576   576    1212 false OK
+  janaug.light.sort_current                12   12  41    576     576   576    1212 false OK
+  janaug.light.sort_current_expanded       41   41  41    1678    1678  1678   1212 true  OK
+  janaug.light.sort_current_collapsed      12   12  41    576     576   576    1212 false OK
+  janaug.light.sort_previous               12   12  41    576     576   576    1212 false OK
+  janaug.light.sort_change                 12   12  41    576     576   576    1212 false OK
+  janaug.light.sort_category               12   12  41    576     576   576    1212 false OK
+  janaug.light.sort_category_expanded      41   41  41    1678    1678  1678   1212 true  OK
+  janaug.light.tab_roundtrip               41   41  41    undefined 1678 1678   1212 true  OK
+  janaug.light.after_preset_3m             12   12  38    undefined 576  576    1212 false OK
+  janaug.light.after_preset_3m_expanded    38   38  38    1564    1564  1564   1212 true  OK
+  janaug.dark.*   (same 13)                                              all OK
+  june.light.*    (expanded 33 -> 1374)                                  all OK
+  june.dark.*     (expanded 33 -> 1374)                                  all OK
+    STATES: 52    FAILURES: 0    CONSOLE/PAGE ERRORS: []    exit 0
+  Rendered heights independently pin the 38 coefficient: 41->1678, 33->1374,
+  38->1564, 12->576 (41*40+120 would be 1760).
+
+  THE MATRIX IS NOT VACUOUS -- the identical script run against the MASTER build
+  (served hash 1d5e6245..., same server, same port, same data):
+    STATES: 52    FAILURES: 1350    44 of 52 states FAIL
+    e.g. janaug.light.default  bars 41 vis 12  rectH 1678 vs expH 576
+         janaug.light.sort_current_expanded: value cur[7] Home improvement —
+           projects (pinned): chart 4382 vs cell "$2,869.40"
+  The only 8 master states that pass are the fully-expanded ones, where visible
+  == all -- exactly the degenerate case. So the set/order and value assertions
+  do bite on the code being guarded.
+
+  Order/value spot checks read out of <scratch>/pw/detail.js (branch build):
+   - default:      chart ["Lucid payment","Health insurance","Computer & homelab
+                   hardware","Home improvement — projects (pinned)","Amazon"] ==
+                   visible rows; row0 chart cur 11063.01 vs cell "$11,063.01",
+                   chart pri 0 vs cell "$0.00".
+   - sort current: order CHANGES to ["Lucid payment","Groceries","Health
+                   insurance","Amazon","Hyundai car payment"] and is monotonic
+                   non-increasing (true); chart == visible rows.
+   - sort category + expand: 41 categories, case-insensitive alphabetical (true),
+                   first "Amazon", last "Water (Monroe County)"; row0 Amazon chart
+                   6074.84 / 8905.79 vs cells "$6,074.84" / "$8,905.79".
+   - toggle text/aria unchanged: "Show all 41 categories"/aria-expanded=false and
+                   "Show the largest 12"/aria-expanded=true.
+   - caption "Exact values and changes are in the adjacent table" present exactly
+                   once and still true (template unchanged, not in the diff).
+
+============================================================
+ITEM 5 - zero console errors
+STATUS: MET
+------------------------------------------------------------
+  console(type=='error') + pageerror + requestfailed listeners on every browser
+  context in every run:
+    theme.js         -> CONSOLE ERRORS: []
+    matrixB.js       -> CONSOLE/PAGE ERRORS: []   (branch AND master runs)
+    attempt1states.js-> errs []
+    detail.js        -> errs []
+    heightprobe/seq  -> errs []
+
+============================================================
+OBSERVATIONS (for the lead's backlog -- NOT defects in TC1)
+------------------------------------------------------------
+OBSERVATION 1 (pre-existing on MASTER, attribution proved, not a FAIL)
+  My first matrix ordering (activate the trends tab, THEN click #theme-toggle)
+  produced 2 deviating states -- janaug.dark.default and june.dark.default at
+  rendered height 300 px instead of 576. I proved this is master-native, not
+  TC1's doing, by running the same sequence against the master build:
+    MASTER 563bf12 : load+tabclick(light) rectH=1678 -> theme->dark rectH=300
+                     -> expand rectH=300 -> collapse rectH=300
+    BRANCH 8fba686 : load+tabclick(light) rectH=576  -> theme->dark rectH=300
+                     -> expand rectH=1678 -> collapse rectH=576
+  Mechanism: activating the tab runs Plotly's resize, which CLEARS
+  layout.height; the themechange handler's Plotly.restyle then re-lays-out at
+  Plotly's 300 px default. Master never recovers (it only re-renders on a
+  re-fetch); the branch recovers on the very next table interaction. Without the
+  tab click, master keeps layout.height=1678 across the toggle. TC1 is strictly
+  better here, so this is a pre-existing #chart-trends/tab-resize defect for the
+  backlog, not a TC1 regression.
+
+OBSERVATION 2 (test strength, V3-pattern follow-up candidate)
+  The marker fix that ruling TC-2026-09-08b ordered has NO unit-level guard. Its
+  only evidence is my rendered probe, which does not outlive this verdict:
+  reverting renderTrendsChart() to inherit fetch-time markers leaves all 18
+  node tests green (renderTrendsChart is not exercised by the vm harness --
+  document.getElementById returns null there and window.Plotly is absent).
+  The brief for attempt 2 asked only for the two height tests, so this is not a
+  miss against the criteria. Suggested follow-up: a jsdom/vm case that drives
+  renderTrendsChart() with a stubbed renderChart and a flipped `dark` class and
+  asserts the marker handed to renderChart is the CURRENT theme's.
+
+OBSERVATION 3 (a11y lane, restated from attempt 1)
+  The dark-mode marker colours are SVG fills; axe cannot see them, so
+  checker-a11y's scan will not independently confirm item 3. The contrast
+  evidence above is mine.

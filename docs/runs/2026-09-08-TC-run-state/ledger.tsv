@@ -1,0 +1,21 @@
+# task_id	tier	checks	status	attempt	worker	reason
+LT1	2	tests,a11y	accepted	1	worker-coder	gate-check-exit0; tests+a11y PASS at attempt 1
+LT5	2	tests,a11y,second	accepted	1	worker-coder	gate-check-exit0; tests+a11y+second PASS at attempt 1
+LT2	2	a11y,second	accepted	1	worker-coder	gate-check-exit0; a11y+second PASS at attempt 1
+LT6	2	tests,a11y	accepted	1	worker-coder	gate-check-exit0; tests+a11y PASS at attempt 1
+RF1	2	a11y,second	accepted	2	worker-coder	attempt1 second-lane FAIL conceded (ruling c); attempt2 a11y+second PASS; gate-check-exit0
+RF2	2	tests,a11y,second	accepted	1	worker-coder	gate-check-exit0; tests+a11y+second PASS at attempt 1
+RF3	2	tests,a11y,second	accepted	1	worker-coder	gate-check-exit0; tests+a11y+second PASS at attempt 1
+RF4	1	a11y	accepted	1	worker-coder	gate-check-exit0; a11y PASS at attempt 1
+RF5	1	tests	accepted	1	lead	gate-check-exit0; tests PASS at attempt 1
+RF6	1	tests	accepted	1	lead	gate-check-exit0; tests PASS at attempt 1
+RF7	1	tests	accepted	1	lead	gate-check-exit0; tests PASS at attempt 1
+BL1	2	tests,a11y	accepted	1	worker-coder	gate-check-exit0; tests+a11y PASS at attempt 1
+BL2	2	a11y	accepted	1	worker-coder	gate-check-exit0; a11y PASS at attempt 1 (ruling a)
+BL3	1	a11y	accepted	2	lead	attempt1 a11y FAIL conceded (ruling b); attempt2 PASS, gate-check-exit0
+BL4	1	a11y	accepted	2	lead	attempt1 a11y FAIL conceded (ruling c); attempt2 PASS, gate-check-exit0
+BL5	1	tests	accepted	2	lead	attempt1 PASS (observation g); attempt2 PASS, gate-check-exit0
+BK1	1	a11y	accepted	1	lead	gate-check-exit0; a11y PASS at attempt 1
+BK2	2	tests,a11y	accepted	1	worker-coder	gate-check-exit0; tests+a11y PASS at attempt 1
+BK3	1	a11y	accepted	4	lead	attempts 1-3 FAIL (rulings d-f), user reopened (ruling g), attempt4 re-verification PASS, gate-check-exit0
+TC1	2	tests,a11y,second	accepted	2	worker-coder	attempt1 tests FAIL conceded (ruling b); attempt2 tests+a11y+second PASS, gate-check-exit0

@@ -1,0 +1,182 @@
+VERDICT: PASS
+CHECKER: checker-a11y
+FAMILY: anthropic
+TASK: TC1
+ATTEMPT: 2
+---
+Scope check: `cmp` of both manifest files (web/static/js/insights.js,
+web/static/js/insights-trends-cap.test.cjs) in the shared worktree
+(/home/darrell/bin/ai/budget2/.claude/worktrees/trends-chart-cap) against the
+lead's snapshot at .swarm/snapshots/TC1.2/ — IDENTICAL, byte for byte, both
+files. Proceeded to audit the worktree directly (no copy needed for reading;
+never ran git checkout/restore/stash anywhere). Server: real build via
+`scripts/whatif-verify.sh start/stop 8242` (isolated data/backup copies),
+real Playwright (chromium-1243) + real axe-core, on the live rendered page.
+
+`git diff master --stat -- web/static/js/insights.js
+web/static/js/insights-trends-cap.test.cjs web/templates/` confirms the only
+change vs master is insights.js (+98/-5); templates untouched. The fix
+(ruling TC-2026-09-08b): `trendsChartRaw` now stores the endpoint payload
+WITHOUT markers; `renderTrendsChart()` calls `insightChartMarkers()` (reads
+`--accent` custom property + `.dark` class) fresh on every render and
+applies it to the filtered copy, so every table-driven re-render (cap,
+toggle, sort, HTMX swap) repaints with the CURRENT theme, not a value baked
+in at fetch time.
+
+1. POINT 7/12 (contrast, dark-mode parity) — PASS, re-verified against the
+   theme-toggle-then-interact sequence the bug lived in.
+
+   Card background confirmed from the built CSS:
+   `grep -o '\.bg-gray-800{[^}]*}' web/static/css/tailwind.css` ->
+   `background-color:rgb(41 37 36/...)` = #292524 (dark card). Accent
+   tokens confirmed from web/static/css/styles.css: light `--accent: 79 70
+   229` (#4f46e5), dark `--accent: 165 180 252` (#a5b4fc) — matches the
+   brief's expected values exactly.
+
+   Command A — read Plotly's live internal trace.marker.color
+   (theme_sequence.cjs) through the full required sequence: real
+   `#theme-toggle` click -> capped -> expand -> collapse -> sort by
+   "current" -> sort by "category" -> HTMX preset swap (3m) -> toggle back
+   to light -> expand again. At EVERY step:
+     trace0 (accent) color == rgb(165,180,252) in every dark state, ==
+       rgb(79,70,229) in every light state (never mixed/stale)
+     trace1 (prior) color == "#a8a29e" in every dark state, ==
+       "#78716c" in every light state
+   Computed WCAG contrast vs the theme's own card (relative-luminance
+   formula, checked against #292524 dark / #ffffff light):
+     dark:  rgb(165,180,252) -> 7.61:1   "#a8a29e" -> 6.01:1
+     light: rgb(79,70,229)   -> 6.29:1   "#78716c" -> 4.80:1
+   (light trace0's measured 6.29:1 is the correct WCAG figure for
+   #4f46e5-on-white; the brief's "≈6.7:1" was an estimate — 6.29:1 still
+   clears both the ≥3:1 non-text and ≥4.5:1 text thresholds by a wide
+   margin.) All 8 sequence states, both traces: full log at
+   .../scratchpad/tc1-a11y2/theme_seq_out.txt.
+
+   Command B — independent REAL PIXEL sampling (not the JS data model):
+   pixel_sequence2.cjs takes an element screenshot of the largest-area bar
+   path per trace at each step of the identical sequence
+   (theme-toggle->capped->expand->collapse->sort-current->sort-category->
+   HTMX-preset-swap->toggle-back->expand), decodes the PNG (pngjs), and
+   histograms rendered pixel colors (trace1 is a diagonal-hatch pattern
+   fill, so the dominant non-background color is the stroke). Dominant
+   (highest pixel-count) color per state:
+     trace0 solid fill — dark states: rgb(165,180,252) 7.61:1 (13575-
+       14480 px each); light states: rgb(79,70,229) 6.29:1 (12780-14480
+       px each) — exact match to the JS data-model read above, in EVERY
+       one of the 9 captured states including post-toggle-back-to-light.
+     trace1 hatch stroke — dark states: rgb(167,161,157) ~5.94:1 (nearest
+       rendered pixel to #a8a29e, anti-aliased); light states: rgb(121,
+       114,109) ~4.73:1 (nearest to #78716c) — consistent across every
+       dark/light state in the sequence.
+   Full log: .../scratchpad/tc1-a11y2/pixel_sequence2.cjs output (tail
+   captured in this session). No state anywhere in either script showed
+   the light accent (rgb(79,70,229)/6.29:1, correct only against WHITE)
+   rendered against the DARK card, which is exactly the 2.41:1 defect
+   TC-2026-09-08b reported on attempt 1 — that failure mode does not
+   reproduce after the fix, across cap/toggle/sort/HTMX-swap and a second
+   theme round-trip.
+   All measured ratios (4.73:1 to 7.61:1) clear the ≥3:1 non-text
+   threshold (point 7) in both themes (point 12) at every tested step.
+
+2. POINT 7/12 continued — legend/tick text colour through the same
+   sequence (the `themedLayoutUpdate`-equivalent path): theme_sequence.cjs
+   also read `getComputedStyle(tickText).fill` at every one of the 8
+   sequence steps. Light: rgb(68,64,60) throughout every light state
+   (10.27:1 vs white, matches attempt-1's baseline reading). Dark:
+   rgb(231,229,228) throughout every dark state (12.08:1 vs #292524).
+   Tick colour never lagged the theme through toggle/expand/collapse/
+   sort/HTMX-swap — text stays correctly themed the whole path.
+
+3. POINT 11 (chart text alternative / chart mirrors table) — PASS,
+   re-verified live (the filtering logic itself, filterTrendTraces/
+   visibleTrendCategories, is byte-identical to attempt 1's diff — only
+   the marker-application timing changed — but re-ran functionally rather
+   than relying on that alone). functional_check.cjs, same server:
+     initial-capped-light: chart(12) == table(12) MATCH
+     after-toggle-dark-capped: chart(12) == table(12) MATCH
+     dark-expanded: chart(41) == table(41) MATCH
+     dark-expanded-sorted-current: chart(41) == table(41) MATCH
+     dark-expanded-sorted-category: chart(41) == table(41) MATCH
+     dark-collapsed-after-sort: chart(12) == table(12) MATCH
+     dark-after-preset-swap: chart(12) == table(12) MATCH
+     after-keyboard-toggle (Enter on toggle button): chart(38) ==
+       table(38) MATCH
+   8/8 states: bars (`el.data[0].y`, the category axis on this horizontal-
+   bar chart) == visible table `data-category` rows, in table order.
+   TOTAL: 8 PASS, 0 FAIL.
+
+4. POINT 16 (client-side suppression parity) — PASS, re-cited/re-run.
+   `curl http://localhost:8242/insights?start=2026-01-01&end=2026-08-27`
+   (raw HTML, JS off): 41 `<tr data-category=...>` rows, 0 with `hidden`
+   present in the markup — every row ships server-side; `hidden` is only
+   ever applied by client JS (unchanged from master/attempt 1).
+
+5. POINT 3/9 (keyboard operability, focus) — PASS, re-cited + spot-
+   re-verified. functional_check.cjs: focused `[data-trends-toggle]`,
+   pressed Enter -> `aria-expanded="true"`, table expands to 38/41 rows
+   (this state had table already sorted), chart follows (match=true,
+   confirmed above); `document.activeElement` after the re-render is
+   still the toggle button
+   (`<button type="button" data-trends-toggle="" aria-expanded="true"...`)
+   — the Plotly re-render does not steal focus. Code path for sort-header
+   keyboard activation and the tab-order probe is untouched by this diff
+   (only trendsChartRaw/renderTrendsChart/insights.js's marker timing
+   changed); attempt 1's tab_reach.cjs findings (chart and table both
+   Tab-reachable, region landmarks intact) stand un-invalidated since the
+   template is untouched (`git diff master --stat -- web/templates/` ->
+   empty, confirmed above).
+
+6. POINT 15 (no new motion) — PASS, re-verified.
+   `grep -n transition web/static/js/insights.js web/static/js/charts.js`
+   -> no matches. renderTrendsChart() still calls `renderChart(...)` ->
+   `Plotly.newPlot()` (full non-animated redraw) for every re-render in
+   the sequence; charts.js is untouched by this diff.
+
+7. axe (WCAG tags) — PASS, 0 violations, re-run fresh this attempt.
+   axe_audit.cjs (addScriptTag, `axe.run(document, {runOnly:{type:'tag',
+   values:['wcag2a','wcag2aa','wcag22aa']}})`), both ranges (jan-aug,
+   june) x both viewports (1300, 390) x both themes (real theme-toggle /
+   theme-toggle-mobile click) x both cap states (capped/expanded), all
+   <details> forced open:
+     jan-aug|vp1300|light|capped -> 0      june|vp1300|light|capped -> 0
+     jan-aug|vp1300|light|expanded -> 0    june|vp1300|light|expanded -> 0
+     jan-aug|vp1300|dark|capped -> 0       june|vp1300|dark|capped -> 0
+     jan-aug|vp1300|dark|expanded -> 0     june|vp1300|dark|expanded -> 0
+     jan-aug|vp390|light|capped -> 0       june|vp390|light|capped -> 0
+     jan-aug|vp390|light|expanded -> 0     june|vp390|light|expanded -> 0
+     jan-aug|vp390|dark|capped -> 0        june|vp390|dark|capped -> 0
+     jan-aug|vp390|dark|expanded -> 0      june|vp390|dark|expanded -> 0
+   Total: 0/16 states. Log: .../scratchpad/tc1-a11y2/axe_output.txt,
+   axe_result.json.
+
+FAILURES: none.
+
+OBSERVATIONS (non-blocking):
+- Trace 1's diagonal-hatch fill means a raw center-pixel sample can land in
+  a gap (near-background) rather than the stroke; the histogram method
+  used here (most-frequent non-background colour) is the correct way to
+  pixel-audit a patterned Plotly bar and is noted here for future chart
+  contrast probes on this codebase.
+- The endpoint (`/insights/trends/chart`) itself returns a per-point
+  marker.color array (red/green/gray keyed to increase/decrease) on
+  trace 0; `renderTrendsChart()` unconditionally overwrites
+  `trace.marker` with the flat `insightChartMarkers()` object, discarding
+  that per-point array. This is PRE-EXISTING (master's
+  `htmx:afterRequest` handler already did
+  `data.data.forEach((trace,i)=>{trace.marker=markers[i]})` before TC1;
+  confirmed via `git diff master -- web/static/js/insights.js`, which
+  shows this line only moved into `renderTrendsChart()`, not introduced).
+  Out of TC1's scope — not a FAIL, flagged for the backlog only.
+- The finding-B fix from ruling TC-2026-09-08b (12-category height=576
+  test case) is in the test file per the manifest but was not re-executed
+  here (`checker-tests`'/`checker-second`'s lane, not a11y's); a11y's
+  concern (visual contrast/parity) is fully covered above.
+
+Commands/artifacts, all under
+/tmp/claude-1000/-home-darrell-work-agents2--claude-worktrees-retired-couple-ui-layout-397a9a/5f1798f7-0ebe-4e24-a3e8-2690e59504b6/scratchpad/tc1-a11y2/:
+  theme_sequence.cjs, theme_seq_out.txt   (JS data-model marker+tick colours, full sequence)
+  pixel_sequence2.cjs                     (real rendered-pixel histogram, full sequence)
+  functional_check.cjs                    (chart==table across the sequence + keyboard)
+  axe_audit.cjs, axe_output.txt, axe_result.json  (0 violations x 16 states)
+Server: `scripts/whatif-verify.sh start 8242` / `stop 8242` (isolated data
+copy at /tmp/budget2-whatif-verify-8242, torn down after the audit).

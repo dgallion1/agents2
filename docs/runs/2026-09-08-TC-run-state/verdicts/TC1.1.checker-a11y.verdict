@@ -1,0 +1,148 @@
+VERDICT: PASS
+CHECKER: checker-a11y
+FAMILY: anthropic
+TASK: TC1
+ATTEMPT: 1
+---
+Scope: web/static/js/insights.js only (git diff master --stat confirms the
+only file changed vs master a71e8b9). No template/markup changes; charts.js
+untouched. Rendered against a REAL server on :8242 (scripts/whatif-verify.sh
+start/stop 8242, isolated data/backup copies), real Playwright + real
+axe-core, both live ranges, both themes, both viewports.
+
+1. Point 11 (chart text alternative) — PASS.
+   Command: Playwright walk (audit.cjs) against /insights?start=2026-01-01&
+   end=2026-08-27, tab "Spending trends" clicked.
+   - Capped state: chart bars (el.data[0].y, 12 items) == visible table rows
+     (data-category, 12 items), same order, byte-identical arrays.
+   - Clicked toggle (keyboard Enter): aria-expanded true, text "Show the
+     largest 12"; chart now 41 bars == all 41 visible table rows, same
+     order. Clicked again (mouse): back to 12/12 match.
+   - Sorted by "current" (keyboard Enter on header button): chart's 12
+     bars == newly-visible 12 table rows, same order.
+   - Sorted by "category" then expanded: table rows alphabetical (41/41,
+     A→Z); chart's 41 bars match table order exactly.
+   - Changed date preset (HTMX swap, 1m): chart re-fetched, 12 bars ==
+     table's new visible 12, same order.
+   All 8 states: bars == visible table rows, in table order. Caption text
+   "Exact values and changes are in the adjacent table" is unchanged
+   (template not touched) and remains true in every state observed.
+   Full pass/fail log: /tmp/.../scratchpad/tc1-a11y/full_output5.txt
+   (21/21 assertions PASS, 0 FAIL).
+
+2. Point 16 (client-side suppression parity) — PASS.
+   Command: curl http://localhost:8242/insights?start=2026-01-01&end=2026-08-27
+   (raw server HTML, no JS executed).
+   - 41 <tr data-category=...> rows present, 0 with a `hidden` attribute —
+     table shows every row with JS off, matching TC.0's documented
+     RF3 contract (unchanged by this diff).
+   - <div id="chart-trends"> initial content is only "Loading chart…" (the
+     hx-get fires on `load` trigger, which requires htmx's JS runtime) —
+     the chart never renders without JS, so there is no partial/mismatched
+     state (never fewer bars than table rows) to fail parity on.
+
+3. Points 3/9 (keyboard operability, focus) — PASS.
+   - Toggle button: aria-expanded flips false<->true and button text flips
+     "Show all 41 categories" <-> "Show the largest 12" correctly on both
+     keyboard (Enter) and mouse activation (audit.cjs steps 5-15).
+   - After Enter-toggling to expanded (a 41-bar Plotly.newPlot re-render):
+     document.activeElement is still the toggle button
+     (`<button ... data-trends-toggle ... aria-expanded="t...`) — the
+     re-render does not steal focus.
+   - After clicking a sort header (Enter): document.activeElement.dataset
+     .sort === 'current' — focus stays on the header button through the
+     chart re-render.
+   - Tab-order probe (tab_reach.cjs) from the "Spending trends" tab button:
+     Tab 1 -> tabpanel, Tab 2 -> chart region ("Spending trends chart"),
+     Tab 3 -> table region ("Spending trend values") — both the chart and
+     its adjacent table are keyboard-reachable in visual order.
+
+4. Point 15 (no new animation) — PASS (code-level + behavioral).
+   `grep transition web/static/js/charts.js web/static/js/insights.js` ->
+   no matches. renderChart() calls `Plotly.newPlot(containerId, ...)`
+   (a full non-animated redraw, no `transition` config), for every
+   TC1-triggered re-render (cap default, toggle, sort, HTMX swap) exactly
+   as it did on master before this diff (charts.js is untouched — git diff
+   master --stat shows only insights.js changed). No motion was added.
+
+5. Points 7/12 (contrast, dark-mode parity) — PASS.
+   Command: contrast_check.cjs (WCAG relative-luminance formula) against
+   the live chart's rendered SVG tick/legend text vs its panel background,
+   both themes, real `#theme-toggle` click (not CSS class injection):
+     LIGHT: tick fill rgb(68,64,60) vs panel rgb(255,255,255) -> 10.27:1
+     DARK:  tick fill rgb(231,229,228) vs panel rgb(41,37,36) -> 12.08:1
+   Both far exceed 4.5:1; fill color changes between themes confirms the
+   chart re-themes (not light-on-dark). Marker/bar colours: insights.js
+   diff shows `insightChartMarkers()` (the color-producing function) is
+   NOT touched by this diff — TC1 only filters which x/y/color-array
+   points are kept in filterTrendTraces(), it never changes color values,
+   so the existing (pre-existing, already-audited) marker scheme is
+   unchanged.
+
+6. axe (WCAG tags) — PASS, 0 violations across every required state.
+   Command: axe_audit.cjs, axe-core (addScriptTag) against the live page,
+   `axe.run(document, {runOnly: {type:'tag', values:['wcag2a','wcag2aa',
+   'wcag22aa']}})`, all <details> forced open, both ranges x both
+   viewports (1300/390) x both themes (real theme-toggle click,
+   #theme-toggle-mobile at 390) x both cap states (capped/expanded):
+     jan-aug|vp1300|light|capped -> 0
+     jan-aug|vp1300|light|expanded -> 0
+     jan-aug|vp1300|dark|capped -> 0
+     jan-aug|vp1300|dark|expanded -> 0
+     jan-aug|vp390|light|capped -> 0
+     jan-aug|vp390|light|expanded -> 0
+     jan-aug|vp390|dark|capped -> 0
+     jan-aug|vp390|dark|expanded -> 0
+     june|vp1300|light|capped -> 0
+     june|vp1300|light|expanded -> 0
+     june|vp1300|dark|capped -> 0
+     june|vp1300|dark|expanded -> 0
+     june|vp390|light|capped -> 0
+     june|vp390|light|expanded -> 0
+     june|vp390|dark|capped -> 0
+     june|vp390|dark|expanded -> 0
+   Total violations: 0 (log: /tmp/.../scratchpad/tc1-a11y/axe_output.txt).
+   No console/page errors observed during the full functional walk either
+   (Playwright console/pageerror listeners attached in audit.cjs, none
+   fired).
+
+7. Screen-reader announcement / table reachability — PASS.
+   Template diff is empty (`git diff master --stat -- web/templates/` ->
+   no output), so the chart container's accessible name/role
+   (`role="region" aria-label="Spending trends chart"`, wrapping
+   `#chart-trends`) is byte-identical to master — no regression possible
+   since TC1 never touches markup. Table region
+   (`role="region" aria-label="Spending trend values" tabindex="0"`)
+   confirmed Tab-reachable (see point 3).
+
+OBSERVATIONS (non-blocking):
+- Plotly's internal `el.layout.height` DOM-graph-div property can read as
+  JS `undefined` for a period after a second `Plotly.newPlot()` call in
+  one page session, even though the actual rendered pixel height
+  (`el.clientHeight`) is already correct at that instant (confirmed
+  1678px via direct probe, matching max(360, 41*38+120)). This is a
+  Plotly-library internal-state quirk (not present in DOM/visual state,
+  not an a11y-observable defect) that only surfaced because my first
+  height assertion happened to read the wrong property; switching to
+  `clientHeight` (the actually-rendered, user-visible dimension) resolved
+  it. Not a finding against TC1 — noted for anyone else writing chart
+  height assertions against this app.
+- The default (non-investigation) `category-trends` template variant
+  (web/templates/pages/insights.html, `{{define "category-trends"}}`)
+  has no `data-trends-toggle` button even though `applyTrendsCap()` still
+  hides rows past 12 in it (RF3 behavior, pre-existing, not touched by
+  this diff — confirmed identical on master). This is PRE-EXISTING and
+  out of TC1's scope; flagging as a backlog observation only, not a FAIL,
+  since it predates this change and TC1's diff doesn't reach that
+  template. The route actually exercised by the given ranges renders the
+  toggle-bearing `insights-trends-table` variant, so it wasn't reachable
+  in this audit's live surfaces anyway.
+
+Commands/artifacts (all under
+/tmp/claude-1000/-home-darrell-work-agents2--claude-worktrees-retired-couple-ui-layout-397a9a/5f1798f7-0ebe-4e24-a3e8-2690e59504b6/scratchpad/tc1-a11y/):
+  audit.cjs, full_output5.txt (21/21 functional PASS)
+  axe_audit.cjs, axe_output.txt, axe_result.json (0 violations x 16 states)
+  contrast_check.cjs (tick-label contrast both themes)
+  tab_reach.cjs (Tab order chart -> table)
+Server: `scripts/whatif-verify.sh start 8242` / `stop 8242` (isolated data
+copy at /tmp/budget2-whatif-verify-8242, torn down after the audit).
