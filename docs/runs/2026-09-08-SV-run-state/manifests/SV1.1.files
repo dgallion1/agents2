@@ -1,0 +1,3 @@
+internal/handlers/insights/investigation.go
+web/templates/pages/insights.html
+internal/handlers/insights/investigation_sv1_test.go

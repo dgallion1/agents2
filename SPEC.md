@@ -1701,3 +1701,72 @@ clean.
   live on :8080) made local master diverge — the ship rule stopped the
   deploy until that session merged (master 43ce76e); deployed to :8080 the
   same morning (pid 3512799, health v1.4.0-1105-g43ce76e).
+
+# Run SV — "Review these transactions" sorted by value (2026-09-08)
+
+Run prefix: **SV**. Target repo: `/home/darrell/bin/ai/budget2`, branch
+`feat/findings-sort-by-value` (worktree `.claude/worktrees/findings-sort`,
+off master 5a75ca1). User request, verbatim: "The 'Review these
+transactions' in budget2 should be sorted on value." One task, lead-direct
+under the lean exception; verification contract unchanged.
+
+## SV.0 Status — proceeding on defaults (user not present, 2026-09-08)
+
+Defaults taken, each reversible: (D1) "value" = the transaction's dollar
+amount, ordered by absolute amount, largest first — a review list exists to
+surface what matters, and the largest dollar is what a retiree reviews
+first; (D2) ties keep the previous order (date newest first, then hash, then
+finding type) so the list stays deterministic; (D3) the intro sentence says
+"largest amount first" so the order is discoverable without reading code.
+
+## SV.1 Territory
+
+- `internal/handlers/insights/investigation.go` — the `sort.Slice` in
+  `buildFindings` only.
+- `web/templates/pages/insights.html` — the one findings-count sentence.
+- `internal/handlers/insights/investigation_sv1_test.go` — new.
+Nothing else. No detector, model, storage or CSS changes.
+
+## SV.2 Task SV1 — findings ordered by absolute amount (Tier 2, checks: tests)
+
+Acceptance criteria:
+1. `buildFindings` returns findings ordered by `|Transaction.Amount|`
+   descending. Sign is ignored: a +$20 refund row sorts between a -$50 and a
+   -$5 row.
+2. Equal absolute amounts fall back to the pre-existing order: date newest
+   first, then hash ascending, then finding type ascending. The existing
+   stability test (`TestDI4FindingsCompleteStableAndAnchored`) still passes.
+3. `Preview` (first five) and `Remaining` are slices of that same ordering,
+   so the rendered page lists the five largest findings first and the
+   "View all" block continues in descending order. The test asserts on the
+   RENDERED `data-finding-hash` sequence, not just the slice.
+4. The findings intro sentence reads
+   "N findings in the selected period, largest amount first. A transaction
+   can have more than one finding type." Asserted on rendered output.
+5. The new test fails against the old comparator (mutation check by the
+   verifier: revert the comparator, the test must fail on criterion 1).
+6. `make check` in the worktree passes (vet, staticcheck, vuln, css-verify,
+   tests with `-count=1`).
+
+Tier rationale: ordering only — no value formatting, threshold, or
+arithmetic over rendered strings, so no `second` lane. Not a11y-bearing:
+markup unchanged except one sentence of body copy.
+
+## SV.3 Rulings
+
+(recorded as they happen, with the catching mechanism)
+No catches this run. Attempt 1 clean: checker-tests PASS with a command per
+criterion and three of its own mutation probes (comparator removed, sentence
+reverted, template `<ul>` order swapped — the last proving the rendered
+assertion is load-bearing). `gate.sh check SV1` exit 0; `gate.sh done` OK;
+`gate.sh stats`: first-attempt clean 1/1. Verifier observation for the
+backlog (pre-existing, out of scope): the Makefile `test` target runs
+`go test ./...` without `-count=1` except for the accounts package, so
+`make check` alone does not guarantee an uncached run.
+
+Close-out: budget2 commit a849ab8 on `feat/findings-sort-by-value`
+(worktree `.claude/worktrees/findings-sort`), not pushed. Full-site
+`checker-a11y` final pass deliberately skipped: no markup, style or
+interactive change — one sentence of body copy — and the rendered output is
+covered by the SV1 tests. Evidence snapshot in
+`docs/runs/2026-09-08-SV-run-state/`.
