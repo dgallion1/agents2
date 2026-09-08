@@ -2,7 +2,8 @@
 
 Evidence snapshot of `.swarm/` (gitignored) for the five-task run described
 in SPEC.md "Run BL" (the items deferred by runs LT and RF). Target repo:
-budget2, branch `feat/backlog-a11y` (commit 23a949c off master 43ce76e).
+budget2, branch `feat/backlog-a11y` (commit 23a949c off master 43ce76e), merged as 5a75ca1 (PR #99) and deployed
+to :8080 on 2026-09-08.
 
 - `ledger.tsv` — the shared LT+RF+BL ledger: BL1/BL2 (Tier 2, attempt 1),
   BL3/BL4 (Tier 1, lead-direct, accepted at attempt 2 after conceded

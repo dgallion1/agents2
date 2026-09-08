@@ -1718,7 +1718,8 @@ reverting BL1's template in a scratch copy makes the guarded tests FAIL;
   LT+RF+BL (BL alone 3/5: BL3 and BL4, both lead-direct, failed attempt 1
   on real primary-checker catches — rulings b and c). `make check` green;
   agents2 smoketest ALL PASS. Shipped as budget2 commit 23a949c on
-  `feat/backlog-a11y`, PR opened; not merged, not deployed. Catches by
+  `feat/backlog-a11y`, PR #99 merged 2026-09-08 as master 5a75ca1 and
+  deployed to :8080 the same day (pid 3628425, health v1.4.0-1107-g5a75ca1). Catches by
   mechanism: WORKER stop ×1 (ruling a, brief error), PRIMARY CHECKER
   FAIL ×2 (rulings b, c — both against the lead's own edits, both invisible
   to axe: a keyboard-only focus ring and single-glyph text), PRIMARY
