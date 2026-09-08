@@ -404,6 +404,19 @@ Record every catch in §10 with the mechanism (oracle / primary checker /
 second / judge / gate / worker). At run end: `swarm/gate.sh stats` and
 report the first-attempt clean rate verbatim.
 
+- **[U12.2 obs, backlog]** the anchor-form field's `aria-invalid`/`data-focus-target`
+  gating still keys on `$root.ErrorField` alone (not per-account), so an
+  add-anchor error flags every account's anchor field and focus lands on the
+  alphabetically-first — a real WCAG 3.3.1 mis-focus, but pre-existing
+  (byte-identical to master) and NOT stranding (anchor forms are outside the
+  Edit toggle, always visible). `ErrorAccountID` is now populated on the anchor
+  error paths, so the fix is a one-line template gate — fold into U15 or a
+  follow-up.
+
+- **[U13.2 obs, backlog]** the toast Undo button lacks `hx-sync`/`hx-disabled-elt`, so hammering many rapid CRUD cycles can double-submit or drop an Undo (both lanes: a client-timing artifact, no server race — server serializes on a private settings copy; also surfaced a pre-existing full-analysis perf pile-up under load). Add hx-sync to the Undo button in a follow-up.
+
+- **[U14.1 obs, backlog]** `HandleDeleteAllData`'s delete loop returns 200 "Deleted 0 files" if os.Remove fails post-guard (e.g. read-only dir) — honest body, refresh re-derives the true count, but a 200 on total remove-failure is a pre-existing gap in code U14 did not touch (checker-second). Backlog.
+
 ## 10. Rulings
 
 - **U-2026-09-03a** (scope ruling, lead, before any checker ran): "axe clean
@@ -489,6 +502,184 @@ report the first-attempt clean rate verbatim.
   write-only dead code (a second home for the cell text) — remove; (4) a
   "+0.0%" is constructible but not live. Candidates for a follow-up task
   after wave D; none block the row.
+- **RECONCILE-2026-09-05** (merge master→feat/ui-audit; checker-second FAIL
+  CONCEDED then fixed): the branch forked at PR #89, before CB7/CB8/CB9/#90/
+  #91/#92 shipped. Merge kept master's shipped semantics AND the U-run UI
+  (details in the merge commit body). Production code verified correct at
+  render time by checker-second (signed money + tokens, #90 one-month
+  stepping live on explorer+major-expenses, #91/#92 whatif, CB8 velocity,
+  U-run nav/range/net-savings/keyboard). The lead's re-pin of
+  TestKPIsTotalExpensesTile_...SignedNegative was WEAK — a bare
+  Contains("text-positive") is always true from the Income tile; fixed to a
+  fused `text-positive">-$1,234.56` assertion (color tied to the figure,
+  mutation-proven: a color revert now fails), matching the explorer sibling
+  pattern. Backlog (PRE-EXISTING in a61dc08, NOT merge defects, for wave D/
+  U15): range-picker preset buttons dead via Go html/template `ZgotmplZ`
+  attribute-name escaping (sitewide); explorer sort headers not
+  keyboard-operable (U15's div/th-onclick sweep); master's new #91/#92
+  whatif markup not yet U6-tokenized (hue literals in whatif-expense-rows /
+  healthcare bars).
+- **U-2026-09-05p** (catch — checker-a11y, U15 attempt 1, FAIL CONCEDED):
+  U15's sole bar is "axe ZERO violations sitewide". The worker's reveal probe
+  never opened the What-If result tabs, never typed in Explorer search, never
+  clicked a disclosure lacking aria-expanded — so 3 real, ordinarily-reachable,
+  axe-confirmed violations survived the sweep (all pre-existing/byte-identical
+  to master, but IN SCOPE for the final sweep): (1) `scrollable-region-focusable`
+  on the What-If tab scroll containers (`projection-breakdown.html:12`,
+  `tax-summary.html:42` — `max-h-96 overflow-y-auto` with no keyboard focus),
+  both themes; (2) `target-size` on Explorer `#clear-search-btn` (<24×24);
+  (3) dark-mode `color-contrast` 2.77:1 on the Healthcare "+ Add Person"
+  button. Attempt-2: fix all three (tabindex=0 + role/aria-label on the scroll
+  regions; min 24×24 on the clear button; a dark-compliant token on Add
+  Person), AND harden the U15 axe probe to open every What-If tab, type in
+  Explorer search, and open the add-person/other forms, so "sitewide clean" is
+  actually exercised. The 1024px-only /filemanager nav-contrast finding stays
+  backlog (off the 1440/390 methodology).
+- **U-2026-09-05o** (catch — checker-a11y, U13 attempt 1, FAIL CONCEDED):
+  the Undo toast (`whatif-removed-income-sources`, an hx-swap-oob div emitted
+  by the SHARED `renderWhatIfResults`/`renderResultsTemplate` that EVERY
+  mutation calls) keys on `.Settings.RemovedIncomeSources` (the persistent
+  removed-sources store, last entry). So any action — even an unrelated
+  healthcare PUT — re-surfaces a stale "Removed Rebuild Payroll" toast for a
+  past-session removal, violating the task's "a past-session removal must not
+  resurface" bar and ACCESSIBILITY.md #14. Fix (display-only signal, the U12
+  ErrorAccountID precedent — do NOT change plan-calc/remove logic): the toast
+  renders visible content ONLY when an income source was removed in the
+  CURRENT request. `handleWhatIfDeleteIncome` sets a display-only
+  JustRemovedIncome {ID,Name} threaded into the results-partial data; the
+  toast keys on `{{with .JustRemovedIncome}}` and renders hidden/empty
+  otherwise. Every other mutation (add/update/healthcare/sweep/restore) and
+  initial page load render the toast hidden. Restore (Undo) does NOT
+  re-show the toast. Add a render/handler test: a delete sets the signal and
+  shows the toast for the just-removed source; a non-remove mutation shows no
+  toast. The remove→restore lossless test and the toast a11y attributes (role
+  status, focusable Undo/dismiss, Esc, focus restore) already PASS — keep
+  them.
+- **U-2026-09-05n** (catch — checker-a11y, U12 attempt 1, FAIL CONCEDED):
+  U12 hid the per-account edit form and the add form behind disclosures. On
+  an edit-form validation error the errored account's panel stayed COLLAPSED
+  and focus landed on the unrelated Add form, stranding the error
+  (contradicting the task's own ask #3). Root cause (pre-existing, exposed by
+  the hiding): the accounts error model has NO account scoping —
+  handleUpdate's error path sets neither ErrorField nor an account id, and the
+  Add form's `data-focus-target` is UNCONDITIONAL, so it is always the first
+  (and only) match. A correct focus/reveal is impossible without scoping.
+  Ruling: "handlers untouched" bends to a DISPLAY-ONLY error-scope addition
+  (not a CRUD change). Attempt-2 contract:
+  1. Add `ErrorAccountID string` to the accounts page-data struct.
+  2. handleUpdate error path: capture formData and set BOTH
+     `data.ErrorField = formData.errorField` and `data.ErrorAccountID = id`;
+     the add-anchor error paths set `ErrorAccountID` to that account too;
+     handleCreate leaves it "" (the add form).
+  3. Add-form fields: gate `data-focus-target` on
+     `{{if and (eq .ErrorField "<f>") (eq .ErrorAccountID "")}}` — only when
+     the ADD form errored.
+  4. Edit-form field: gate on
+     `{{if and (eq $root.ErrorField "name") (eq $root.ErrorAccountID $acct.Account.ID)}}`
+     — only the erroring account.
+  5. Reveal the erroring form's panel server-side: render `#acct-edit-panel-{id}`
+     WITHOUT `hidden` when `eq $root.ErrorAccountID $acct.Account.ID` (and the
+     add panel open when ErrorField set && ErrorAccountID==""), so exactly one
+     field carries data-focus-target and the JS reveal+focus lands on it.
+  Re-verify: submit an edit error → THAT account's panel opens and its field
+  is focused; submit an add error → add panel opens, add field focused; other
+  panels stay collapsed. Handler CRUD tests stay green + a new handler test
+  for ErrorAccountID scoping.
+- **U-2026-09-04m** (catch — checker-a11y, U7 attempt 2, FAIL CONCEDED;
+  CONTRACT REWRITE per the two-same-class rule): attempt 2 fixed keyboard
+  operability but INTRODUCED a serious nested-interactive violation (axe
+  WCAG 4.1.2, absent on master) — the shared kpi-tile now emits
+  `role="button"` on the outer div, and the Budget tile
+  (`kpis.html:108`) passes `Clickable: true` UNCONDITIONALLY, so in its
+  no-target state the role="button" container wraps a real
+  `<a href="/whatif">Set a budget</a>`. Two attempts have now failed on the
+  same root: the "whole tile is one button" model cannot host the Budget
+  tile's dual nature (modal trigger AND, when no target is set, a link).
+  Per CLAUDE.md ("two attempts to the SAME defect class ⇒ rewrite the
+  contract, T18 precedent"), the fix is a contract change, not a third
+  variant of the same design:
+  **The Budget tile is a modal trigger ONLY when a budget target is set.**
+  At `kpis.html:108` set `Clickable` to `.Metrics.HasCombinedTarget`
+  (not the literal `true`). When a target is set the tile has no nested
+  link and stays a `role="button"` modal trigger (its DetailKey "expenses");
+  when no target is set it is a plain container whose SOLE interactive
+  element is the existing `<a href="/whatif">` — no role=button ancestor,
+  so no nested-interactive. The other four tiles are unchanged (pure modal
+  triggers, no nested link). Verify: axe nested-interactive = 0 sitewide
+  both themes; all previously-fixed controls still keyboard-operable; the
+  Budget tile opens the expenses modal by keyboard WHEN a target is set and
+  offers the keyboard-focusable /whatif link WHEN not. This is U7's last
+  attempt before a Tier-2 hard stop.
+
+- **U-2026-09-04l** (catch — mechanism: PRIMARY CHECKER checker-a11y, U7
+  attempt 1, FAIL CONCEDED): axe passed 18/18 (9 pages × 2 themes) but a
+  manual Tab-walk found the onclick→delegated-listener refactor left three
+  families of controls keyboard-unreachable — the 5 shared KPI-tile cards
+  (kpi-tile.html, from kpis.html), 4 Insights navigation targets
+  (insights.html data-navigate-href), and 12 Insights sortable `<th
+  data-sort-fn>` headers — all wired by a delegated click listener on a
+  non-focusable element (`tabIndex -1`, no role). axe cannot see a
+  click-listener-on-a-div, which is exactly why the lead's dispatch made
+  keyboard operability a manual check. The gap is a div/th-onclick pattern
+  (nominally U15's sweep), but U7 REWROTE the interaction layer on these
+  exact sites, so making the controls it rewired operable belongs with the
+  rewiring, not a later re-touch of the same JS. CONCEDE, attempt 2, scoped:
+  ONLY the sites U7 touched — sortable headers become real `<button>`; the
+  KPI tiles and Insights nav targets become keyboard-operable (native
+  `<button>`/link where the markup allows, else `tabindex="0"` + `role` +
+  an Enter/Space keydown handler in the page JS, focus-visible ring). Do
+  NOT expand into the rest of U15's onclick inventory. The modal
+  role=dialog/aria-modal gap stays U15 (checker agreed: observation, Esc
+  still works). The worker's genuine pre-existing axe fixes (modal
+  aria-labels, select names, scroll-region keyboard access) STAND.
+
+- **U-2026-09-04k** (oracle hardening + catches, U6 attempt 4 accepted):
+  both lanes PASS; the lead re-validated the oracle at both ends (renderError
+  reverted ⇒ checks 9+10 FAIL; successRate darkening reverted ⇒ check 9
+  FAILs deterministically). Two catches this attempt, both about oracle
+  ROBUSTNESS not the fix (the fix is correct):
+  (1) checker-a11y + checker-second independently found check 7's rendered
+  contrast sweep only reaches the darkened successRate tiers when a
+  stochastic Monte-Carlo draw lands in the 60–89% band, and never opened
+  what-if's hidden tabs or the dashboard's HTMX modals — so the darkened
+  tiers passed the oracle probabilistically while check 9 (emitter coverage)
+  backstops them deterministically every run. render_probe.js hardened to
+  activate every tab and open the HTMX modals before auditing (this ruling);
+  (2) the reconstructed oracle's error_probe.js accounts case used the wrong
+  form field names (date/amount vs anchor_date/anchor_amount) and hit a 200
+  validation branch instead of renderError's 404 — the worker corrected it,
+  both checkers verified the correction STRENGTHENED the case. Neither is a
+  fix defect; U6 is accepted. Waves B–D unblocked.
+
+- **U-2026-09-04j** (attempt-4 reopening + oracle extension, user-authorized
+  2026-09-04): the U-run lead worktree was removed during a cleanup with
+  SPEC.md uncommitted and `.swarm/` (gitignored on the agents2 side) on disk
+  only; the constitution, ledger and U5/U6/U14 oracles were reconstructed
+  from the session transcript (agents2 PR #10). U6 reopens as attempt 4 with
+  the ruling-i scope PLUS two oracle checks the attempt-1–3 oracle lacked
+  (they are why the renderError defect slipped a Tier-3 oracle):
+  - **check 9** `emitter_coverage.py`: every Tailwind colour class emitted
+    from Go or JS source (outside the template content globs) must have a
+    rule in the built `tailwind.css`. Catches a purge of a runtime-assembled
+    class directly, not via a rendered page.
+  - **check 10** `error_probe.js`: the accounts/whatif/major-expenses POST
+    and DELETE error paths must render a banner that is token-only (no hue
+    literal), has a non-transparent background and a visible border, and
+    passes axe color-contrast, in BOTH themes.
+  Scope for the worker: (1) `renderError` in the three handlers → token
+  classes (`bg-negative-soft`, `border-negative`, `text-negative`, matching
+  the template error idiom `bg-negative-soft/border-negative`), and update
+  the handler tests that pin the old `red-*` strings; (2) any other Go/JS
+  colour-class emitter that check 9 flags; (3) `successRateTextClass`/
+  `successRateBarClass` in render.go — darken the tiers that fail 4.5:1 on
+  white (lime-600/yellow-600 on a light `num` tile) to a compliant shade,
+  the SAME minimal-darkening fix ruling X8/2026-08-29e applied to the
+  verdict map, so check 7 is clean regardless of which success-rate tier
+  the data lands on (the attempt-1–3 oracle passed check 7 only because its
+  synthetic data never hit the lime tier — a data-dependent pass this
+  extension removes). Re-verify at Tier 3 (oracle + dual lane). This is the
+  last attempt before a second hard stop.
+
 - **U-2026-09-03i** (catch — mechanism: SECOND CHECKER, U6 attempt 3, FAIL
   CONCEDED; HARD STOP): `renderError()` in
   `internal/handlers/{accounts,whatif,majorexpenses}/handlers.go` builds an
@@ -642,9 +833,12 @@ Acceptance criteria (every one must be proven by a named command):
 5. Rendered check (checker, not worker): with
    `scripts/whatif-verify.sh start 8099` on a copy of live data, GET
    `/whatif/chart/projection?display_dollars=nominal` returns the trace
-   with 5 points for the current plan (raise y15; cuts y29, y33, y35,
-   y37) and the hover text for y29 matches the Guardrail Events list's
-   figures for that year after `formatMoney` rounding.
+   with one point per row of the rendered Guardrail Events list, in list
+   order, and each point's hover text matches that row's figures after
+   `formatMoney` rounding. Do NOT hardcode the live plan's events here:
+   the saved plan is mutable, and at verification time it produced ONE
+   event (cut, y36; `oracle.2.log`), not the five the brief originally
+   listed (ruling GM-2026-09-06g).
 
 Defect-history surfaces touched: money formatting shown to users (dual
 formatter class) → `second` named. Blast radius: one builder shared by two
@@ -696,7 +890,22 @@ endpoints → Tier 2.
   Guardrail Events list shows the trigger-month `Portfolio` figure while the
   marker sits at the year's chart balance (`projectionValueAtYear`), so the two
   surfaces differ by a few thousand dollars for the same event — by design per
-  GM.2, but a candidate for a shared figure if a user ever compares them.
+  GM.2, but a candidate for a shared figure if a user ever compares them;
+  (3) the raise marker path (`triangle-up`, `#22c55e`) was never exercised on
+  a live instance — the saved plan's `max_spending_pct` is 100, which forbids
+  raises by construction — so it rests on unit test 2b alone
+  (mutation-proven by checker-tests, but a rendered raise is still unseen).
+- **GM-2026-09-06g** (catch — mechanism: PRIMARY CHECKER checker-tests AND
+  SECOND CHECKER checker-second, independently, GM1 attempt 2; a brief-level
+  error): criterion 5 hardcoded the live plan's guardrail settings
+  (20/10/20/10, floor 75 / ceiling 120) and events (raise y15; cuts y29, y33,
+  y35, y37). The saved plan at verification time was 10/10/20/10, floor 70 /
+  ceiling 100, return 0, yielding one cut at y36; both checkers verified the
+  criterion's substance against the actual event and reported the fixture as
+  a finding against the brief. Criterion 5 rewritten above to assert
+  list-vs-chart agreement without naming events. Lesson: never pin a live,
+  mutable data file's figures in a constitution — derive the expectation from
+  a second surface on the same instance, as the post-hoc oracle does.
 - **GM-2026-09-06f** (harness — mechanism: GATE schema check): both checkers
   wrote a blank line where the verdict schema requires a literal `---`
   separator; each checker corrected its own file on request. The checker agent
@@ -1933,3 +2142,72 @@ stays the transparent Tailwind one); mouse click on a button shows no ring
   enumerate every surface (neutral card, dark card, accent fill, header)
   and every existing focus rule (utilities AND bespoke selectors) before
   writing it, and use a two-tone ring so no single background can hide it.
+
+# Run SV — "Review these transactions" sorted by value (2026-09-08)
+
+Run prefix: **SV**. Target repo: `/home/darrell/bin/ai/budget2`, branch
+`feat/findings-sort-by-value` (worktree `.claude/worktrees/findings-sort`,
+off master 5a75ca1). User request, verbatim: "The 'Review these
+transactions' in budget2 should be sorted on value." One task, lead-direct
+under the lean exception; verification contract unchanged.
+
+## SV.0 Status — proceeding on defaults (user not present, 2026-09-08)
+
+Defaults taken, each reversible: (D1) "value" = the transaction's dollar
+amount, ordered by absolute amount, largest first — a review list exists to
+surface what matters, and the largest dollar is what a retiree reviews
+first; (D2) ties keep the previous order (date newest first, then hash, then
+finding type) so the list stays deterministic; (D3) the intro sentence says
+"largest amount first" so the order is discoverable without reading code.
+
+## SV.1 Territory
+
+- `internal/handlers/insights/investigation.go` — the `sort.Slice` in
+  `buildFindings` only.
+- `web/templates/pages/insights.html` — the one findings-count sentence.
+- `internal/handlers/insights/investigation_sv1_test.go` — new.
+Nothing else. No detector, model, storage or CSS changes.
+
+## SV.2 Task SV1 — findings ordered by absolute amount (Tier 2, checks: tests)
+
+Acceptance criteria:
+1. `buildFindings` returns findings ordered by `|Transaction.Amount|`
+   descending. Sign is ignored: a +$20 refund row sorts between a -$50 and a
+   -$5 row.
+2. Equal absolute amounts fall back to the pre-existing order: date newest
+   first, then hash ascending, then finding type ascending. The existing
+   stability test (`TestDI4FindingsCompleteStableAndAnchored`) still passes.
+3. `Preview` (first five) and `Remaining` are slices of that same ordering,
+   so the rendered page lists the five largest findings first and the
+   "View all" block continues in descending order. The test asserts on the
+   RENDERED `data-finding-hash` sequence, not just the slice.
+4. The findings intro sentence reads
+   "N findings in the selected period, largest amount first. A transaction
+   can have more than one finding type." Asserted on rendered output.
+5. The new test fails against the old comparator (mutation check by the
+   verifier: revert the comparator, the test must fail on criterion 1).
+6. `make check` in the worktree passes (vet, staticcheck, vuln, css-verify,
+   tests with `-count=1`).
+
+Tier rationale: ordering only — no value formatting, threshold, or
+arithmetic over rendered strings, so no `second` lane. Not a11y-bearing:
+markup unchanged except one sentence of body copy.
+
+## SV.3 Rulings
+
+(recorded as they happen, with the catching mechanism)
+No catches this run. Attempt 1 clean: checker-tests PASS with a command per
+criterion and three of its own mutation probes (comparator removed, sentence
+reverted, template `<ul>` order swapped — the last proving the rendered
+assertion is load-bearing). `gate.sh check SV1` exit 0; `gate.sh done` OK;
+`gate.sh stats`: first-attempt clean 1/1. Verifier observation for the
+backlog (pre-existing, out of scope): the Makefile `test` target runs
+`go test ./...` without `-count=1` except for the accounts package, so
+`make check` alone does not guarantee an uncached run.
+
+Close-out: budget2 commit a849ab8 on `feat/findings-sort-by-value`
+(worktree `.claude/worktrees/findings-sort`), not pushed. Full-site
+`checker-a11y` final pass deliberately skipped: no markup, style or
+interactive change — one sentence of body copy — and the rendered output is
+covered by the SV1 tests. Evidence snapshot in
+`docs/runs/2026-09-08-SV-run-state/`.
