@@ -1,0 +1,158 @@
+VERDICT: PASS
+CHECKER: checker-a11y
+FAMILY: anthropic
+TASK: LT6
+ATTEMPT: 1
+---
+Scope: budget2 worktree /home/darrell/bin/ai/budget2/.claude/worktrees/layout-tightening,
+branch feat/layout-tightening off master c0b8476. LT6 territory per manifest:
+web/templates/pages/insights.html (#insights-supporting hunk), web/static/js/insights.js,
+web/static/css/styles.css, internal/templates/render_insights_lt6_test.go. Verified with
+`/usr/bin/git diff master -- <path>` (never rtk). Foreign/already-accepted hunks noted but
+not judged: the 2-line price-creep sentence under #insights-findings (LT5), and
+insights-investigation.html (LT5) — untouched here.
+
+Render method: real render via the app's own server. `scripts/whatif-verify.sh start 8106`
+(cold-start server on a throwaway data copy, isolated backups), served the actual built
+templates + the actual `web/static/css/styles.css` and `tailwind.css` (rebuilt via
+`make css`, verified via `make css-verify`). Audited both `/insights` and
+`/insights?start=2026-06-01&end=2026-06-30`. Playwright at
+/home/darrell/.npm/_npx/e41f203b7505f1fb/node_modules/playwright, chromium-1243,
+`--no-sandbox`; dark via `documentElement.classList.toggle('dark', true)` + 400ms wait.
+`scripts/whatif-verify.sh stop 8106` run at the end — confirmed clean (never touched
+:8080/:8081).
+
+## 1. Automated axe (wcag2a/2aa/21aa/22aa)
+Script: /tmp/claude-1000/.../scratchpad/lt6-a11y/audit.js — for both viewports
+(1280x1000, 390x900) × both themes × both URLs × each of the 5 tabs activated in turn
+(plus the default/trends state) × all `<details>` forced open. 48 axe.run() calls total.
+`node audit.js` → every line printed `violations: 0`; final line `TOTAL VIOLATIONS: 0`.
+Full JSON dumped to violations.json (empty array). Zero violations introduced by LT6 in
+any theme/viewport/tab combination.
+
+## 2. WAI-ARIA tabs pattern (points 3, 9)
+Structural check (manual.js, `STRUCT` output) on the rendered page:
+- `<div role="tablist" aria-label="Supporting charts and tables">` — accessible name present.
+- 5× `<button role="tab" id="insights-tab-{key}" aria-controls="insights-panel-{key}"
+  aria-selected>` — every `aria-controls` resolves to a real panel id (verified in
+  render_insights_lt6_test.go too, `go test ./internal/templates/... -run
+  TestRenderInsightsSupportingTabs -v` → PASS).
+- 5× `<div role="tabpanel" id="insights-panel-{key}" aria-labelledby="insights-tab-{key}"
+  tabindex="0">` — every `aria-labelledby` resolves to a real tab id.
+- Roving tabindex confirmed live: default state trends tab `tabindex=0`, other 4 at `-1`;
+  after Home/End/Arrow moves, exactly one tab is `tabindex=0` at all times (ROVING TABINDEX
+  dump in manual.js output).
+- Keyboard trace: ArrowRight from `insights-tab-trends` → focus AND activation moved to
+  `insights-tab-income` (`aria-selected=true`, `insights-panel-income.hidden=false`,
+  `insights-panel-trends.hidden=true`); End → `insights-tab-pace` focused+selected; Home →
+  `insights-tab-trends`; Enter on a focused-but-inactive tab (`anomalies`) activated it
+  (`aria-selected=true`, panel unhidden). Click and Space are implemented identically in
+  insights.js (web/static/js/insights.js:396-401, keydown handler checks
+  `'Enter' || ' ' || 'Spacebar'`).
+- Tab key from the active tab (`insights-tab-trends`, focused via Home) landed
+  `document.activeElement` INSIDE `insights-panel-trends` (ancestorPanelId matched) — not
+  on a hidden panel's content, confirming hidden panels (native `hidden` attribute) are
+  correctly removed from both the accessibility tree and the tab order.
+- Focus-visible outline present in both themes on `[data-ins-tab]:focus-visible`
+  (styles.css:225, added alongside the existing `[data-wf-tab]:focus-visible` rule — reuses
+  the same theme-aware outline, no new color introduced): light `rgb(79,70,229)` solid 2px,
+  dark `rgb(165,180,252)` solid 2px. Contrast vs the real computed body background
+  (`rgb(243,244,246)` light / `rgb(17,24,39)` dark, measured live via getComputedStyle, not
+  assumed): light 5.71:1, dark 8.90:1 — both ≫ 3:1 (point 7 UI-component clause).
+- Active-vs-inactive distinguishable by more than color (point 8): inactive tabs carry
+  `border-b-2 border-transparent`; the active tab's `.wf-tab-active` class (JS-toggled, same
+  class already used and accepted for What-If tabs) sets `border-bottom-color` to the same
+  indigo as the text — an underline appears/disappears, not just a text-color swap. This is
+  the pre-existing, already-accepted What-If tab convention (styles.css:213-220), reused
+  verbatim per ruling LT-2026-09-07d.
+
+## 3. Contrast, points 7/12, both themes, incl. hover
+Live computed colors (colors.js), fed through WCAG relative-luminance contrast:
+- Inactive tab text `rgb(75,85,99)`(light)/`rgb(243,244,246→ actually rendered
+  text-gray-400 rgb(156,163,175) at rest, hover swaps to gray-100)` on real body bg:
+  light inactive vs body 6.87:1; dark inactive vs body 6.99:1.
+- Active tab text (wf-tab-active) vs body: light 5.71:1; dark 5.95:1.
+- Hover text (`text-gray-700`/`dark:text-gray-100`, confirmed live via `page.hover()`):
+  light 9.37:1; dark 16.12:1.
+All ≥ 4.5:1 in both themes (point 7/12). axe's color-contrast rule also ran clean across
+all 48 scan states in section 1, corroborating.
+Note: LT-2026-09-07d already caught and fixed a spec-level contrast defect (originally
+specified `text-gray-500 dark:text-gray-300`, 4.39:1, would have FAILED point 7) before
+this attempt — the worker substituted the already-accepted What-If gray-600/400 pair
+instead of guessing; that ruling is why the shipped code passes.
+
+## 4. Point 11 — chart text alternative, panel isolation
+`insights-panel-trends` (web/templates/pages/insights.html:161-172) still contains
+`#chart-trends` immediately followed by `insights-trends-table`/`category-trends` inside
+the SAME panel — byte-identical to master's inner markup (`git diff master` shows only the
+tabpanel `<div>` wrapper added around the pre-existing card, confirmed against
+`git show master:web/templates/pages/insights.html` lines 152-163). When another tab is
+active, `insights-panel-trends.hidden === true` (native `hidden` attribute set by JS, not
+`aria-hidden` — confirmed in section 2's Tab-key trace: hidden content is unreachable by
+Tab and absent from axe's accessible-tree scans, which is why activating each tab and
+re-running axe was necessary and found nothing).
+
+## 5. Point 16 — JS-disabled parity
+`node nojs.js` (Playwright context `javaScriptEnabled: false`) against the live server:
+all 5 `[role="tabpanel"]` elements report `display: "block"`, `hasAttribute('hidden') ===
+false`; `document.querySelectorAll('[aria-selected="true"]').length === 0`. Matches
+render_insights_lt6_test.go's static assertions (`go test -run
+TestRenderInsightsSupportingTabs -v` → PASS: no `hidden` attribute, no
+`aria-selected="true"` in server output). Confirms progressive enhancement: JS off ⇒ every
+panel visible, no assistive-tech state contradicts the visual page.
+
+## 6. Point 10 — HTMX swap + tab persistence
+`node htmxswap.js`: activated the Anomalies tab (persisted to
+`localStorage['insightsActiveTab']`), then clicked the "2M" preset button, which triggers
+the PRE-EXISTING `hx-get="/insights" hx-target="#insights-wrapper" hx-swap="outerHTML"`
+form submit (insights.html:6-8, not owned by or modified by LT6). After the swap:
+`aria-selected="true"` was on `insights-tab-anomalies` again (tab state correctly
+re-applied via insights.js's `htmx:afterSwap` listener, web/static/js/insights.js:387-393)
+and `localStorage` still read `"anomalies"`. Focus landed on the newly-rendered preset
+button itself (a sensible, visible, operable control inside the swapped region) —
+consistent with htmx's own focus-preservation on outerHTML swaps, which is pre-existing
+platform/framework behaviour, not something LT6 wrote. OBSERVATION, not a FAIL: LT6 did
+not change the swap mechanism or make focus handling worse; it added the one piece of new
+behavior (tab-state re-application) and that piece worked correctly.
+
+## 7. Point 1 — heading structure
+`git show master:web/templates/pages/insights.html | grep '<h[1-6]'` vs the branch: same
+ordered list of headings (h1 Insights; h2 What changed; h3 Largest contributors; h2 Review
+these transactions; h2 Detected recurring spending; h3×3; h2 Supporting charts and tables;
+h3×5 Spending trends/Income sources/Anomalies/Price Creep/Spending pace) — only line
+numbers shifted from the inserted tablist markup, no heading added or removed, and no
+heading exists inside the tablist itself. Live-rendered heading dump (manual.js) confirms
+the same set on the actual page including anomalies-section/pricecreep-section's h3s (LT6
+does not own those files). Exactly one `<h1>` (`H1: Insights`). Landmarks
+main/nav/header/footer each = 1.
+
+## 8. Point 15 — no new motion
+`git diff master -- web/static/css/styles.css` adds exactly one line:
+`[data-ins-tab]:focus-visible,` appended to the existing focus-outline selector list
+(styles.css:225) — no new `transition`/`animation`/`@keyframes`. The new tab buttons'
+class list (`px-3 py-2 text-sm font-medium border-b-2 border-transparent text-gray-600
+dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-100`) carries no
+`transition-*` utility, so the active/inactive swap is an instant attribute/class change,
+not an animation — no `prefers-reduced-motion` concern is introduced.
+
+## Build/test evidence
+- `go build ./...` — clean (exit 0).
+- `go vet ./...` — clean (exit 0).
+- `go test ./internal/templates/... ./internal/handlers/insights/...` — ok (both packages).
+- `go test ./internal/templates/... -run TestRenderInsightsSupportingTabs -v` — PASS.
+- `go test ./internal/handlers/insights/... -run TestDI4InvestigationRendered -v` — PASS
+  (LT6's neighbor-file DI4 fixture pinning `id="insights-supporting"` unaffected).
+- `make css` then `make css-verify` — "tailwind.css is up to date".
+
+## FAILURES
+None found in LT6's territory.
+
+## OBSERVATIONS
+- Point 10 focus-after-swap lands on the re-rendered preset button rather than inside
+  `#insights-supporting`; this is pre-existing insights.js/htmx behavior (LT6 did not touch
+  the swap target or its focus handling), not a regression. Non-blocking.
+- The price-creep sentence hunk in #insights-findings and insights-investigation.html are
+  LT5 territory (already accepted per the task brief) — not audited here as LT6 findings;
+  mentioned only for provenance since they ride along in the same `git diff master`.
+- LT2 (dashboard charts grid, charts.js) is under separate verification per the task brief
+  and was not touched or audited by this LT6 pass.

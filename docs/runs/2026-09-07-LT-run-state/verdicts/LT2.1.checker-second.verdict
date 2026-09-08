@@ -1,0 +1,127 @@
+VERDICT: PASS
+CHECKER: checker-second
+FAMILY: adversarial
+TASK: LT2
+ATTEMPT: 1
+---
+Scope note: dashboard.html toolbar hunk above #kpis-container (Import
+button/drop-zone/date-filter merge) is LT1 territory, already verified —
+attributed, not evaluated here. LT2's own diff is confined to the "Charts
+Grid" block (Major Expense card + charts.js list-container insertion), per
+`/usr/bin/git diff master --stat` (dashboard.html 193 lines changed
+spanning both LT1's and LT2's regions; charts.js 12 lines) and the isolated
+diff of the charts-grid hunk shown below.
+
+1. Data parity (server untouched).
+   `/usr/bin/git diff master --stat -- internal/` → empty (no output) —
+   server code untouched.
+   `curl http://localhost:8104/dashboard/charts/data/major-expense?start=2026-01-01&end=2026-08-27`
+   vs same on master baseline (:8114, cp -a copy with
+   `git checkout master -- web/templates web/static/js`): `diff` → no
+   output, both files 2430 bytes. Byte-identical.
+
+2. Rendered-list parity (Playwright, #chart-major-expense .data +
+   button textContent whitespace-normalised, same data copy, range
+   2026-01-01..2026-08-27):
+   - donut `data[0].labels`/`values`: identical arrays branch vs master
+     (9 categories incl. "Other", values match to the cent).
+   - #chart-major-expense-breakdown: 29 rows, ordered text identical
+     branch vs master (e.g. row1 "Furniture & appliances$2,794.27 4.0%"
+     through row29 "Eating out — Applebee's$66.32 0.09%").
+   - #chart-major-expense-credits: 2 rows identical branch vs master
+     ("Disputed charges (PB Digital / Cybernet)$0.00", "Ignore-$3.00").
+   Re-verified after an HTMX range change (click preset 3M): exactly one
+   header div and one `.grid` list container in
+   #chart-major-expense-breakdown post-refresh (no duplication), row
+   count updated to 19 for the new range.
+
+3. Dual-formatter / no new formatting path.
+   `/usr/bin/git diff master -- web/static/js/charts.js` shows only: (a)
+   one `list` div created and appended per function, class
+   `grid grid-cols-1 md:grid-cols-2 gap-x-6`; (b) `target.appendChild(row)`
+   → `list.appendChild(row)`. `fmtMoney` (`Intl.NumberFormat('en-US', …)`)
+   and the `pctText` `toFixed(2)/toFixed(1)` branch are byte-identical to
+   master (verified by reading the full function body — no diff hunk
+   touches those lines). No `innerHTML` anywhere in either function
+   (createElement/textContent/appendChild only).
+
+4. Behaviour.
+   - Click on first breakdown row (branch, :8104): opens
+     `#major-expense-drilldown-container` with `<h3 id="major-expense-
+     drilldown-title">Furniture & appliances</h3>`. Same click on master
+     (:8114): heading "Furniture & appliances". Match.
+   - Keyboard: focusing the first breakdown button then pressing Tab
+     moves focus to the second button in DOM order (`btns[1] ===
+     document.activeElement` → true). Rows are natively tabbable
+     `<button>`s, order preserved.
+   - Donut-wedge synthetic Playwright click (`page.mouse.click` at
+     multiple offsets across the pie, with a `plotly_click` listener
+     counting fires): 0 fires on BOTH branch (:8104) and master (:8114)
+     — identical (null) behaviour before and after the change. This is
+     either a headless-synthetic-click limitation of this Plotly build
+     or a pre-existing condition; since master reproduces it exactly,
+     it is not a regression LT2 introduced and is out of this task's
+     scope (the donut chart/click wiring is not in the LT2 file
+     ownership list). Reported as an OBSERVATION for the backlog, not a
+     FAIL.
+   - "View chart data" `<details>` placement: `chart.parentElement`
+     (the plain wrapper div LT2 added, per ruling LT-2026-09-07c) is the
+     `<details>`'s parent (`detailsParentIsChartWrapper: true`), and that
+     wrapper's parent is the inner two-column grid
+     (`grid grid-cols-1 lg:grid-cols-2 gap-6 items-start`) — i.e. the
+     details is inside the left CELL, not a third grid item. Confirmed
+     at 1280/390/1024/768, light and dark.
+
+5. Layout (1280, both themes; verify server :8104 vs master :8114).
+   - Card width == grid width: `cardWidth: 1248, gridWidth: 1248`
+     (light and dark identical since layout is CSS-driven, spot-checked
+     dark separately for no-overflow below).
+   - Spending Trend / Top Spending tops equal: `trendTop: 2418, topTop:
+     2418`; each card width 612 (half of 1248); Cumulative Balance card
+     width 1248 (full).
+   - Grid height: branch 1384px, master 2088px → 1384/2088 = 66.3% ≤ 70%
+     ceiling per ruling LT-2026-09-07c (which itself measured 1384px —
+     exact match).
+   - No overflow: `body.scrollWidth <= innerWidth` true at 1280 (light
+     and dark), 390, 1024, 768; no element under `main` has
+     `getBoundingClientRect().right > innerWidth` at any of those widths.
+   - 390: single column (viewport-driven via `lg:`/`md:` breakpoints,
+     untouched by this task); no horizontal overflow confirmed above.
+
+6. axe (branch :8104).
+   - `npx @axe-core/cli http://localhost:8104/dashboard` (wcag2a/aa,
+     2.1a/aa, 2.2aa tags), 1280 light: "0 violations found!"
+   - Playwright + axe-core 4.13.0 injected, 1280 dark / 390 light / 390
+     dark: only violation family is `color-contrast`, and EVERY flagged
+     target is in the KPI region above the charts grid (`.space-y-1.
+     min-w-0`, `#dashboard-budget-details`, `button[data-kpi-detail=…]`,
+     `.border-gray-200.dark\:border-gray-700.min-w-0`) — none targets
+     `#chart-major-expense-breakdown`, `#chart-major-expense-credits`, or
+     any element inside the Major Expense card. Confirmed pre-existing:
+     same run against master (:8114) at 390 dark shows the identical
+     19-node `color-contrast` violation set (same selectors); LT2 owns
+     none of the flagged elements. OBSERVATION for backlog (KPI-region
+     dark-mode contrast), not an LT2 defect — those elements are not in
+     LT2's file-ownership list (`pages/dashboard.html` charts grid only,
+     `static/js/charts.js`).
+
+7. Build/tests/css.
+   `go build ./... && go vet ./...` clean. `go test
+   ./internal/handlers/dashboard/... ./internal/templates/...` → both
+   `ok`. `node --test web/static/js/*.test.cjs` → 10 pass, 0 fail
+   (existing `page-refresh.test.cjs`; no charts.js unit test exists in
+   either master or branch, so nothing regressed there — plain
+   `node --test web/static/js/` errors on module resolution regardless
+   of branch, a Node CLI/glob quirk unrelated to this task).
+   `make css-verify` → "tailwind.css is up to date"; `/usr/bin/git diff
+   master --stat -- web/static/css/tailwind.css` → empty, consistent
+   with the manifest's "unchanged bytes" note (no new Tailwind classes
+   were introduced beyond ones already compiled in).
+
+No defect found inside LT2's scope (`pages/dashboard.html` charts-grid
+region, `static/js/charts.js` `renderMajorExpenseBreakdown`/
+`renderMajorExpenseCredits`). Two items reported as OBSERVATIONS for the
+backlog only (donut wedge synthetic-click no-op identical on master; KPI
+region dark-mode color-contrast pre-existing) — neither is an LT2
+regression, both reproduce byte-for-byte on the master baseline captured
+in this same session.

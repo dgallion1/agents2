@@ -1,0 +1,232 @@
+VERDICT: PASS
+CHECKER: checker-tests
+FAMILY: anthropic
+TASK: RF3
+ATTEMPT: 1
+---
+Read-only verification. No project file was edited by me. Mutations were run in a
+cp -a copy at
+/tmp/claude-1000/-home-darrell-work-agents2--claude-worktrees-retired-couple-ui-layout-397a9a/5f1798f7-0ebe-4e24-a3e8-2690e59504b6/scratchpad/rf3-tests
+whose .git pointer file was renamed to .git-disabled first, so no git command could
+reach the real worktree index. Servers: branch on :8144 (worktree), master baseline
+on :8154 (scratch copy with `git archive master web tailwind.config.js | tar -x`);
+both stopped afterwards via scripts/whatif-verify.sh stop.
+
+CRITERION 1 — build/vet/tests green bare; fixtures unmodified.  PASS
+  $ go build ./...            -> BUILD_EXIT=0 (no output)
+  $ go vet ./...              -> VET_EXIT=0 (no output)
+  $ go test -count=1 ./internal/templates/... ./internal/handlers/insights/...
+      ok  budget2/internal/templates          1.349s
+      ok  budget2/internal/handlers/insights  1.242s
+    (re-run after RF2's cmd/server test edit landed mid-check; still green)
+  $ go test -count=1 ./...   -> no FAIL lines at all (whole repo green at the time
+    of the run, before RF2's cmd/server/cross_money_di5_test.go edit landed)
+  $ /usr/bin/git diff master --stat -- internal/templates/ internal/handlers/insights/
+      (empty) -> DI1/DI2/DI4/DI5/LT5/LT6 fixtures unmodified; the RF3 test file is
+      untracked/new (render_insights_rf3_test.go).
+  $ /usr/bin/git diff master --stat -- internal/
+      internal/handlers/dashboard/handlers_http_test.go | 12 +++---
+      -> the ONLY tracked internal/ edit, and it is RF2's (foreign). At end of run
+      cmd/server/cross_money_di5_test.go also appeared modified — RF2's second test
+      edit, foreign, attributed not failed.
+  $ go test -count=1 -run TestRF3 -v ./internal/templates/...
+      PASS: TestRF3InsightsLeadHistoryAvailable / ...HistoryUnavailableSingular /
+            ...ZeroFindings / TestRF3TrendsTableCap (+2 subtests) — 4 tests, 0 skips.
+
+CRITERION 2 — the new test asserts 2(i)-(iv) and FAILS against master's templates. PASS
+  Read internal/templates/render_insights_rf3_test.go in full. (i) exact-substring
+  match of the whole lead sentence incl. the dollar-change span, plus a lead-follows-
+  #period-context ordering assert, plus `strings.Count(out, '<span class="num">$7,803.64</span>') >= 2`
+  (lead and Retained-estimates line are the same .Monthly field). (ii) exact substring
+  with singular "1 transaction", plus negative asserts on "1 transactions" and
+  "versus the prior period". (iii) exact substring with "No transactions to review".
+  (iv) renders "insights-trends-table": data-trend-overflow count == 3 at 15 rows,
+  per-row identity check that rows 12..14 carry it and 0..11 do not, toggle present,
+  text "Show all 15 categories", aria-expanded="false", no "hidden" anywhere; and a
+  12-row subtest asserting no toggle and no overflow marker.
+  MUTATION KILLS (scratch copy):
+  - master web/templates restored (git archive master):
+      FAIL TestRF3InsightsLeadHistoryAvailable / ...Singular / ...ZeroFindings /
+      TestRF3TrendsTableCap  -> all four fail on master. FAIL/FAIL/FAIL.
+  - revert ONLY the whitespace trim in the insights-dollar-change define (restore
+    master's leading/trailing newlines, branch templates otherwise):
+      --- FAIL: TestRF3InsightsLeadHistoryAvailable   (only that one; the two
+      no-history tests correctly still pass) -> the trim is load-bearing and proven.
+  - `{{if ge $trendIdx 12}}` -> 13:
+      --- FAIL: TestRF3TrendsTableCap/fifteen_categories_cap_at_twelve
+  - `{{if gt (len .CategoryTrends) 12}}` -> 11:
+      --- FAIL: TestRF3TrendsTableCap/twelve_categories:_no_toggle,_no_overflow
+  - lead `{{formatMoney .Monthly}}` -> `.Annual`:
+      --- FAIL: ...HistoryAvailable and ...Singular (ZeroFindings survives only
+      because Monthly==Annual==0 in that fixture)
+  - branch files restored: ok budget2/internal/templates 0.053s
+
+CRITERION 3 — lead figures equal the section figures; no-history branch.  PASS
+  $ curl -fsS "http://localhost:8144/insights?start=2026-01-01&end=2026-08-27"
+    #insights-lead rendered:
+      Net spending this period: <span class="num">$70,166.53</span>
+      (<span class="num">+$24,043.53 increase</span> versus the prior period).
+      52 transactions to review; detected recurring spending is about
+      <span class="num">$7,803.64</span> a month.
+    "Selected period:" in #insights-change  = $70,166.53   -> EQUAL to the lead's $X
+    "Retained estimates:" monthly           = $7,803.64    -> EQUAL to the lead's monthly
+    "Dollar difference:" change span        = +$24,043.53 increase -> EQUAL to the lead's
+    "52 findings in the selected period"    -> matches "52 transactions to review"
+  Second range ?start=2026-06-01&end=2026-06-30:
+    lead nums ['$9,892.53','-$24.32 decrease','$6,337.00'];
+    Selected period $9,892.53; Dollar difference -$24.32 decrease;
+    Retained monthly $6,337.00; findings line 7 (lead says "7 transactions to review").
+  No-history range ?start=2025-09-01&end=2026-08-27&preset= :
+    lead = 'Net spending this period: <span class="num">$101,783.33</span>. 73
+    transactions to review; ...' -> "has parenthetical: False";
+    #insights-change contains <p class="text-base ...">Not enough history to compare</p>
+    ("Not enough history in #insights-change: True"). Selected period $101,783.33 ==
+    lead's $X; Retained monthly $7,803.64 == lead's monthly.
+  Zero-findings range ?start=2020-01-01&end=2020-01-02&preset= :
+    lead = '...<span class="num">$0.00</span>. No transactions to review; detected
+    recurring spending is about <span class="num">$0.00</span> a month.'
+
+CRITERION 4 — insights-dollar-change whitespace trim is invisible to every caller. PASS
+  Callers enumerated by grep (grep -rn 'insights-dollar-change' web/ internal/): the
+  lead (new), the "Dollar difference" <p> (insights.html:49), the contributor <span>
+  (insights.html:56), and the trends-table change <td> (insights-investigation.html:82).
+  Raw-HTML text compare (tags stripped, whitespace normalised), branch :8144 vs
+  master :8154, same range, same data:
+    DollarDiff EQUAL: True   'Dollar difference: +$24,043.53 increase · +52.1%'
+    contributors n: 3 3 EQUAL: True
+    trend change cells n: 41 41 EQUAL: True
+    trend full rows EQUAL: True (41 vs 41)
+  Rendered innerText compare (Playwright, 1280x900, both servers):
+    CHANGE_RAW_EQUAL true   (byte-identical innerText of #insights-change, incl. the
+      "+$24,043.53 increase · +52.1%" spacing and the contributor line breaks)
+    ROW_EQUAL true / CELL_EQUAL true for the "Lucid payment" trends row
+      ("Lucid payment\t$11,063.01\t$0.00\t+$11,063.01 increase · new")
+    Element widths differ (branch 214/168/... vs master 250/193/...) — that is RF1's
+    17px root bump (foreign territory), not a spacing regression from the trim.
+  Whole-wrapper visible-text diff (all <details> forced open, branch vs master):
+    only-in-branch = the lead sentence, "About these findings", the split
+    "Retained estimates: $7,803.64 monthly · $93,643.68 annual.", "About these
+    estimates", "Totals sum displayed estimates. ...", "Show all 41 categories";
+    only-in-master = the pre-split combined retained line + the 29 trends rows the JS
+    cap hides. Nothing else lost or altered.
+
+CRITERION 5 — trends cap behaviour.  PASS
+  Playwright, :8144, ?start=2026-01-01&end=2026-08-27, 1280x900, zero pageerrors.
+    DEFAULT: total 41, visible 12, hidden 29, data-trend-overflow 29;
+             button {tag:"BUTTON", type:"button", text:"Show all 41 categories",
+             aria-expanded:"false"}
+    (cap applies at init WITHOUT clicking the trends tab: the ?start=2026-06-01 run
+     never clicked the tab and reported total 33 / visible 12 / toggle true)
+    AFTER_EXPAND:   visible 41, hidden 0, aria "true", text "Show the largest 12",
+                    table.dataset.expanded "true"
+    AFTER_COLLAPSE: visible 12, hidden 29, aria "false", text "Show all 41 categories"
+    sort by current (click th button[data-sort="current"]): visible 12, hidden 29,
+      visCur [11063.01,8679.69,6836.2,6074.84,4382,3314.11,2902.56,2869.4,2794.27,
+      2323.3,2177.13,2063.52]; TOP12_DESC_MATCH true (equals the 12 largest of all 41)
+    sort by current again (ascending): visible 12, ASC_MATCH true (the 12 smallest)
+    sort by category: visible 12, first ["Amazon","Anthropic API (old)","Auto — ..."];
+      then click toggle -> visible 41, hidden 0, aria "true", "Show the largest 12"
+    keyboard: activeElement after focus() = BUTTON; Enter -> visible 12 /
+      "Show all 41 categories" / aria false; Space -> visible 41 /
+      "Show the largest 12" / aria true. Real <button type="button">, both keys work.
+    chart data unaffected: two bar traces, n = 41 and 41.
+    HTMX preset 6M swap: total 40, visible 12, hidden 28, button "Show all 40
+      categories", aria "false" -> cap re-applied after the swap.
+  javaScriptEnabled:false context, same URL:
+    "JS OFF: tr in html 41, tr with hidden attr 0, locator all 41, locator visible 41";
+    toggle present 1, aria-expanded "false". No `hidden` in server markup.
+  Server markup of the standalone partial GET /insights/trends (branch): 29
+  data-trend-overflow, 1 data-trends-toggle, "Show all 41 categories", 41 rows,
+  0 occurrences of "hidden" (master: 0 toggles) — the cap markup is inherited as the
+  worker disclosed, and cmd/server main_test.go's GET /insights/trends stays green.
+
+CRITERION 6 — caveat folds.  PASS on the contracted surface (#insights-findings,
+  #insights-recurring); the "/insights/recurring partial renders the same fold" clause
+  is NOT satisfied and is a brief-premise mismatch, recorded as a FINDING below.
+  Occurrence counts on the rendered page, branch vs master (exact strings):
+    "Detection uses loaded active history. Each finding below is tied to an actual
+     transaction in the selected period; price-creep evidence can extend beyond that
+     period."                                              branch=1 master=1
+    "Price-creep findings: the linked transaction is the latest in its full-history
+     group; its actual amount may differ from the median." branch=1 master=1
+    "Estimates from history through 2026-08-27,"           branch=1 master=1
+    "not actual selected-period spending or confirmed obligations. All detected
+     recurring series are shown without a row limit."      branch=1 master=1
+    "Totals sum displayed estimates. Monthly and annual figures are rounded
+     separately."                                          branch=1 master=1
+  Enclosing <details> summary for each (computed by walking the enclosing
+  <details>...</details>): the first two -> "About these findings"; the last three ->
+  "About these estimates". Verbatim, exactly once, nowhere else.
+  Still visible outside a fold:
+    <p class="text-sm ...">Retained estimates: <span class="num">$7,803.64</span>
+      monthly · <span class="num">$93,643.68</span> annual.</p>
+    <p class="text-base ...">52 findings in the selected period. A transaction can
+      have more than one finding type.</p>
+  Unconditional "About these findings" (worker note) checked at a 0-findings range
+  (?start=2020-01-01&end=2020-01-02): the <details> renders, holds the "Detection
+  uses..." sentence, and the $hasCreep footnote is correctly absent. Master rendered
+  that same sentence unconditionally too, so no content appears or disappears.
+
+CRITERION 7 — asset and JS gates.  PASS
+  $ make css-verify        -> "tailwind.css is up to date"; EXIT=0 (first try, no retry
+    needed). grep confirms the RF3 classes are in the built sheet: leading-snug,
+    cursor-pointer, .text-xl all present in web/static/css/tailwind.css.
+  $ node --test "web/static/js/**/*.test.cjs"
+      tests 10 | pass 10 | fail 0
+  $ node -c web/static/js/insights.js -> NODE_C_OK
+
+SCOPE
+  $ /usr/bin/git diff master --stat  (working tree, plain /usr/bin/git)
+    RF3-owned and changed: web/templates/pages/insights.html (+50/-...),
+      web/templates/components/insights-investigation.html, web/static/js/insights.js
+      (+38), plus the untracked new internal/templates/render_insights_rf3_test.go.
+    Exactly the 4 paths in .swarm/manifests/RF3.1.files; nothing extra.
+    Everything else modified in the tree is foreign and attributed, not failed:
+      tailwind.config.js, styles.css, charts.js, tailwind.css, base.html,
+      shared/range-picker.html (RF1); components/kpis.html,
+      internal/handlers/dashboard/handlers_http_test.go,
+      cmd/server/cross_money_di5_test.go, internal/templates/render_dashboard_lead_rf2_test.go
+      (RF2); web/static/js/dashboard.js (RF4); `?? data` is the pre-existing symlink.
+  .swarm/critical.globs: none of the seven globs (storage, dataloader, retirement
+    engine, transfers, accounts.go, mcpsvc/confirm, handlers/backup) is touched by any
+    RF3 path.
+
+FINDINGS (for the lead's backlog; none is an RF3 contract failure)
+  F1 (criterion 6, brief premise). GET /insights/recurring does NOT render the "About
+     these estimates" fold. That route renders the separate `insights-recurring-partial`
+     define, which on master already carries its own DIFFERENTLY-WORDED, still-visible
+     caveat ("Estimates through 2026-08-27, ... Totals sum displayed estimates. Monthly
+     and annual figures are rounded separately.") and has no "Retained estimates:" line
+     at all (grep -c 'Retained estimates' = 0, 'About these estimates' = 0 in the
+     branch response). RF3 spec C names `#insights-recurring` in pages/insights.html
+     only, so the fold contract does not reach this define. The partial's ONLY
+     branch-vs-master delta is RF3's type bumps inside `insights-recurring-group`
+     (h3 text-base->text-lg, p text-sm->text-base on the three group headers; money
+     strings $183.82/$2,205.77, $835.64/$10,027.56, $6,784.18/$81,410.35 unchanged).
+     Net effect: the same caveat is folded on /insights and visible on
+     /insights/recurring. The route is reachable only via cmd/validate; no template
+     hx-get targets it.
+  F2 (spec RF3 B). "sentence <p> in ... Recurring headers text-sm -> text-base" was not
+     applied in #insights-recurring: the visible "Retained estimates:" line renders as
+     `<p class="text-sm text-gray-700 dark:text-gray-300">`, and both folded sentences
+     are text-sm. The What-changed and Review headers WERE bumped (verified text-base
+     in the rendered page). Type-scale conformance is the a11y lane's call; recorded
+     here as a factual deviation from B.
+  F3 (contract wording, introduced by the spec's own "move verbatim" instruction). The
+     moved sentence still reads "Each finding below is tied to an actual transaction",
+     but the fold now sits AFTER the findings list, not before it (measured index in
+     #insights-findings: BRANCH sentence 40343 vs list 436 -> AFTER; MASTER sentence
+     473 vs list 664 -> BEFORE). With 0 findings there is also nothing "below". The
+     worker followed spec C exactly; the wording fix is a lead decision.
+  F4 (progressive enhancement, contract-compliant). With JS disabled the "Show all 41
+     categories" button renders and is inert — all 41 rows are already visible and the
+     control does nothing. Spec D mandates the server-rendered button with no `hidden`,
+     so this is per contract, but it is a misleading affordance in the JS-off path.
+
+HARNESS GAPS DISCLOSED
+  - Both verify servers read isolated `cp -rL` copies of the same live data dir, so the
+    branch/master figure comparisons are on identical data; only GET requests were issued.
+  - `go test ./...` (whole repo) was run BEFORE RF2's cmd/server/cross_money_di5_test.go
+    edit landed; the two RF3-relevant packages were re-run after and are green. A green
+    FULL suite cannot be demanded of a shared tree with live foreign edits.
+  - axe/contrast/overflow and type-scale conformance are the a11y lane's, not covered here.

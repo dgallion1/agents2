@@ -1,0 +1,4 @@
+web/templates/components/kpis.html
+internal/templates/render_dashboard_lead_rf2_test.go
+internal/handlers/dashboard/handlers_http_test.go
+cmd/server/cross_money_di5_test.go

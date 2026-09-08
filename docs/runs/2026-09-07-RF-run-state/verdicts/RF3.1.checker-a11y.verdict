@@ -1,0 +1,140 @@
+VERDICT: PASS
+CHECKER: checker-a11y
+FAMILY: anthropic
+TASK: RF3
+ATTEMPT: 1
+---
+Scope: web/templates/pages/insights.html, web/templates/components/insights-investigation.html,
+web/static/js/insights.js, internal/templates/render_insights_rf3_test.go (RF3.1.files manifest).
+Diffed against master with `/usr/bin/git diff master -- <path>` (plain binary, not rtk).
+Rendered against a real server on a throwaway port (never 8080/8081):
+`scripts/whatif-verify.sh start 8146` ... `scripts/whatif-verify.sh stop 8146`, real built
+stylesheet via `make css && make css-verify` ("tailwind.css is up to date"). Playwright per
+contract paths (`/home/darrell/.npm/_npx/.../playwright`, chrome-linux64/chrome, --no-sandbox),
+dark via `documentElement.classList.toggle('dark', true)` + 400ms wait. axe.min.js loaded from
+the given scratch path via addScriptTag, run with tags
+['wcag2a','wcag2aa','wcag21aa','wcag22aa']. Scratch scripts under
+/tmp/claude-1000/-home-darrell-work-agents2--claude-worktrees-retired-couple-ui-layout-397a9a/5f1798f7-0ebe-4e24-a3e8-2690e59504b6/scratchpad/rf3-a11y/
+(audit.js, headings.js, sibling.js, keyboard.js, contrast.js, jsoff.js, htmxswap.js, overflow.js).
+
+Foreign territory attributed per contract, never FAILed: RF1 (root font-size, warm-stone
+palette, nav/range-picker), RF2 (kpis.html), RF4 (dashboard.js) — none of these files are in
+RF3's diff or manifest.
+
+1. axe sweep (3 ranges x 2 viewports x 2 themes = 12 runs), each with all 3 supporting tabs
+   clicked, every <details> forced open, and the trends toggle expanded when present:
+   `node audit.js` → all 12 combinations report `violations=0`. Toggle present (`hadToggle=true`)
+   on the 41-category (Jan–Aug) and June ranges; absent (≤12 rows, no cap) on the default range.
+   Zero violations means nothing to attribute — RF3 introduces none. Full JSON in
+   rf3-a11y/axe-results.json.
+
+2. Point 1 (heading structure) / "lead is a <p> not a heading":
+   `node headings.js` on the 41-category range at 1280px: exactly one `<h1>` ("Insights");
+   outline is h1 → h2(What changed) → h3(Largest contributors) → h2(Review these
+   transactions) → h2(Detected recurring spending) → h3×3(group headings) → h2(Supporting
+   charts and tables) → h3×5(tab-panel headings, all bumped text-lg per RF3.B) — no skipped
+   levels anywhere, including the new/bumped h2→h3 pairs. `leadTag: "P"`, `h1count: 1`.
+   `node sibling.js`: `#period-context`'s `nextElementSibling` is `#insights-lead` (P) —
+   satisfies RF3 acceptance-4 ("#insights-lead is the first element after #period-context")
+   and constitution point 1 (logical order, no heading injected as decoration).
+
+3. Points 3/9 (toggle + summaries — operable, stated role, visible focus, order):
+   `node keyboard.js` (light+dark): toggle is `<button type="button" data-trends-toggle
+   aria-expanded="false">`; focusing it and pressing Enter flips
+   `aria-expanded="true"` and text to "Show the largest 12"; pressing Space flips it back
+   to `aria-expanded="false"` / "Show all 41 categories" — both native activation keys work
+   (plain `<button>`, no keydown hijacking). Focus ring on the button: light
+   `outline:none` overridden by `outlineWidth:3px outlineColor:rgb(79,70,229)` (computed
+   3px indigo ring — not `outline: none` with no replacement); dark
+   `outlineColor:rgb(165,180,252)`, both clearly visible against their card
+   backgrounds (see point 7 ratios below — this is a global focus-ring style, not new to
+   RF3, but RF3's new button inherits it correctly). The two new `<summary>` elements
+   ("About these findings", "About these estimates") are plain `<summary>`: native
+   `outline:auto 1px` focus ring in both themes, and `Enter` opens the `<details>`
+   (`summary open after Enter: true` in both themes) — no JS involved, so keyboard/AT
+   behavior is the browser's native disclosure semantics.
+   Focus order: by source order (confirmed against
+   `insights-investigation.html`), the toggle `<button>` sits immediately after the closing
+   `</div>` of the `.overflow-x-auto` scroll region and before the trends-table define's
+   `{{end}}` — i.e. after the table region in both DOM and visual order, so Tab reaches it
+   right after the table, matching the contract's placement requirement.
+
+4. Point 16 / progressive enhancement: `curl` of the rendered 41-category page shows
+   `data-trend-overflow="1"` on exactly 29 rows (41-12) and zero occurrences of the word
+   `hidden` inside the trends-table markup (the 15 `hidden` hits in the full page are all
+   pre-existing: desktop nav `hidden xl:flex`, light/dark icon-swap `hidden dark:block` /
+   `block dark:hidden`, mobile-nav panel, `aria-hidden="true"` decorative SVGs, and the
+   pre-existing `<input type="hidden" name="preset">` — none inside `#insights-panel-trends`).
+   `node jsoff.js` with `javaScriptEnabled: false`: all 41 `<tbody>` rows report
+   `hidden: false` / `display` not `none` (`hiddenRows: 0`), and the toggle button is present
+   but `display: inline-block` (rendered, inert). This matches acceptance point 16 exactly:
+   server markup carries no `hidden`; JS-off users see every row.
+   OBSERVATION (not a FAIL): with JS off, the "Show all 41 categories" button does nothing
+   when clicked — but since every row is already visible in that state, the button's label
+   is not misleading (nothing is hidden to reveal) and clicking is a harmless no-op rather
+   than a broken affordance. Point 3 ("buttons act") is arguably in tension with an inert
+   button, but the constitution's actual requirement (point 16, parity between visual and
+   AT state) is fully met since visual and AT state are identical and both already show
+   everything. I read this as compliant, not a FAIL; flagging for the lead as a design note
+   (a `<noscript>`-hidden button would avoid even the appearance of dead UI, but that is a
+   preference, not a violation).
+
+5. Point 7/12, NEW elements only, both themes, actual computed backgrounds via
+   `getComputedStyle` walk-up (real built CSS, not guessed): `node contrast.js` on the
+   41-category range, light then dark, trends tab active, all `<details>` open —
+   `#insights-lead` (text-gray-900 dark:text-gray-100) on its ancestor `bg-gray-50`-ish body
+   background: light `rgb(28,25,23)` on `rgb(245,245,244)` = 16.03:1; dark `rgb(245,245,244)`
+   on `rgb(28,25,23)` = 16.03:1. The trends toggle and both new `<summary>`s (`text-accent`)
+   on their card/body backgrounds: light 5.76–6.29:1, dark 7.61–8.77:1. All comfortably clear
+   4.5:1 in both themes — no theme-specific invisibility.
+
+6. Point 11 (chart text alternative) with 29/41 rows capped by default: the constitution's
+   own text explicitly permits the data table alternative to be "collapsed behind a
+   disclosure." The trends-table cap + `<button aria-expanded>` behaves exactly like a
+   disclosure — sighted and AT users get identical information at every state (12 rows
+   collapsed, all rows expanded via the same control, same button text conveys state to
+   both). I read point 11 as satisfied, not violated: this is an OBSERVATION, not a FAIL.
+
+7. Point 10, HTMX swap with toggle expanded: `node htmxswap.js` — expand the toggle
+   (`aria-expanded:true`, `hiddenCount:0`), click a date preset (`1m`), wait for the HTMX
+   swap. After: toggle re-renders `aria-expanded:false` (cap re-applied, `hiddenCount:12`)
+   and `document.activeElement` is the clicked preset `<button data-preset="1m">` itself
+   (`inSwapped:true` but it is NOT replaced by the swap — the date-filter form is explicitly
+   out of RF3's territory). Focus is not lost to `<body>`, satisfying point 10's "focus
+   restored to a sensible element inside the swapped region."
+   OBSERVATION: the trends-toggle's expanded state resets to collapsed on every preset swap
+   (new server render always starts `aria-expanded="false"`). This is consistent and
+   predictable (matches the `applyTrendsCap()`-on-`htmx:afterSwap` contract in RF.3.D) and
+   is not a regression — nothing claims persistence across swaps. Not a FAIL.
+
+8. 390px, both themes, toggle expanded: `node overflow.js` — `document.documentElement`
+   `scrollWidth === clientWidth` (390 === 390, `overflow:false`) in both light and dark; the
+   trends table itself is 640px wide (`min-w-[640px]`, pixel-pinned per RF1 note) and scrolls
+   inside its own `.overflow-x-auto` region (`regionClientWidth:322`) rather than the page —
+   no new overflow introduced by RF3's cap/toggle.
+
+Build/test (RF3 acceptance 1/2, cross-checked as part of establishing a real render):
+`go build ./...` clean; `go test ./internal/templates/... ./internal/handlers/insights/...`
+→ `ok budget2/internal/templates`, `ok budget2/internal/handlers/insights`. The new
+render_insights_rf3_test.go renders the real `insights-content`/`insights-trends-table`
+templates (not hand-built HTML) for all 4 fixtures and passes.
+`make css` / `make css-verify` → "tailwind.css is up to date" (real stylesheet used above).
+
+No FAILURES. RF3's new/changed markup (lead paragraph, heading bumps, two <details>,
+trends-table cap + toggle) is clean against ACCESSIBILITY.md and WCAG 2.2 AA (wcag2a/2aa/
+21aa/22aa) in both themes at 1280 and 390, across all three specified ranges, with every
+tab, disclosure and the trends toggle actually exercised.
+
+OBSERVATIONS (non-blocking):
+- Point 3/16 tension when JS is off: the trends "Show all N categories" button is inert but
+  harmless (see #4 above) — a `<noscript>` wrapper would be tidier but is not required.
+- Point 11 reading: capped-table-plus-disclosure-button satisfies "may be collapsed behind a
+  disclosure" as written; flagging the reading for the record per instructions, not as a
+  defect.
+- Point 10: toggle-expanded state does not persist across an HTMX preset swap (resets to
+  collapsed each time) — by design per RF.3.D, not a regression.
+- Global focus-ring color/width (indigo, 3px) is inherited by RF3's new button, not
+  introduced by RF3; noted only because it is the visible-focus evidence for point 9.
+- `web/static/css/tailwind.css` is modified on disk (RF1's stone-token rebuild) but is not
+  in RF3.1.files and was not evaluated for RF3 acceptance — used here only as the real
+  stylesheet for rendering, consistent with the run's "lead does final rebuild" convention.

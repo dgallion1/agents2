@@ -1,0 +1,157 @@
+VERDICT: PASS
+CHECKER: checker-a11y
+FAMILY: anthropic
+TASK: LT1
+ATTEMPT: 1
+---
+Scope: LT1's manifest = web/templates/components/shared/period-context.html,
+web/templates/pages/dashboard.html (toolbar/drop-zone region only),
+internal/templates/render_period_context_lt1_test.go, web/static/css/tailwind.css.
+`web/templates/pages/insights.html` and `insights-investigation.html` are
+LT5's concurrent, foreign territory — any findings there are attributed to
+LT5 as observations, not FAILs on LT1.
+
+Method: real render via `scripts/whatif-verify.sh start 8101` (server on
+LT1's branch, live data copy), curl for no-JS raw HTML, and Playwright
+(chromium-1243, --no-sandbox) driving /dashboard and /insights with axe-core
+4.11.1 injected via addScriptTag, at 1280 and 390 px, light and
+`documentElement.classList.add('dark')`, with every `<details>` forced open
+before each axe run. All commands and scratch scripts live under
+/tmp/claude-1000/-home-darrell-work-agents2--claude-worktrees-retired-couple-ui-layout-397a9a/5f1798f7-0ebe-4e24-a3e8-2690e59504b6/scratchpad/lt1-a11y/.
+NOTE: `rtk`'s git-output rewrite (known hazard) was avoided by redirecting
+`git diff master -- <path>` to a file and reading it with the Read tool
+rather than trusting inline shell output.
+
+1. axe (wcag2a/2aa/21aa/22aa) on /dashboard and /insights, 1280+390, light+dark,
+   details forced open — `node audit.js` (embeds axe.run with those tags):
+   - /dashboard 1280 light: 0 violations
+   - /dashboard 1280 dark: 0 violations
+   - /dashboard 390 light: 1 violation (scrollable-region-focusable, serious)
+     on `#chart-major-expense-data-table > .overflow-auto` and
+     `#chart-merchants-data-table > .overflow-auto`
+   - /dashboard 390 dark: same 1 violation
+   - /insights 1280/390, light/dark: 0 violations
+   No horizontal overflow at 390 in either theme on either page
+   (scrollWidth == clientWidth == 390 in all 4 combos checked).
+
+   Attribution of the one hit: `git diff master -- web/static/js/dashboard.js`
+   is empty (byte-identical to master) — this scrollable div is built by
+   dashboard.js's "View chart data" disclosure (unchanged code) inside the
+   charts grid, which is LT2's territory, not LT1's, and pre-dates this run.
+   OBSERVATION, not a FAIL on LT1.
+
+2. Points 1,3,9,12,16:
+   - One `<h1>` per page confirmed by Playwright heading dump (`headings.js`):
+     Dashboard → single H1 "Dashboard", 8×H2, 2×H3, no skipped levels;
+     Insights → single H1 "Insights", 5×H2, 5×H3, no skipped levels.
+     `main`/`nav`/`header`/`footer` landmarks each occur once on both pages.
+     period-context.html contains no headings, so LT1 cannot have changed
+     this structure — confirmed by grep.
+   - `<summary>` is the only toggle, keyboard reachable, toggles on both
+     Enter and Space (`keyboard.js`): Tab-reached the "Period details"
+     summary on /dashboard in both themes; `openBefore=false`,
+     `afterEnter=true`, then a second Enter+Space cycle re-confirmed toggling
+     both keys. Same served by native `<details>/<summary>` semantics (no JS
+     needed) — confirmed present with JS off via raw `curl` of /dashboard and
+     /insights (no `<details open>` remnants, "Period details" and "Prior
+     period:"/"evidence bounds" text present in the raw, unexecuted HTML).
+   - Visible focus indicator ≥3:1 both themes: screenshots
+     (focus-light.png/focus-dark.png) show a rectangle around the summary in
+     both themes. Pixel-sampled (PIL) the native double-ring browser focus
+     outline: light theme uses a black ring (16,16,16) on white
+     (255,255,255) = 19.0:1; dark theme's inner black ring is only ~1.3:1 on
+     the dark card (31,41,55), but the SAME outline paints an adjacent white
+     (255,255,255) ring at the identical position = 14.7:1 against the dark
+     card — Chromium's native "auto" focus-ring renders both a light and a
+     dark line specifically so one is always ≥3:1 regardless of background;
+     this is unstyled browser default (no CSS in the diff touches outline),
+     confirmed adequate in both themes.
+   - Import CSV button and #drop-zone keyboard-operable with visible focus
+     (`toolbar.js`): focusing `#import-csv-btn` then pressing Enter opened a
+     real `filechooser` event in both themes; focusing `#drop-zone`
+     (role=button, tabindex=0, ids/role/tabindex unchanged per diff) then
+     Enter also opened a filechooser in both themes. `#import-csv-btn`'s
+     focus-visible ring: light rgb(79,70,229) on white = 6.29:1, dark
+     rgb(165,180,252) on the dark card (31,41,55) = 7.36:1 (computed,
+     WCAG relative-luminance formula) — both ≥3:1.
+   - No horizontal overflow at 390: see item 1 (0 overflow in all 8
+     axe-driven page/viewport/theme combinations); visually confirmed with
+     mobile screenshots (mobile-light.png, mobile-dark-settled.png) showing
+     the one-line drop-zone strip and the button+form row fitting without
+     wrap-clipping.
+   - Disclosure content present in DOM with JS off: `curl -s
+     http://localhost:8101/dashboard` (no JS execution at all) contains
+     "Prior period:", "Period details", "evidence bounds", and zero
+     occurrences of the old "Data freshness" wrapper or `<details open>`.
+     Same on /insights.
+
+3. Point 14 / stale-data notice: rendered as a plain, non-collapsible `<p>`
+   (confirmed: `insideDetails: false` in both themes via
+   `stale.js`), contrast computed from `getComputedStyle`: light
+   rgb(55,65,81) on white = 10.31:1; dark rgb(209,213,219) on the dark card
+   (31,41,55) = 9.96:1. Both far exceed 4.5:1.
+
+4. Heading/landmark structure unchanged: see item 2's heading dump; LT1's
+   only files (period-context partial, dashboard toolbar/drop-zone) contain
+   no heading elements, and grep confirms zero `<h1-h4>` in
+   period-context.html, so this task cannot have altered heading/landmark
+   outline. (Full outline recorded above for the record, not because LT1
+   could plausibly have changed it.)
+
+5. HTMX swap path (`swap.js`): changed `#dashboard-date-start`, `Tab` fired
+   the form's `change` event (`hx-trigger="change from:#date-filter-form"`),
+   `#kpis-container` (hx-swap="innerHTML") re-rendered. After the swap:
+   `document.activeElement.id` was still `dashboard-date-start` — focus was
+   never lost, because the swap target (`#kpis-container`) does not contain
+   the date input (the input lives in the sibling `<form>` outside the
+   toolbar's swap region per the LT1.B layout) — point 10 is satisfied by
+   construction, no focus-restoration logic needed. Post-swap, the
+   period-context `<summary>` inside `#kpis-container` was still reachable
+   and toggled on Enter (`openBefore=false` → `openAfter=true`).
+
+OBSERVATIONS (non-blocking):
+- Pre-existing `scrollable-region-focusable` axe hit on the charts-grid
+  "View chart data" tables at 390px, both themes — see item 1. In LT2's
+  territory (`pages/dashboard.html` charts grid / `dashboard.js`, unedited
+  by LT1); flag for LT2's checker.
+- Acceptance-3 in LT-RUN-SPEC.md ("multiset of trimmed text nodes ...
+  identical except for added 'Period details'/removed 'Data freshness'")
+  is, read literally at DOM-text-node granularity, not satisfied: master
+  renders "Selected period: ..." and "Latest transaction: ..." as two
+  separate `<p>` text nodes; the branch merges them into one `<p>` with a
+  " · " separator per LT1.A.1's explicit instruction (which the task's own
+  acceptance-2 Go test enforces). Every word/sentence is preserved
+  verbatim and in the same order, fully exposed to assistive tech as one
+  paragraph — no ACCESSIBILITY.md point or WCAG SC is violated by merging
+  two adjacent one-line paragraphs into one. This is a tests-lane wording
+  nuance (LT1's `checks` column includes `tests`), not an a11y defect;
+  flagging for the lead/tests checker's awareness, not a FAIL from this
+  checker.
+- `web/static/css/tailwind.css` is a shared generated artifact rebuilt by
+  `make css`, which scans ALL templates including LT5's concurrently-edited
+  `insights.html`/`insights-investigation.html`. `make css-verify` passes
+  against the current template tree, but this means LT1's checked-in
+  tailwind.css may also carry classes introduced by LT5's in-flight work.
+  Not attributable to LT1's own markup; noted per the concurrent-runs
+  discipline in CLAUDE.md.
+- One transient false alarm during this audit: an early screenshot
+  (mobile-dark.png) appeared to show the Dashboard `<h1>` invisible against
+  its own background in dark mode. Root cause: `<body>` carries
+  `transition-colors duration-200`, and the screenshot was taken before the
+  200ms CSS transition settled after `classList.add('dark')`. Re-tested
+  with a 600ms settle (mobile-dark-settled.png): body bg rgb(17,24,39),
+  h1 color rgb(243,244,246) — correct, high-contrast dark theme. Not a
+  defect; recorded so the same artifact isn't mistaken for one downstream.
+
+Commands used (representative):
+- go build ./... && go vet ./...  (clean)
+- go test ./internal/templates/... ./internal/handlers/dashboard/...
+  ./internal/handlers/insights/...   → ok x3
+- make css-verify   → "tailwind.css is up to date"
+- git diff master -- web/templates/components/shared/period-context.html
+- git diff master -- web/templates/pages/dashboard.html
+- git diff master -- web/static/js/dashboard.js   (empty — pre-existing code)
+- scripts/whatif-verify.sh start/stop 8101
+- node audit.js / headings.js / keyboard.js / toolbar.js / stale.js /
+  swap.js / focusshot.js / contrast.js / h1check*.js / mobileshot*.js
+  (all in the scratch dir above)

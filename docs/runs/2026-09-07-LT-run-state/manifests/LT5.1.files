@@ -1,0 +1,3 @@
+web/templates/pages/insights.html
+web/templates/components/insights-investigation.html
+internal/templates/render_insights_lt5_test.go

@@ -1,0 +1,132 @@
+VERDICT: PASS
+CHECKER: checker-tests
+FAMILY: anthropic
+TASK: RF7
+ATTEMPT: 1
+---
+Method: all execution in `cp -a` scratch copies with `.git` removed, under
+/tmp/claude-1000/.../scratchpad/rf7-tests{,-a,-b,-c,-probe,-full}. No project
+file edited; no budget2 binary run; no server started. The `-full` copy had the
+`data` symlink replaced by an empty directory so the whole-tree suite could not
+touch the live /home/darrell/bin/ai/budget2/data.
+
+CRITERION 1 — gofmt clean, vet clean, templates tests green
+  $ gofmt -l internal/templates/            (real worktree AND scratch)
+    -> no output (exit 0)
+  $ go vet ./internal/templates/
+    -> "vet exit=0", no diagnostics
+  $ go test -count=1 ./internal/templates/...
+    -> "ok  	budget2/internal/templates	1.302s"
+  Additional (whole-tree, informational, data-isolated copy):
+  $ go build ./...            -> BUILD OK
+  $ go vet ./...              -> VET OK ("No issues found")
+  $ go test -count=1 ./...    -> EXIT=0, no non-"ok"/"no test files" lines
+  MET.
+
+CRITERION 2 — the two inserted blocks assert exactly the contracted strings
+  $ grep -rn "RF5 guard\|RF6 guard\|// RF5 (\|// RF6 (" --include=*.go .
+    -> exactly two sites, both in the manifest files:
+       internal/templates/render_insights_rf3_test.go:83,88,92
+       internal/templates/render_dashboard_lead_rf2_test.go:164,167
+  Read of render_insights_rf3_test.go:83-93 (inside
+  TestRF3InsightsLeadHistoryAvailable, the history-available lead test):
+    must-contain: "Each finding is tied to an actual transaction"
+    must-contain: `<p class="text-base text-gray-700 dark:text-gray-300">Retained estimates:`
+    must-NOT-contain: "finding below"
+  Read of render_dashboard_lead_rf2_test.go:164-168 (inside subtest
+  "over plan, income did not cover spending"):
+    must-contain: "Monthly equivalents use the selected range"
+    must-NOT-contain: "equivalents below"
+  These are the four positive/negative strings the RF7 contract lists and
+  nothing more. No unrelated classes, ids, counts or ordering are pinned by
+  the inserted blocks (the surrounding ordering/among-spans assertions at
+  lines 94-103 and 143-176 are pre-existing RF3/RF2 content, not RF7 delta).
+  Observation (not a defect, contract-specified): the retained-estimates
+  assertion pins the full class list `text-base text-gray-700
+  dark:text-gray-300`, so a future recolor of that <p> (e.g. to
+  dark:text-gray-200) would fail the guard even though the RF3-B size bump it
+  protects is intact. The RF7 contract names that exact literal, so this is
+  compliance, not over-reach; flagged for the backlog only.
+  Observation: the RF6 guard is a single `if A || B` with the generic message
+  "RF6 guard: methodology sentence wording", so a failure does not say which
+  half broke (see mutation (c) output below). Cosmetic.
+  MET.
+
+CRITERION 3 — mutation-kill, three independent mutations, fresh copy each
+  (a) perl -pi -e 's/Each finding is tied/Each finding below is tied/'
+      web/templates/pages/insights.html   (grep confirms 1 replacement)
+      $ go test -count=1 -run TestRF3InsightsLead ./internal/templates/
+      --- FAIL: TestRF3InsightsLeadHistoryAvailable (0.01s)
+          render_insights_rf3_test.go:88: RF5 guard: missing "Each finding is tied to an actual transaction"
+          render_insights_rf3_test.go:92: RF5 guard: stale wording 'finding below' present
+      FAIL	budget2/internal/templates
+  (b) text-base -> text-sm on the retained-estimates <p> in insights.html
+      $ go test -count=1 -run TestRF3InsightsLead ./internal/templates/
+      --- FAIL: TestRF3InsightsLeadHistoryAvailable (0.01s)
+          render_insights_rf3_test.go:88: RF5 guard: missing "<p class=\"text-base text-gray-700 dark:text-gray-300\">Retained estimates:"
+      FAIL	budget2/internal/templates
+  (c) 's/Monthly equivalents use/Monthly equivalents below use/'
+      web/templates/components/kpis.html  (grep confirms 1 replacement)
+      $ go test -count=1 -run TestDashboardLead ./internal/templates/
+      --- FAIL: TestDashboardLead/over_plan,_income_did_not_cover_spending
+          render_dashboard_lead_rf2_test.go:167: RF6 guard: methodology sentence wording
+      FAIL	budget2/internal/templates
+  Each mutation was applied to its own fresh copy of the clean scratch tree,
+  so no restore step was needed and no mutation could mask another. Each
+  failure names the RF5/RF6 guard line, not a collateral assertion.
+  MET.
+
+CRITERION 4 — guards are non-vacuous; the fixtures really render those sections
+  A probe test (scratch copy only, discarded) dumped each guard's fixture
+  render:
+  $ go test -count=1 -run TestZZProbe -v ./internal/templates/
+    insights render bytes=16182 ; kpis render bytes=6922 ; both PASS
+  Insights dump (RF3 history-available fixture, 52 findings):
+    grep -o 'id="insights-findings"'      -> present
+    grep -o 'Each finding is tied...'     -> "Each finding is tied to an actual
+      transaction in the selected period; price-creep evidence can extend
+      beyond that period."
+    grep -o '<p class="text-base text-gray-700 dark:text-gray-300">Retained estimates:...'
+      -> '...Retained estimates: <span class="num">$7,803.64</span> monthly ·
+          <span class="num">$93,643.68</span> annual.</p>'
+    grep -o '[A-Za-z]* below' -> only "listed below" x1 (an unrelated,
+      unpinned sentence), i.e. the "finding below" negative is asserted over a
+      section that IS rendered, not over an empty branch.
+  KPIs dump (RF2 over-plan fixture):
+    ids rendered: dashboard-budget-details, dashboard-lead, dashboard-overview,
+      dashboard-verdict-bar
+    python index check: budget-details idx 3078 < "About these numbers" idx
+      4991 < methodology idx 5085 -> "order ok: True"; the methodology <p>
+      renders inside the budget-details section, AFTER the grid (the RF6
+      placement being guarded).
+    grep -o '[A-Za-z]* below' -> no matches at all, so the "equivalents below"
+      negative is likewise asserted over rendered content.
+  Note on the brief's parenthetical: the RF3 fixture's Investigation carries
+  "Findings" with 52 elements but "Groups": []any{} (empty). The retained-
+  estimates <p> and the About-these-findings <details> are unconditional in
+  insights.html (lines 79-87), so both guarded strings render regardless of
+  Groups; the positive assertions passing on the clean tree plus mutations
+  (a)/(b) firing prove non-vacuity independent of the Groups shape.
+  MET.
+
+SCOPE
+  $ git status --porcelain (worktree, uncommitted) -> 13 modified tracked
+    files + 2 untracked test files + the data symlink.
+  Manifest RF7.1.files lists exactly the two untracked test files.
+  $ stat mtimes of every changed path (sorted desc):
+    22:15:48 internal/templates/render_dashboard_lead_rf2_test.go
+    22:15:48 internal/templates/render_insights_rf3_test.go
+    22:07:37 web/templates/components/kpis.html
+    22:04:37 web/templates/pages/insights.html
+    ... all remaining paths 22:02 and earlier
+  The two manifest files are the only paths touched after the last RF1-RF6
+  edit (kpis.html at 22:07:37, the RF6 change), consistent with RF7's delta
+  being confined to the manifest. All other modified paths (kpis.html,
+  insights.html, insights-investigation.html, range-picker.html, base.html,
+  tailwind.css, styles.css, tailwind.config.js, charts.js, dashboard.js,
+  insights.js, cross_money_di5_test.go, handlers_http_test.go) are RF1-RF6
+  territory and are ATTRIBUTED, not counted against RF7.
+  $ cat .swarm/critical.globs -> internal/services/storage|dataloader|
+    retirement/engine|transfers|accounts.go|mcpsvc/confirm, handlers/backup.
+    None of these appear in git status; no critical path touched.
+  IN SCOPE.

@@ -1,0 +1,5 @@
+# task_id	tier	checks	status	attempt	worker	reason
+LT1	2	tests,a11y	accepted	1	worker-coder	gate-check-exit0; tests+a11y PASS at attempt 1
+LT5	2	tests,a11y,second	accepted	1	worker-coder	gate-check-exit0; tests+a11y+second PASS at attempt 1
+LT2	2	a11y,second	accepted	1	worker-coder	gate-check-exit0; a11y+second PASS at attempt 1
+LT6	2	tests,a11y	accepted	1	worker-coder	gate-check-exit0; tests+a11y PASS at attempt 1

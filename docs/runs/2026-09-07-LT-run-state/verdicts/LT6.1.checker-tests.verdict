@@ -1,0 +1,298 @@
+VERDICT: PASS
+CHECKER: checker-tests
+FAMILY: anthropic
+TASK: LT6
+ATTEMPT: 1
+---
+Work verified in a cp -a copy of the run worktree at
+/tmp/claude-1000/-home-darrell-work-agents2--claude-worktrees-retired-couple-ui-layout-397a9a/5f1798f7-0ebe-4e24-a3e8-2690e59504b6/scratchpad/lt6-tests/work
+(branch feat/layout-tightening off master c0b8476, uncommitted). A true-master
+tree (all seven modified files restored from `git show master:<f>`, the three
+new *_test.go removed) is at .../scratchpad/lt6-tests/master. Verify servers:
+branch :8103, master :8104, both started and stopped with
+scripts/whatif-verify.sh; live :8080 confirmed healthy afterwards
+("live :8080 still healthy"). No project file was edited.
+
+=========================================================================
+1. BUILD / VET / TESTS  — PASS
+=========================================================================
+Ran with the plain go binary (/home/darrell/go-sdk/go/bin/go) to bypass the
+rtk shell wrapper, bare (never piped to grep).
+
+  $ /home/darrell/go-sdk/go/bin/go build ./... ; echo exit=$?
+    build exit=0
+  $ /home/darrell/go-sdk/go/bin/go vet ./...   ; echo exit=$?
+    vet exit=0
+  $ /home/darrell/go-sdk/go/bin/go test -count=1 ./internal/templates/... ./internal/handlers/insights/...
+    ok  budget2/internal/templates          1.218s
+    ok  budget2/internal/handlers/insights  1.258s      exit=0
+  $ /home/darrell/go-sdk/go/bin/go test -count=1 -run TestRenderInsightsSupportingTabs -v ./internal/templates/
+    --- PASS: TestRenderInsightsSupportingTabs (0.01s)
+    ok  budget2/internal/templates  0.016s
+  $ node -c web/static/js/insights.js
+    node -c exit=0
+  $ node --test "web/static/js/**/*.test.cjs"
+    tests 10 / pass 10 / fail 0                          exit=0
+
+Composite repo target (not just build+test), cache defeated:
+  $ make check          # vet static vuln css-verify test
+    ✓ all checks passed
+    MAKE CHECK EXIT=0
+    grep -c "(cached)" = 0 ; grep -c "^ok" = 51 (51 packages, none cached)
+    grep -E "^(FAIL|--- FAIL)" = 0 matches
+
+=========================================================================
+2. NEW TEST ASSERTS ACCEPTANCE 2 AND BITES  — PASS
+=========================================================================
+internal/templates/render_insights_lt6_test.go renders "insights-content" and
+asserts: role="tab" count == 5; role="tabpanel" count == 5; 5 distinct panel
+ids; 5 distinct tab ids; every tab's aria-controls is a panel id; every panel's
+aria-labelledby is a tab id; no boolean `hidden` (aria-hidden="true" and
+type="hidden" excluded); no aria-selected="true"; id="chart-trends" present;
+hx-trigger="load" present.
+
+MUTATION PROOF — each guarded property reverted/mutated one at a time in the
+scratch copy, test re-run, file restored between mutations (final sanity run:
+"ok budget2/internal/templates"):
+
+  M1 master's web/templates/pages/insights.html (git show master:… ) in place:
+     FAIL — role="tab" count = 0, want 5
+            role="tabpanel" count = 0, want 5
+            distinct tabpanel ids = 0, want 5 (map[])
+            distinct tab ids = 0, want 5 (map[])
+  M2 add `hidden` to #insights-panel-income:
+     FAIL — line 106: server output must carry no "hidden" attribute
+  M3 aria-selected="true" on the trends tab:
+     FAIL — line 109: server output must carry no aria-selected="true"
+  M4 tab pricecreep aria-controls -> "insights-panel-typo":
+     FAIL — line 82: aria-controls=… does not match any panel id
+  M5 panel pace aria-labelledby -> "insights-tab-typo":
+     FAIL — line 96: aria-labelledby=… does not match any tab id
+  M6 #chart-trends hx-trigger="load" -> "revealed":
+     FAIL — line 116: #chart-trends must still carry hx-trigger="load"
+         (so the assertion is NOT vacuous on this fixture)
+  M7 drop role="tabpanel" from the pace wrapper:
+     FAIL — tabpanel count = 4, want 5 (+2 more)
+
+Served-markup cross-check (curl :8103/insights?start=2026-06-01&end=2026-06-30,
+parsed with python3 re) — the per-key pairing the Go test only checks set-wise:
+  TAB insights-tab-trends     controls=insights-panel-trends     key=trends     sel=false tabindex=(none)
+  TAB insights-tab-income     controls=insights-panel-income     key=income     sel=false tabindex=(none)
+  TAB insights-tab-anomalies  controls=insights-panel-anomalies  key=anomalies  sel=false tabindex=(none)
+  TAB insights-tab-pricecreep controls=insights-panel-pricecreep key=pricecreep sel=false tabindex=(none)
+  TAB insights-tab-pace       controls=insights-panel-pace       key=pace       sel=false tabindex=(none)
+  labels: ['Spending trends','Income sources','Anomalies','Price creep','Spending pace']
+  PANEL insights-panel-<k> labelledby=insights-tab-<k> key=<k> tabindex=0  (all five)
+  section kept: <section id="insights-supporting" class="space-y-4" aria-labelledby="supporting-heading">
+                <h2 id="supporting-heading" …>Supporting charts and tables</h2>
+  tablist: <div role="tablist" aria-label="Supporting charts and tables" class="flex flex-wrap gap-1 border-b …">
+  inactive tab classes: text-gray-600 dark:text-gray-400 (ruling LT-2026-09-07d)
+  aria-selected="true" count in served HTML = 0 (both the default and June pages)
+  every literal "hidden" in the served HTML is a class utility (hidden/xl:hidden/
+  dark:hidden), aria-hidden="true", or <input type="hidden"> — all in the layout
+  chrome, none inside #insights-supporting.
+
+=========================================================================
+3. BROWSER BEHAVIOUR (Playwright, chromium-1243, --no-sandbox, 1280x900)  — PASS
+=========================================================================
+Reported state format: visiblePanels = panels with .hidden false;
+ariaSelectedTrue / tabindex0 / wfTabActive are the complementary filters, so an
+entry listing exactly one key means the other four carry aria-selected="false" /
+tabindex="-1" / no wf-tab-active. probe1.cjs, /insights (default range, NO
+#chart-trends — "A default page, chart present: false"):
+
+  A default, fresh storage:
+    {"visiblePanels":["trends"],"ariaSelectedTrue":["trends"],"tabindex0":["trends"],
+     "wfTabActive":["trends"],"ls":null,"sectionH":219}     ERRORS: []
+    -> tab code tolerates a missing #chart-trends (no console/page errors)
+  B click "Anomalies":
+    {"visiblePanels":["anomalies"],"ariaSelectedTrue":["anomalies"],
+     "tabindex0":["anomalies"],"wfTabActive":["anomalies"],
+     "focus":"insights-tab-anomalies","ls":"anomalies"}
+  C reload: {"visiblePanels":["anomalies"],"ariaSelectedTrue":["anomalies"],
+     "tabindex0":["anomalies"],"ls":"anomalies"}      -> persistence works
+  D keyboard (focus on a tab, no click):
+    ArrowRight from anomalies -> pricecreep (focus AND activation, ls=pricecreep)
+    ArrowRight -> pace (last)
+    ArrowRight from last  -> trends   (WRAP forward)
+    ArrowLeft  from first -> pace     (WRAP backward)
+    ArrowLeft  -> pricecreep
+    Home -> trends ; End -> pace
+    every step: visiblePanels/ariaSelectedTrue/tabindex0/wfTabActive/focus all
+    the single moved-to key
+  E Enter / Space:
+    focus income (no activation): still {"visiblePanels":["pace"], focus income}
+    Enter on income     -> {"visiblePanels":["income"], selected income, ls income}
+    Space on pricecreep -> {"visiblePanels":["pricecreep"], ls pricecreep}
+    probe6: scrollY before Space 1900 -> after 1900 (preventDefault holds) and
+    aria-selected on the focused tab = "true"
+    probe6 roving tabindex snapshot: ["-1","-1","-1","-1","0"]
+  ERRORS: []  (page errors + console errors, whole probe)
+
+probe2/probe4.cjs, /insights?start=2026-06-01&end=2026-06-30 (chart present),
+loaded with localStorage insightsActiveTab='anomalies' so #chart-trends renders
+WHILE HIDDEN — the case the resize exists for:
+
+  F before click (anomalies active):
+    {"present":true,"hasData":true,"traces":2,"offsetWidth":0,"svgWidth":"700",
+     "panelClientWidth":0,"panelHidden":true}
+  F after clicking "Spending trends":
+    {"hasData":true,"traces":2,"offsetWidth":1216,"containerClientWidth":1216,
+     "svgWidth":"1216","cardWidth":1248,"panelClientWidth":1248}
+    -> has .data AND offsetWidth 1216 > 0; the PLOTTED width (svg.main-svg
+       width attribute = 1216) equals the chart container's clientWidth (1216),
+       i.e. the panel's 1248 px minus the card's p-4 (2x16). el.layout.width is
+       undefined (Plotly responsive mode leaves it unset), so the svg width is
+       the load-bearing figure, per the brief's alternative.
+  RESIZE MUTATION PROOF (probe4 arm L): with Plotly.Plots.resize replaced by a
+  counting no-op via addInitScript, same sequence:
+    L after click: {"offsetWidth":1216,"containerClientWidth":1216,
+                    "svgWidth":"700","panelClientWidth":1248} resizeCalls=1
+    -> the chart stays drawn at the 700 px it got while hidden. The 1216 px in
+       arm M is produced by the LT6 resize call and by nothing else; the call
+       fires exactly once per activation.
+
+  H preset click (3M) — HTMX outerHTML swap of #insights-wrapper
+    (setInsightPreset: htmx.ajax(..., target:'#insights-wrapper',
+     select:'#insights-wrapper', swap:'outerHTML', pushUrl:true)):
+    tagged the pre-swap wrapper with dataset.probeMarker='pre-swap';
+    after the click: {"wrapperMarker":null, …} -> the element really was
+    replaced; period line became "Selected period: 2026-06-07 to 2026-09-07
+    (93 calendar days) · Latest transaction: 2026-08…"
+    active tab survived and hidden states were RE-APPLIED to fresh server
+    markup that carries no hidden:
+      panels {"trends":true,"income":true,"anomalies":false,"pricecreep":true,
+              "pace":true}
+      tabs   {"trends":"false","income":"false","anomalies":"true",
+              "pricecreep":"false","pace":"false"}
+    errors: []
+  I unknown stored key: addInitScript sets insightsActiveTab='bogus' ->
+    {"visible":["trends"],"selected":["trends"],"lsAfter":"bogus"} errors: []
+  J javaScriptEnabled:false ->
+    [{"key":"trends","hidden":false,"h":1985},{"income",false,188},
+     {"anomalies",false,397},{"pricecreep",false,626},{"pace",false,152}]
+    "any hidden attr? false   all with height>0? true"  (point 16 holds)
+
+=========================================================================
+4. localStorage-THROWING TOLERANCE  — PASS (with an out-of-scope observation)
+=========================================================================
+probe2 arm K / probe3.cjs: addInitScript redefines Storage.prototype.getItem
+AND setItem to throw before load, then loads the June page.
+  K on load:        {"visible":["trends"],"selected":["trends"]}
+  K after click pace: {"visible":["pace"]}
+-> LT6 still activates trends and stays interactive; its own try/catch holds.
+
+One uncaught error IS raised, and it is pre-existing master code, not LT6:
+  PAGEERROR: storage blocked
+  STACK: at Storage.value [as getItem] (<anonymous>:3:79)
+         at http://localhost:8103/insights?…:23:44
+         at http://localhost:8103/insights?…:28:15
+Line 23 of the served document is the base-layout theme bootstrap
+(`const theme = localStorage.getItem('theme');` in web/templates/layouts/
+base.html, unmodified on this branch). Reproduced byte-identically against the
+MASTER server on :8104 — same message, same stack, same lines 23:44/28:15. No
+error originates in insights.js. Recorded as OBSERVATION 1 below.
+
+=========================================================================
+5. #insights-supporting HEIGHT AT 1280  — PASS
+=========================================================================
+probe5.cjs measures every panel by activating it, then activates trends and
+measures the section (getBoundingClientRect, 1280x900):
+  DEFAULT range: panels {"trends":120,"income":399,"anomalies":3043,
+                         "pricecreep":626,"pace":152}
+                 tallest=3043  section(trends)=219  ceiling=3163  PASS? true
+  JUNE range:    panels {"trends":3059,"income":188,"anomalies":397,
+                         "pricecreep":626,"pace":152}
+                 tallest=3059  section(trends)=3158 ceiling=3179  PASS? true
+                 (margin 21 px; the 99 px above the panel are the h2 + tablist
+                  + the section's space-y-4 gaps)
+  full dump with trends active, both ranges:
+    trends {sel:"true",ti:"0",active:true,hidden:false};
+    income/anomalies/pricecreep/pace {sel:"false",ti:"-1",active:false,hidden:true}
+  Context (master :8104, same viewport): #insights-supporting = 4448 px on the
+  default range and 4530 px on June, vs 219 / 3158 on the branch.
+
+=========================================================================
+6. REGRESSIONS IN THE PRE-EXISTING insights.js BEHAVIOURS  — PASS
+=========================================================================
+The diff is a pure append (a self-contained IIFE at the end of insights.js);
+all four behaviours re-exercised in the browser on the branch server:
+  N1 sortable trends table header [data-sort-fn="sortTrendsTable"] (col
+     "category"): before ["Home improvement — projects (pinned)","Health
+     insurance","Amazon",…] -> click1 ["Amazon","Anthropic API (old)","Booze",…]
+     -> click2 ["Water (Monroe County)","Unknown — investigate",…]  changed:true
+     (asc then desc, both directions still fire through the delegated handler)
+  N2 step arrow #insights-date-filter [data-step]: range 2026-06-01..2026-06-30
+     -> 2026-05-02..2026-05-31 after the HTMX swap; tab state re-applied
+     {"visible":["trends"],"sel":["trends"]}
+  N2 htmx:afterRequest chart rendering for #chart-trends after that swap:
+     {"hasData":true,"offsetWidth":1216,"containerClientWidth":1216,
+      "svgWidth":"1216"} -> the chart re-rendered AND is correctly sized
+  preset buttons: item H above (3M changed the range and swapped the wrapper)
+  errors during N: []
+  [data-sort-fn="sortRecurringTable"] is absent from BOTH the branch (:8103)
+  and master (:8104) default page — `grep -c recurring-payments-table` = 0 on
+  both — so its absence is a data condition on this range, not a regression.
+
+=========================================================================
+7. CSS DIFF AND css-verify  — PASS
+=========================================================================
+  $ /usr/bin/git diff master -- web/static/css/styles.css
+    @@ -222,6 +222,7 @@
+      [data-wf-tab]:focus-visible,
+    + [data-ins-tab]:focus-visible,
+      [data-wf-collapse-toggle]:focus-visible,
+    ...
+    1 file changed, 1 insertion(+)  — exactly the one selector addition,
+    inserted into the existing What-If focus-outline rule, nothing else.
+  $ make css-verify
+    tailwind.css is up to date       exit=0
+  (web/static/css/tailwind.css is unmodified vs master, and css-verify proves
+   the committed build still matches a rebuild from the current templates — the
+   LT6 tab classes were all already compiled, so nothing to add to the manifest.)
+  probe7.cjs, computed style of a keyboard-focused tab:
+    light {"matchesFV":true,"outlineStyle":"solid","outlineWidth":"2px",
+           "outlineColor":"rgb(79, 70, 229)","outlineOffset":"2px",
+           "activeColor":"rgb(75, 85, 99)"}      (gray-600)
+    dark  {"matchesFV":true,"outlineStyle":"solid","outlineWidth":"2px",
+           "outlineColor":"rgb(165, 180, 252)","outlineOffset":"2px",
+           "activeColor":"rgb(156, 163, 175)"}   (gray-400)
+  (Focus-ring/contrast judgement itself belongs to the a11y lane; cited here
+   only to show the new selector actually resolves.)
+
+=========================================================================
+SCOPE
+=========================================================================
+  $ /usr/bin/git diff master --name-status   (working tree, uncommitted)
+    M web/static/css/styles.css                            <- LT6
+    M web/static/js/charts.js                              <- LT2 (foreign)
+    M web/static/js/insights.js                            <- LT6
+    M web/templates/components/insights-investigation.html  <- LT5 (foreign)
+    M web/templates/components/shared/period-context.html   <- LT1 (foreign)
+    M web/templates/pages/dashboard.html                    <- LT1+LT2 (foreign)
+    M web/templates/pages/insights.html                     <- LT5 + LT6
+  untracked: data (pre-existing worktree symlink), render_insights_lt1/lt5/lt6
+    test files (lt1/lt5 foreign)
+LT6's insights.html hunk is 17 of the file's 19 added lines and lies entirely
+inside #insights-supporting (5 tablist lines + 5 panel opens + 5 panel closes +
+2 tablist wrapper lines); the other 2 added lines are LT5's $hasCreep footnote
+in #insights-findings. The insights.js diff is +90 lines appended after the
+existing htmx:afterRequest handler, no existing line touched. Manifest
+LT6.1.files (4 paths) matches exactly what LT6 changed; nothing outside it is
+attributable to LT6. No path in .swarm/critical.globs is modified (all seven
+entries are under internal/services/** or internal/handlers/backup/**).
+
+OBSERVATIONS (not FAILs; out of LT6's scope)
+1. Pre-existing on master: the base-layout inline theme bootstrap
+   (web/templates/layouts/base.html, `localStorage.getItem('theme')`) throws an
+   uncaught error when Storage access is blocked. Identical message and stack
+   on the master server :8104. Backlog candidate: wrap it in try/catch.
+2. The Go test asserts `hx-trigger="load"` appears anywhere in the rendered
+   output rather than on #chart-trends specifically. Non-vacuous today (M6
+   proves it), but a second hx-trigger="load" elsewhere in insights-content
+   would silently weaken it.
+3. The Go test's ARIA pairing is set-wise (every aria-controls is SOME panel id,
+   every aria-labelledby is SOME tab id); a transposed pair would pass it. The
+   actual per-key pairing was verified separately against the served markup (all
+   five tab-k -> panel-k) and behaviourally (activating tab k shows only panel
+   k, for all five keys, in probe1 and probe5).

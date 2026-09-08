@@ -1,0 +1,148 @@
+VERDICT: PASS
+CHECKER: checker-a11y
+FAMILY: anthropic
+TASK: LT2
+ATTEMPT: 1
+---
+Scope confirmed via `/usr/bin/git diff master -- web/templates/pages/dashboard.html web/static/js/charts.js`:
+LT2's only hunks are (a) the charts-grid `Spending by Major Expense` card
+(`Class "lg:col-span-2"` added to `shared/card-open`, body wrapped in a
+`grid grid-cols-1 lg:grid-cols-2 gap-6 items-start` with `#chart-major-expense`
+moved into a plain `<div>` cell and the breakdown/credits divs into the
+sibling cell) and (b) `charts.js` `renderMajorExpenseBreakdown` /
+`renderMajorExpenseCredits`, each now appending one
+`<div class="grid grid-cols-1 md:grid-cols-2 gap-x-6">` list container before
+appending rows into it instead of `target`. Row markup itself (`button`
+element/classes/handlers, name span, amount+percent via the existing
+`Intl.NumberFormat`) is byte-identical to master — confirmed by diff (only
+the `target.appendChild(row)` → `list.appendChild(row)` line changed).
+`shared/card.html` (the `Class` param consumer) is untouched — `git diff
+master -- web/templates/components/shared/card.html` is empty. Spending
+Trend / Top Spending / Cumulative Balance card markup is untouched in the
+diff. `web/static/css/tailwind.css` has zero diff from master (`git diff
+master --stat -- web/static/css/tailwind.css` empty) and `make css-verify`
+reports "tailwind.css is up to date" — the new utility classes were already
+covered by the committed build. Foreign territory per the dispatch (LT1's
+toolbar hunk above `#kpis-container`, period-context.html) excluded from
+scoring below; it appears in the same-file diff but is untouched by LT2 and
+attributed to LT1.
+
+Rendered checks: `scripts/whatif-verify.sh start 8103` (branch worktree) and,
+in the main checkout (clean, on master c0b8476), `scripts/whatif-verify.sh
+start 8104` for a same-commit comparison baseline; both torn down with
+`stop` at the end, :8080/:8081 untouched throughout. Playwright
+(specified executable/args) drove both servers; axe-core 4.x loaded via
+addScriptTag from the specified cache path.
+
+1. axe (wcag2a/2aa/21aa/22aa), /dashboard, 1280 & 390, light & dark, all
+   `<details>` forced open first:
+   - 1280 light: 0 violations. 1280 dark: 0 violations.
+   - 390 light / 390 dark: 1 violation each — `scrollable-region-focusable`
+     (serious) on `#chart-major-expense-data-table > .overflow-auto` and
+     `#chart-merchants-data-table > .overflow-auto`.
+   - Ran the IDENTICAL audit against master c0b8476 (port 8104, same data
+     copy): same violation, same two targets, same width/theme pattern.
+     PRE-EXISTING — attributed to master's `dashboard.js`-generated data-table
+     wrapper (untouched by LT2's file list), not introduced or replicated
+     by LT2's own new markup. OBSERVATION, not a FAIL of this task.
+
+2. Point 3/9 — buttons, DOM/tab order, focus ring:
+   - `#chart-major-expense-breakdown`/`-credits` render 31 real
+     `<button type="button">` rows; accessible name (full textContent) leads
+     with the group name (e.g. "Furniture & appliances$2,794.27  4.0%") —
+     unchanged from master (row markup byte-identical, confirmed above).
+   - DOM order of the two-column grid (`grid-cols-1 md:grid-cols-2`) is
+     row-major (browser default `grid-auto-flow: row`): rows 1&2 of the DOM
+     list rendered at `left:652`/`left:962` (col 1 / col 2) at matching
+     `top`, i.e. DOM order → left-to-right-then-down visual order. Tab
+     sequence from the first row (`page.keyboard.press('Tab')` x6) walked
+     Furniture→Booze→Darrell→Home improvement→Home services→River, matching
+     DOM/visual order exactly — focus order follows visual order (WCAG
+     2.4.3), same in light and dark (identical geometry/DOM, theme doesn't
+     reorder).
+   - Focus ring: `box-shadow` ring color is indigo-500 `rgb(99,102,241)`,
+     2px, in both themes (computed via `getComputedStyle` after `.focus()`).
+     Contrast against the card background: light (`white`) 4.47:1; dark
+     non-hover card (`gray-800` #1f2937) 3.29:1; dark hover (`gray-900`
+     #111827, the `dark:hover:bg-gray-900` documented in the code comment)
+     3.97:1 — all ≥ 3:1 (WCAG 1.4.11), confirmed with an independent
+     WCAG-relative-luminance calc (node), matching the code comment's cited
+     figures. The hover/focus choice documented in `charts.js` still holds
+     inside the new grid wrapper (comment is unmodified, contrast unchanged
+     since row classes are unchanged).
+
+3. Point 11 — chart text alternatives: with data loaded,
+   `#chart-major-expense`'s parent `<div>` (the new wrapper cell) contains a
+   sibling `<details><summary>View chart data</summary>` — same cell as the
+   chart, not a third grid item (ruling LT-2026-09-07c honored, confirmed by
+   `chart.parentElement.querySelector('details')` returning it with
+   `sameCellAsChart: true`). Spending Trend (`chart-spending-trend`), Top
+   Spending (`chart-merchants`) and Cumulative (`chart-cumulative`) each
+   still carry their own `View chart data` details in their (unmodified)
+   card divs — `allChartIds` shows all four `*-data-table` ids present.
+   Keyboard operability verified on the Major Expense details: focus lands
+   on `<summary>` (`document.activeElement.tagName === 'SUMMARY'`), `Enter`
+   opens it (`open: false→true`), a second `Enter` closes it — native
+   `<details>` behavior, unaffected by the wrapper.
+
+4. Point 1 — heading structure: `/dashboard` on branch (8103) vs master
+   (8104) produced byte-identical ordered heading lists (one `<h1>Dashboard`,
+   all card `<h2>`s in the same order ending `...Spending by Major
+   Expense, Spending Trend, Top Spending, Cumulative Balance`); identical in
+   light and dark. No skipped levels, no new headings.
+
+5. Point 7/12 — breakdown row text contrast: computed colors at 1280,
+   light/dark: percent span `text-gray-500`/`dark:text-gray-400` — light
+   `rgb(107,114,128)` on white 4.83:1; dark `rgb(156,163,175)` on
+   `gray-800` 5.78:1. Name span `text-gray-600`/`dark:text-gray-300` — light
+   7.56:1; dark 9.96:1. All ≥ 4.5:1 in both themes; unchanged from master
+   (same classes, same row markup).
+
+6. Reflow: at 390 (light & dark) `documentElement.scrollWidth ===
+   clientWidth === 390`, breakdown grid computes 1 column
+   (`gridTemplateColumns` → 1 track); at 768 it computes 2 columns (`md`
+   breakpoint reached) — matches the two-column-at-md spec. No element in
+   `main` exceeds `innerWidth` at either size (probed every descendant's
+   `getBoundingClientRect().right`). Long category name "Home improvement —
+   hardware stores" visually truncates (`scrollWidth > clientWidth` on the
+   `.truncate` span) with no `title` attribute at 390 — full name remains
+   available to AT via the button's untruncated accessible name (`truncate`
+   is CSS-only, doesn't touch the text node), but a sighted mouse user gets
+   no tooltip. OBSERVATION only: `nameEl.className = 'truncate'` is
+   byte-identical to master (`grep -n truncate` matches master's charts.js
+   lines 270/348 too) — pre-existing, not introduced by LT2, and not cited
+   by any ACCESSIBILITY.md point (no title-on-truncate requirement).
+
+7. Point 15 — motion: no `prefers-reduced-motion`-relevant animation
+   introduced. The new list wrapper div computes `transition-duration: 0s`
+   (inert). The row `<button>` computes `transition-duration: 0.15s` — a
+   pre-existing micro-interaction on the unchanged row class string, not a
+   new animation; confirmed with `reducedMotion:'reduce'` context, no
+   change in behavior observed.
+
+Layout parity spot-check (informational, checker-second's is the
+authoritative parity lane): Major Expense card width equals grid width
+(1248px @1280, matching Cumulative's `lg:col-span-2` width); Spending Trend
+and Top Spending cards share `top: 1048` (equal row); drilldown click on the
+first breakdown row opens `#major-expense-drilldown-container` with
+identical content length (5017 chars) and heading ("Furniture &
+appliances") on branch vs master — same dialog markup
+(`[role="dialog"]` present), same data.
+
+FAILURES: none.
+
+OBSERVATIONS (non-blocking):
+- `scrollable-region-focusable` axe violation on the Major-Expense and
+  Top-Spending "View chart data" data-table scroll regions at 390px is
+  PRE-EXISTING on master c0b8476 (verified via identical audit against an
+  unmodified master build on a separate port) — outside LT2's file
+  ownership (`dashboard.js` untouched); flag for the backlog, not this task.
+- Truncated long category names (`.truncate`, no `title`) lose the full
+  name for sighted mouse users on hover at narrow widths; screen-reader
+  users are unaffected (full text is the accessible name). Pre-existing
+  row markup (present verbatim on master), not introduced by LT2, and not
+  covered by any ACCESSIBILITY.md point as written.
+- Dark-theme focus-ring contrast against the card's own (non-hover)
+  background is 3.29:1 — comfortably ≥ 3:1 but closer to the floor than the
+  hover-state 3.97:1 the code comment emphasizes; worth a note if the
+  palette ever shifts, not a current violation.

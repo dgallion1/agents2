@@ -1,0 +1,46 @@
+VERDICT: PASS
+CHECKER: checker-second
+FAMILY: adversarial
+TASK: RF3
+ATTEMPT: 1
+---
+Setup: worked in the live worktree /home/darrell/bin/ai/budget2/.claude/worktrees/retiree-refresh (branch feat/retiree-refresh, uncommitted). Used /usr/bin/git diff (not rtk). Rendered checks via scripts/whatif-verify.sh on port 8145 (branch) and a cp -a scratch copy checked out to master on port 8155 (master baseline), both stopped afterward. Foreign territory (RF1/RF2/RF4) present in the tree but not touched by this task's files; attributed, not scored.
+
+1. Split classification / rendered-string (lead vs section lines), all fields traced in source:
+   - `web/templates/pages/insights.html`: lead uses `.Current` (formatMoney) — identical field to `#insights-change`'s "Selected period: <span class=\"num font-semibold\">{{formatMoney .Current}}</span>".
+   - Lead's parenthetical calls `{{template "insights-dollar-change" .Change}}` — the SAME define used by "Dollar difference: {{template ... .Change}}". `insights-dollar-change`'s sign/word logic depends only on `.Amount` (gt/lt/else "increase"/"decrease"/"no dollar change"), not on `.Change.Kind`, so dollar/percent/new/none kinds are irrelevant to this wording and cannot diverge from the existing "Dollar difference" line.
+   - Lead's `.Monthly` = same field as "Retained estimates: <span class=\"num\">{{formatMoney .Monthly}}</span> monthly". Confirmed via `grep`: both are direct `{{formatMoney .Monthly}}` calls, no arithmetic.
+   - Lead's `$n := len .Findings` = same source as `#insights-findings`'s own "{{len .Findings}} findings in the selected period." Rendered on the live default page: both show 73 ("73 transactions to review" / "73 findings in the selected period.").
+   - Rendered fixture (branch, /insights?start=2026-08-01&end=2026-08-31): lead = "Net spending this period: $6,510.91 (-$5,756.55 decrease versus the prior period). 6 transactions to review; detected recurring spending is about $7,438.28 a month."; section lines independently show Selected period $6,510.91 / Prior period $12,267.46, Dollar difference -$5,756.55 decrease, Retained estimates $7,438.28 monthly — all consistent.
+
+2. Whitespace trim in `insights-dollar-change`: rendered master (8155) vs branch (8145) for the same August range and diffed the two call sites that predate this task ("Dollar difference:" line and the contributors `<li>` span). Master wraps the define's `<span>` in leading/trailing newlines at both sites; branch removes them (comment: "no leading/trailing text nodes"). Visible/collapsed text is unchanged in both cases — the surrounding literal text in insights.html (" · ", `<span class="num text-gray-800...">` immediately followed by content) already supplies the needed word-boundary space; the newline was always collapsible whitespace, never a required separator. Confirmed by eye on raw HTML (`cat -A`) at both call sites: no visible-text delta.
+
+3. Trends cap (Playwright against 8145, August range, 25 categories → 13 overflow rows, cap 12):
+   - Default: 12 visible, `Show all 25 categories`, `aria-expanded=false`.
+   - Click toggle: 25 visible, `aria-expanded=true`, text → `Show the largest 12`, `table.dataset.expanded=true`.
+   - Sort by "Selected" while expanded: stays at 25 visible (expanded flag respected).
+   - Sort by "Selected" while collapsed (fresh reload): exactly 12 visible, and those 12 are precisely the top-12-by-current-amount among all 25 rows (verified programmatically: sorted-desc top-12 category set == visible category set).
+   - htmx preset swap (`#insights-wrapper` outerHTML swap): after swap, table resets to 12 visible / 24 total on the new period — confirms `applyTrendsCap()` re-runs and is correctly scoped to `evt.detail.target.id === 'insights-wrapper'` (checked JS source; no other htmx:afterSwap listener touches this table).
+   - JS-disabled context (`javaScriptEnabled:false`): 25/25 rows present, 0 `hidden`. Server markup itself has no `hidden` attribute anywhere in either changed template (`grep -n ' hidden\b'` empty).
+   - Unit test `TestRF3TrendsTableCap` (15 categories) independently confirms `data-trend-overflow="1"` lands on exactly the 13th–15th rows by original order, and 12-category case emits neither marker nor toggle. Re-ran this test file against a plain master checkout (test-file-only diff): both `TestRF3TrendsTableCap/fifteen...` and `TestRF3InsightsLeadZeroFindings` fail on master, confirming the test exercises the real change rather than passing vacuously.
+
+4. Caveat folds: byte-for-byte substring match (Python) of all five moved/retained sentences (findings-detection sentence, price-creep footnote, "Estimates from history…", "Totals sum displayed estimates…", "Retained estimates: … monthly · … annual.") between `git show master:...` and the working tree — all `True`. `$hasCreep` guard still recomputed via the same `{{range .Findings}}{{if .Creep}}` loop and still gates the footnote inside the new `<details>`. Keyboard-toggled both new `<summary>`s via Playwright (`focus` + Enter) — both `<details>` opened. Cash-flow caveat under Dashboard tiles is out of RF3's file set (kpis.html is RF2) and untouched here.
+
+5. Hrefs and money strings, whole-page diff (branch vs master, same Aug data/range): `href="..."` extraction — 87 vs 87, unified diff empty (zero hrefs added, removed, or reordered). `\$[\d,]+\.\d\d` money-string extraction — branch has exactly 3 more occurrences than master, and diff shows these are pure insertions ($6,510.91 / $5,756.55 / $7,438.28, the three lead-sentence figures); every one of master's 228 money strings survives as a subsequence in branch's 231. `/insights/trends` and `/insights/recurring` partials reuse the same `insights-trends-table` / `insights-recurring-group` defines, so they inherit the identical cap/fold behavior; `/insights/trends` itself is not wired to any client fetch (dead/test-only route) so it carries no additional risk.
+
+6. Fixtures: `go build ./...`, `go vet ./...` clean. `go test ./internal/templates/... ./internal/handlers/insights/... -count=1` → both packages `ok`, no modified DI/LT5/LT6 files (`git status --short` on those dirs shows only the two new RF2/RF3 test files as untracked). New RF3 test file fails against a master-only tree (see #3) — genuine oracle.
+
+7. Type-bump audit (every text-size class change in the diff, classified):
+   - h2 `text-lg`→`text-xl` (change/findings/recurring/supporting headings): ALLOWED (contract B).
+   - `insights-change` h3 "Largest contributors" `text-base`→`text-lg`, and `insights-trends/income/anomalies-not-shown/pace` h3 `text-base`→`text-lg`: ALLOWED (contract B "group <h3> text-base → text-lg").
+   - Section `<p>`s (methodology sentence, Selected/Prior period, "No category changes...", "Not enough history...", "Grouped by...", "No detected findings...", contributors/findings `<li>` text): `text-sm`→`text-base`: ALLOWED.
+   - `insights-finding`'s two `<p>` lines (date/category, and `.Label · .Evidence`): `text-sm`→`text-base`. This is a defensible reading of "contributors `<li>` and finding `<li>` text text-base" — these ARE the finding-`<li>`'s own text — distinct from "the LT5 Evidence lines" (the specific `<summary>Evidence</summary>` disclosure + its table cells inside `insights-recurring-table`, named for `TestLT5RecurringRowEvidenceDisclosure`), which remain untouched at `text-sm` (confirmed unchanged in the diff and in the current file: `summary class="text-sm text-accent cursor-pointer">Evidence`, and all `<td class="p-3 text-sm...">` cells in both `insights-recurring-table` and `insights-trends-table` are untouched). Not a violation.
+   - Table cells (`insights-trends-table`, `insights-recurring-table`): unchanged, still `text-sm`. Confirmed by grep.
+   - No class bump found outside the sizes enumerated in contract B; no `!important` introduced (`grep` on the two changed templates: none).
+
+8. Rendered/axe: axe-core (wcag2a/2aa/21a/21aa/22aa) on /insights (Aug range) at 1280 and 390, light and dark: 0 violations at all four combinations. `#insights-lead` confirmed to be `period-context`'s `nextElementSibling` in the live DOM. `make css-verify` → "tailwind.css is up to date".
+
+No defect found inside RF3's scope. The whitespace-trim change in `insights-dollar-change` and the finding-`<li>` text-size reading were the two most plausible attack points; both check out against the rendered HTML and the contract text respectively.
+
+OBSERVATIONS (not FAILs, outside RF3 or non-blocking):
+- `/insights/trends` (handleTrendsPartial → `insights-trends-partial`) is a server route with no client-side caller found (`grep` across web/templates and web/static/js for `/insights/trends'` matches nothing but the chart sub-route); it correctly inherits the RF3 cap markup via the shared `insights-trends-table` define, so no action needed, but flagging for the backlog as dead-code trivia only.

@@ -1,0 +1,204 @@
+VERDICT: PASS
+CHECKER: checker-tests
+FAMILY: anthropic
+TASK: RF5
+ATTEMPT: 1
+---
+Read-only verification. No project file was edited by me. All builds, tests,
+mutations and the verify server ran in a `cp -a` copy at
+/tmp/claude-1000/-home-darrell-work-agents2--claude-worktrees-retired-couple-ui-layout-397a9a/969cc6fd-8b9f-4e52-b279-8869905c9eb2/scratchpad/rf5copy
+whose `.git` pointer file was renamed to `.git-disabled` before any mutation, so
+no git command could reach the real worktree index. Verify server on :8150 only
+(scripts/whatif-verify.sh start/stop 8150); the built binary was never invoked
+directly. Post-run: `curl :8150/api/health` exit 7 (stopped), `curl
+:8080/api/health` exit 0 (the live server was never touched). Final `cmp` of the
+scratch copy's insights.html against the live worktree file: exit 0 (I left the
+tree byte-identical to how I found it).
+
+CRITERION 1 — the two RF5 lines isolated; caveat otherwise byte-identical to
+master; retained-estimates line changed only its size class.  PASS
+
+  $ /usr/bin/git diff master -- web/templates/pages/insights.html
+    50 changed lines total. Every hunk maps to RF3-A (the `#insights-lead`
+    paragraph), RF3-B (text-lg->text-xl on the four `<h2>`, text-base->text-lg
+    on the four `<h3>`, text-sm->text-base on the section sentence `<p>` and the
+    contributor `<li>`), or RF3-C (the two new `<details>` folds) — all accepted
+    RF3 work — plus exactly the two RF5 edits below.
+
+  $ /usr/bin/git show master:web/templates/pages/insights.html   (extracted with python3)
+    MASTER line 64:
+      <p class="text-sm text-gray-600 dark:text-gray-400">Detection uses loaded active history. Each finding below is tied to an actual transaction in the selected period; price-creep evidence can extend beyond that period.</p>
+    BRANCH line 80 (indented one level deeper, now inside the details):
+      <p class="text-sm text-gray-600 dark:text-gray-400">Detection uses loaded active history. Each finding is tied to an actual transaction in the selected period; price-creep evidence can extend beyond that period.</p>
+    Byte-level assertion (python3, both lines .strip()ed so only the RF3 re-indent
+    is normalised away):
+      master.replace("Each finding below is","Each finding is") == branch  ->  True
+      repr()-level equality of the same comparison               ->  True
+    So the ONLY textual change in that sentence is the deletion of the word
+    "below " — the class attribute (`text-sm text-gray-600 dark:text-gray-400`)
+    and every other byte are unchanged. RF5(a) satisfied.
+
+    MASTER line 84:
+      <p class="text-sm text-gray-700 dark:text-gray-300">Retained estimates: <span class="num">{{formatMoney .Monthly}}</span> monthly · <span class="num">{{formatMoney .Annual}}</span> annual. Totals sum displayed estimates. Monthly and annual figures are rounded separately.</p>
+    BRANCH line 87:
+      <p class="text-base text-gray-700 dark:text-gray-300">Retained estimates: <span class="num">{{formatMoney .Monthly}}</span> monthly · <span class="num">{{formatMoney .Annual}}</span> annual.</p>
+    The RF3-accepted intermediate state is established independently from the two
+    RF3 verdicts, not from the lead's word:
+      .swarm/verdicts/RF3.1.checker-tests.verdict:161  <p class="text-sm ...">Retained estimates: <span class="num">$7,803.64</span>
+      .swarm/verdicts/RF3.1.checker-tests.verdict:216  the moved sentence still reads "Each finding below is tied to an actual transaction"
+      .swarm/verdicts/RF3.1.checker-second.verdict:27  byte-for-byte substring match of ... "Retained estimates: … monthly · … annual." between master and the working tree — all True
+    Reconstructing the RF3 state by putting `text-sm` back on the branch line:
+      recon == master-line minus the two moved sentences  ->  True
+      branch-line with text-base->text-sm (1 replacement) == recon  ->  True
+    i.e. relative to RF3's accepted state the retained line differs in the size
+    class and nothing else; the two trailing sentences were moved by RF3 (already
+    verified by RF3's own checkers), not by RF5. RF5(b) satisfied.
+
+  Rendered effect of the class is real, not cosmetic-in-name:
+  $ grep -o '\.text-base{[^}]*}' web/static/css/tailwind.css -> .text-base{font-size:1rem;line-height:1.5rem}
+  $ grep -o '\.text-sm{[^}]*}'   web/static/css/tailwind.css -> .text-sm{font-size:.875rem;line-height:1.25rem}
+
+CRITERION 2 — no source or test pins the old wording; Go tests green.  PASS
+
+  $ grep -rn 'finding below' --include=*.go --include=*.html --include=*.cjs .
+    (excluding ./tmp/ and ./.swarm/)  ->  ZERO hits.
+    The only hits anywhere are 7 archived a11y/report HTML artifacts under
+    .swarm/DI-run/reports/ (frozen evidence from a previous run, not source) and
+    docs/rmd-audit-verification-plan-2026-08-08.md:12 ("Every finding below was
+    worked with a failing test first") — an unrelated English sentence.
+  $ grep -rn 'Each finding' --include=*.go --include=*.html --include=*.cjs --include=*.js .
+    -> exactly one source hit: web/templates/pages/insights.html:80, the new wording.
+  $ grep -rn 'Detection uses loaded active history\|Retained estimates\|About these findings\|About these estimates' --include=*.go .
+    -> only two COMMENT lines in internal/templates/render_insights_rf3_test.go
+       (lines 14 and 88); no assertion string pins either sentence.
+
+  $ go build ./...                          -> BUILD_EXIT=0 (no output)
+  $ go vet ./...                            -> VET_EXIT=0 (no output)
+  $ go test -count=1 ./internal/templates/... ./internal/handlers/insights/...
+      ok  budget2/internal/templates          1.339s
+      ok  budget2/internal/handlers/insights  1.236s
+      TEST_EXIT=0
+  $ go test -count=1 ./...                  -> FULL_TEST_EXIT=0, zero FAIL lines
+    (whole repo green despite the foreign in-flight RF1/RF2 edits in the tree).
+  $ make check                              -> vet, static, vuln, css-verify, test
+      all ran; final line "✓ all checks passed", MAKECHECK_EXIT=0.
+
+  MUTATION EVIDENCE (scratch copy; file restored afterwards, cmp-verified):
+  - Reverted BOTH RF5 edits (back to "Each finding below is tied" and
+    `text-sm ...Retained estimates`) and re-ran
+    `go test -count=1 ./internal/templates/... ./internal/handlers/insights/...`
+      ok / ok, MUTANT_TEST_EXIT=0.
+    The suite is INSENSITIVE to the revert. This is the positive proof of the
+    brief's "no test pins it" claim, and it is also the honest limit of the Go
+    evidence: RF5 adds no test, so nothing in the Go suite would catch a
+    regression to the old wording. RF5's written acceptance does not require a
+    new test, so this is an OBSERVATION for the backlog, not a failure.
+  - The RENDERED checks ARE load-bearing. Same reverted tree, server restarted on
+    :8150, `/insights?start=2026-01-01&end=2026-08-27`:
+      MUTANT: each_finding_is_tied=0  finding_below=1
+      <p class="text-sm text-gray-700 dark:text-gray-300">Retained estimates:
+    i.e. every criterion-3 assertion below flips to failing under the mutation.
+
+CRITERION 3 — rendered page on the verify server.  PASS
+
+  $ bash scripts/whatif-verify.sh start 8150   -> READY http://localhost:8150
+  $ curl -fsS "http://localhost:8150/insights?start=2026-01-01&end=2026-08-27"
+      CURL_EXIT=0  bytes=187328
+  (a) $ grep -o 'Each finding is tied' <page> | wc -l   -> 1   (exactly once)
+      python3 whole-document count                       -> 1
+  (b) $ grep -o 'finding below' <page> | wc -l           -> 0
+  (c) retained-estimates paragraph, rendered attribute (not the template source):
+      $ grep -o '<p class="[^"]*">Retained estimates:' <page>
+        <p class="text-base text-gray-700 dark:text-gray-300">Retained estimates:
+      and the rendered figures still show through: "Retained estimates:
+      <span class="num">$7,803.64</span> monthly · <span class="num">$93,643.68</span> annual."
+  (d) $hasCreep footnote inside the SAME details, python3 slice of the exact
+      `<details>...</details>` block containing "About these findings":
+        caveat sentences inside block            -> 1
+        "Price-creep findings: the linked transaction" inside block -> 1
+        whole-document counts for both           -> 1 and 1 (no duplicate surface)
+      Rendered block verbatim (lines 782-786):
+        <details class="border-t border-gray-200 dark:border-gray-700 pt-3">
+            <summary class="text-base text-accent cursor-pointer">About these findings</summary>
+            <p class="text-sm text-gray-600 dark:text-gray-400">Detection uses loaded active history. Each finding is tied to an actual transaction in the selected period; price-creep evidence can extend beyond that period.</p>
+            <p class="text-sm text-gray-600 dark:text-gray-400">Price-creep findings: the linked transaction is the latest in its full-history group; its actual amount may differ from the median.</p>
+        </details>
+      The guard is proven LIVE, not merely present: three narrower ranges with no
+      creep findings render the caveat but drop the footnote —
+        $ for r in 2026-08-20..21 / 2026-02-01..03 / 2026-08-26..27
+          range 2026-08-20..2026-08-21: caveat=1 creepfootnote=0
+          range 2026-02-01..2026-02-03: caveat=1 creepfootnote=0
+          range 2026-08-26..2026-08-27: caveat=1 creepfootnote=0
+      versus caveat=1 creepfootnote=1 on the 2026-01-01..2026-08-27 range, which
+      does carry creep findings (16 "Price creep" finding badges).
+  (e) closed by default:
+      $ grep -o '<details[^>]*open' <page> | wc -l  -> 0 (no `open` attribute
+        anywhere on the page)
+      python3 regex on the block's opening tag: OPEN ATTR PRESENT: False
+      The block's tag is `<details class="border-t border-gray-200
+      dark:border-gray-700 pt-3">` — bare, so the UA default (closed) applies.
+
+  SPLIT-CLASSIFICATION SWEEP (surfaces enumerated, not inferred from the diff):
+  $ grep -rn 'Retained estimates' web/     -> ONE hit, pages/insights.html:87.
+  $ grep -rn 'insights-recurring-partial' --include=*.html --include=*.go .
+      web/templates/components/insights-investigation.html:91 (the define)
+      internal/handlers/insights/handlers.go:317 (the only render site)
+      internal/handlers/insights/recurring_render_di5_test.go:40
+    Read the define in full: it renders its own separate sentence ("Estimates
+    through {{...}}, not actual selected-period spending ...") and contains
+    NEITHER "Retained estimates" NOR "Each finding". So both RF5 strings have
+    exactly one source and the HTMX partial cannot render a stale variant.
+    (The partial's own `<h2>` is still text-lg and its `<p>` text-sm — that is
+    RF3 observation F1, explicitly deferred to the backlog by ruling
+    RF-2026-09-07d, and out of RF5's scope.)
+
+CRITERION 4 — make css-verify.  PASS
+  $ make css-verify
+      ./tmp/tailwindcss-3.4.17 -c tailwind.config.js -i web/static/css/tailwind.src.css -o tmp/tailwind.check.css --minify
+      Done in 567ms.
+      tailwind.css is up to date
+      CSSVERIFY_EXIT=0
+  Green on the first run; no retry needed. Also re-run inside `make check` above,
+  green there too. (RF5 introduces no new utility class — `text-base` was already
+  present in the built CSS, as the font-size grep under criterion 1 shows.)
+
+CRITERION 5 — go build ./...  PASS
+  $ go build ./...  -> BUILD_EXIT=0, no output. Run twice (before and after the
+  mutation was reverted), 0 both times.
+
+SCOPE
+  $ /usr/bin/git diff master --stat -- .   (13 tracked files) plus
+  $ /usr/bin/git status --porcelain        (3 untracked: data symlink,
+    render_dashboard_lead_rf2_test.go, render_insights_rf3_test.go)
+  Every path reconciles to a declared manifest:
+    RF5.1.files -> web/templates/pages/insights.html          (the only RF5 path;
+      the file also carries RF3's accepted changes, attributed line-by-line above)
+    RF1.1.files -> tailwind.config.js, styles.css, tailwind.css, charts.js,
+      base.html, shared/range-picker.html                      (foreign, in flight)
+    RF2.1.files -> kpis.html, render_dashboard_lead_rf2_test.go,
+      handlers_http_test.go, cross_money_di5_test.go           (foreign)
+    RF3.1.files -> insights.html, insights-investigation.html, insights.js,
+      render_insights_rf3_test.go                              (accepted)
+    RF4.1.files -> dashboard.js                                (accepted)
+  Nothing modified outside the union of the RF manifests. Nothing under
+  .swarm/critical.globs (internal/services/storage, dataloader,
+  retirement/engine, transfers, accounts.go, mcpsvc/confirm, handlers/backup)
+  is touched — `git diff master --stat` lists no internal/services/** path at
+  all, and the only internal/ change is RF2's dashboard handler TEST file.
+  Tier 1 permits none of critical.globs and none was needed.
+
+FINDINGS (observations for the backlog, not failures; each attributed)
+  - F5-1 (criterion 2): RF5's change has no regression guard. The Go suite passes
+    identically with the change reverted (MUTANT_TEST_EXIT=0). A one-line
+    substring assert in render_insights_rf3_test.go would pin it. Not required by
+    RF5's written acceptance — reporting only, per the V3 promote-the-probe
+    pattern.
+  - F5-2 (criterion 3, sweep): `insights-recurring-partial` in
+    insights-investigation.html:91 still carries master-era type (`<h2>` text-lg,
+    `<p>` text-sm) and its own un-folded caveat. This is RF3 observation F1,
+    already deferred by ruling RF-2026-09-07d. Out of RF5 scope.
+  - F5-3 (environment): the tree carries foreign in-flight RF1 attempt-2 edits
+    (base.html, styles.css, tailwind.css, charts.js, tailwind.config.js,
+    range-picker.html) and RF2 edits under verification. They rode along in my
+    `cp -a`. They did not affect any RF5 assertion, and `make check` was green
+    with them present. Attributed, not failed.

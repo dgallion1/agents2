@@ -1,0 +1,3 @@
+web/templates/pages/dashboard.html
+web/static/js/charts.js
+web/static/css/tailwind.css

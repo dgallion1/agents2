@@ -1,0 +1,194 @@
+VERDICT: PASS
+CHECKER: checker-a11y
+FAMILY: anthropic
+TASK: RF1
+ATTEMPT: 2
+---
+SCOPE: RF1 attempt 2 (worktree /home/darrell/bin/ai/budget2/.claude/worktrees/retiree-refresh,
+branch feat/retiree-refresh off master 344cb30). Manifest files: tailwind.config.js,
+web/static/css/styles.css, web/static/js/charts.js, web/static/css/tailwind.css,
+web/templates/layouts/base.html, web/templates/components/shared/range-picker.html.
+No RF1.1.checker-a11y.verdict existed to reuse (only RF1.1.checker-second.verdict did);
+this is a from-scratch render-based audit of attempt 2. Diff vs master confirmed with
+`/usr/bin/git diff master -- <path>` for every manifest file before testing (all match
+RF-RUN-SPEC item 1-6 exactly, including the attempt-2-only change: the three desktop
+group-label spans get `hidden 2xl:inline` with ids kept).
+
+METHOD: Built branch server (isolated data copy) via `scripts/whatif-verify.sh start 8142`
+(never :8080/:8081). Master baseline: `cp -a` to scratch
+/tmp/claude-1000/.../scratchpad/rf1-a11y2, `git checkout master -- web tailwind.config.js`
+in that COPY ONLY, `make css`, built + started on 8152 via the same script (REPO derived
+from the copy's own path). Both `curl /api/health` OK throughout. Playwright per given
+paths/args; dark mode tested both ways: (a) cold-load via `page.addInitScript` setting
+`localStorage.theme='dark'` before navigation (matches base.html's inline
+head script, the realistic persisted-preference path) and (b) a real click on
+`#theme-toggle` (dispatches the `themechange` event charts.js/insights.js listen for).
+NOTE: a raw `documentElement.classList.toggle('dark')` post-load WITHOUT re-navigation
+or the themechange event (the literal wording in my own dispatch brief) does NOT
+re-render already-drawn Plotly charts, because charts.js/insights.js key their redraw
+on the `themechange` CustomEvent, not a class-attribute MutationObserver — using it
+produced spurious "black chart text on dark card" hits I discarded after confirming
+(check-real-toggle.js, check-coldload-dark.js) that both real user paths (persisted
+dark cold-load, and clicking the toggle) redraw with the correct RF1 colors. Recording
+this so the method is auditable, per instructions to attribute methodology explicitly.
+
+1. AXE (wcag2a/2aa/21aa/22aa), all 9 pages x 1440/390 x light/dark, every <details> opened:
+   `node audit2.js` (page.goto waitUntil:'load' + 600ms settle; networkidle hung
+   indefinitely on /whatif's polling and was abandoned after it took down the 8142
+   server under the first attempt — confirmed not reproducible with plain curl calls
+   afterward, i.e. a Playwright/networkidle artifact, not a server crash under normal
+   load).
+   RESULT — branch violations found: /transfers 390 (`scrollable-region-focusable`,
+   1 node, both themes) and /major-expenses 390 (`target-size`, 6 nodes, both themes).
+   Master has the IDENTICAL two (same rule ids, same node counts). ACCESSIBILITY.md's
+   own RF.0 "Deferred" list names both as pre-existing/out-of-territory. Not a RF1 FAIL.
+   /dashboard 390: master has `scrollable-region-focusable` (2 nodes, both themes);
+   BRANCH HAS ZERO — RF4 (accepted, dashboard.js chart-table wrapper a11y attrs) already
+   cured this on the branch; OBSERVATION, not attributable to RF1 (different manifest).
+   Every other page (dashboard@1440, insights, whatif, explorer, accounts, filemanager,
+   duplicates) is axe-clean on both branch and master, both sizes, both themes.
+   Insights June-range + all 5 sub-tabs (trends/income/anomalies/pricecreep/pace) x
+   1440/390 x light/dark: `node insights-june.js` — 0 violations everywhere, branch and
+   master identical.
+   => No violation introduced or replicated by RF1. PASS.
+
+2. Manual contrast walk (point 7/12), /dashboard, /insights(June), /whatif, /explorer,
+   /accounts, both themes, real dark-mode paths: `node contrast-walk3.js` (treewalker
+   over every visible text node incl. SVG <text> via `fill` not `color`; background
+   resolved incl. `background-image` gradients, composited through the ancestor chain;
+   large-text threshold 3:1 else 4.5:1). Findings, each cross-checked branch vs master:
+   - Active nav-tab white text vs the accent-strong pill overlay: 4.19:1 on BOTH branch
+     and master (rgb(114,107,234) composited bg either way) — the active-tab background
+     classes (`bg-white/20` over `bg-gradient-to-r from-accent-strong`) are untouched by
+     RF1 (only `px-3`->`px-2` + `whitespace-nowrap` changed, no color class). PRE-EXISTING,
+     unowned. OBSERVATION for backlog (borderline WCAG 1.4.3 miss, not new).
+   - Dashboard "34.3%" annotation text, light mode: ratio 1.0 on both branch and master
+     (same off-visual-layer text, identical in both). PRE-EXISTING/harness-neutral.
+   - Dashboard "Target $11351" chart annotation, dark mode: 3.14:1 branch vs 3.04:1
+     master (marginally IMPROVED by the stone remap, not worsened) — the annotation
+     itself is rendered by dashboard.js/Plotly defaults, not an RF1-owned file.
+     PRE-EXISTING, unowned, and not made worse.
+   - Whatif "$" prefix span (`text-gray-600` with no `dark:` variant), dark mode: 1.99:1
+     branch vs 1.94:1 master — same missing-dark-variant defect on both (whatif.html is
+     not in RF1's manifest); warm-grey remap changes the number negligibly, doesn't
+     newly break it (already broken). PRE-EXISTING, unowned.
+   - Accounts sr-only captions/TH ("Balance anchors for...", "Actions"): visually
+     clipped (sr-only), not rendered to sighted users — contrast is moot for hidden
+     text (not a WCAG 1.4.3 subject); present identically on both. Non-issue.
+   => No new contrast failure on any of the five pages in either theme. PASS.
+
+3. Nav (points 1/3/9, WCAG 1.3.1/4.1.2), branch server: `node nav-check2.js`.
+   - 1280px: `getComputedStyle(#nav-group-money/plan/setup).display` = `none` (labels
+     hidden per the attempt-2 fix) but `page.getByRole('group', {name:'Money'/'Plan'/
+     'Setup', exact:true})` each resolve to count=1 — Playwright's accessible-name
+     computation (which follows the same algorithm a screen reader uses) confirms
+     `aria-labelledby` pointing at a `display:none` element still resolves the name.
+     Confirmed via the real accessibility-name API, not just DOM inspection.
+   - 1280px, WITH the production Duplicates badge injected into the live DOM (`<a
+     href="/duplicates">` + count badge, exact production markup, inserted after File
+     Manager): `documentElement.scrollWidth == documentElement.clientWidth == 1280` —
+     no overflow. All 9 desktop nav links (incl. "Duplicates3") share the same `top`
+     (14.9px) and the same `height` (38.3px, one line — not 2x line-height). Header's
+     own right edge == 1280 == window width.
+   - 1536px: labels `display:block`, all three group names still resolve via
+     `getByRole`, no overflow (`scrollWidth==clientWidth==1536`).
+   - Mobile menu (390px) markup untouched (confirmed by the diff — RF1 edited only the
+     `hidden xl:flex` desktop block).
+   - Keyboard order unchanged (class-only edits, same anchor order/count as master).
+   => PASS (this is the ruling RF-2026-09-07c fix under direct verification, not just
+   accepted on the second checker's earlier evidence).
+
+4. Focus rings (point 9): indigo-500 vs new dark card recomputed independently —
+   `python3` sRGB relative-luminance calc: indigo-500 #6366f1 vs stone-900 #1c1917 =
+   3.92:1, vs stone-800 #292524 = 3.40:1 — matches charts.js's own updated comment
+   exactly (both ≥3:1). What-If (`#wf-tab-cashflow`) and Insights (`#insights-tab-
+   income`) tab buttons: real `page.focus()` -> computed `outline` is a visible 2px
+   solid ring in both themes (light rgb(79,70,229) 6.29:1 vs white; dark
+   rgb(165,180,252) 7.61:1 vs stone-800 / 8.77:1 vs stone-900 body) — these tabs are
+   unowned by RF1 (whatif.html/insights.html not in manifest) and use browser-default
+   focus outline (no `outline:none`), unaffected by the token change. PASS.
+
+5. Reduced motion (point 15): `reducedMotion:'reduce'` context, branch server —
+   `.transition-colors` and `.transition-all` on /dashboard: `transitionDuration` = `0s`.
+   `.major-expenses-pin-check-header` on /major-expenses: `0s`. `.transition-transform`
+   on /major-expenses: `0s`. (`.transition-opacity`/`.transition-shadow` not present in
+   the initial DOM of the pages checked — conditionally-rendered elements — but the CSS
+   rule in styles.css is a single static selector list covering all five utilities plus
+   both pin-check classes, so presence of 3/5 confirmed empirically plus source
+   inspection of the rule covering the rest is sufficient.) `animate-spin` unaffected:
+   `animationDuration` = `1s` (still animates, as spec requires). PASS.
+
+6. Reflow: `node reflow.js`, `scrollWidth`/`clientWidth` at 390 and 1280, all 9 pages,
+   branch vs master. All seven master-clean pages (dashboard, insights, explorer,
+   accounts, transfers, filemanager, duplicates) are `scrollWidth==clientWidth` on BOTH
+   branch and master at both widths — no new overflow, explorer included (confirms the
+   ruling-a range-picker `flex-wrap` fix holds). major-expenses: no overflow on either
+   branch or master at 390 (both clean in this data state — the deferred pre-existing
+   defect the spec anticipated didn't reproduce with this fixture; not a regression
+   either way). whatif at 390 (deferred pre-existing overflow, per RF.0): branch
+   scrollWidth 498 vs master 476 (both clientWidth 390). Applying the acceptance's own
+   tolerance basis (the 6.25% root-font growth that CAUSES this, +8px slack) to the
+   reported scrollWidth number: 476 * 1.0625 + 8 = 513.75; branch's 498 is within that
+   ceiling. (If instead the tolerance were read as applying to the raw overflow-amount
+   delta (108 vs 86), it would exceed a same-formula ceiling of 99.375 — flagging this
+   ambiguity for the lead since the acceptance text is genuinely two-readable; I judged
+   the scrollWidth-number reading correct because it ties directly to the 106.25% root
+   bump this task authored and to "report the numbers" i.e. the raw scrollWidth, and
+   under that reading there is no regression.) OBSERVATION for the lead to confirm the
+   tolerance's intended basis; not a FAIL under the reading I consider correct.
+
+7. Charts (point 12): `node chart-colors.js` — Plotly tick-text fill and gridline
+   stroke on /dashboard and /whatif, both themes: light tick `rgb(68,64,60)` (=#44403c),
+   dark tick `rgb(231,229,228)` (=#e7e5e4), light grid `rgb(231,229,228)`, dark grid
+   `rgb(68,64,60)` — exact RF1 spec values. Hover-box colors: real mouse-hover on a bar
+   didn't trigger Plotly's tooltip DOM reliably under Playwright's synthetic mousemove
+   (tried `.hover()`, scrollIntoView + force, raw `page.mouse.move` after
+   scrollIntoView — hoverlayer stayed empty each time, a known Plotly/synthetic-event
+   friction, not a page defect: real mouse input works, confirmed indirectly), so I
+   inspected the Plotly graph object's resolved `_fullLayout.hoverlabel` directly (the
+   same config object Plotly paints the tooltip from) instead: light
+   `{bgcolor:'#ffffff', bordercolor:'#d6d3d1', fontColor:'#1c1917'}`, dark
+   `{bgcolor:'#292524', bordercolor:'#57534e', fontColor:'#f5f5f4'}` — exact RF1 spec
+   hover values. PASS, via the layout-object cross-check rather than a rendered hover
+   screenshot; flagging the method substitution per instructions.
+
+8. `.num` / font floor (point 8-adjacent numeral-alignment requirement): recurring
+   table (`#insights-recurring table .num`) — `font-family` equals body's proportional
+   stack (not monospace) confirmed on every cell; `font-variant-numeric: tabular-nums`
+   on every cell; two rows' payment/monthly/annual columns share exact right edges
+   (913.16 / 1126.58 / 1326 px, both rows, all three columns). Smallest computed
+   font-size site-wide (SVG/chart labels excluded, sr-only excluded): /insights
+   14.875px, /dashboard 12.75px (`text-label` badge) — exactly at, not below, the
+   ≥12.75px floor. PASS.
+
+BUILD/CSS ACCEPTANCE (item 1): `make css` then `make css-verify` -> "tailwind.css is up
+to date"; `grep -c '!important' web/static/css/styles.css` = 0; `go build ./...` clean;
+`go vet ./...` clean; `node --test "web/static/js/**/*.test.cjs"` -> 10/10 pass.
+`git diff master --stat -- web/static/css/tailwind.css` = 1 line changed (a minified
+CSS regen artifact, consistent with the palette/root-size source changes).
+
+FAILURES: none.
+
+OBSERVATIONS (non-blocking, for the lead's backlog — none block RF1):
+- Active desktop nav-tab (`bg-white/20` over the accent-strong gradient) is 4.19:1 for
+  its white label text, just under the 4.5:1 normal-text floor — identical on master,
+  unowned by any RF1 file (only spacing/whitespace classes changed on that element).
+  Pre-existing WCAG 1.4.3 near-miss, not introduced by this run.
+- Dashboard "Target $11351" chart-annotation text is a low ~3.1:1 in dark mode on both
+  branch and master (dashboard.js-authored annotation, not an RF1 file); RF1's stone
+  remap left it marginally better (3.04 -> 3.14), not worse.
+- What-If "$" input-prefix span (`text-gray-600`, no `dark:` twin) stays low-contrast
+  in dark mode on both branch and master (~1.9-2.0:1); RF1 didn't introduce or fix this
+  (whatif.html not in RF1's manifest).
+- Reflow tolerance basis for the deferred /whatif 390px overflow (item 6 above) is
+  ambiguous in RF-RUN-SPEC's acceptance wording between "6.25%+8px of the reported
+  scrollWidth" (my reading, PASS) vs "...of the overflow-amount delta" (would FAIL);
+  worth a one-line clarification in a future spec so this isn't re-litigated per
+  attempt.
+- axe's default color-contrast rule does not evaluate Plotly's SVG `<text>` fill at
+  all (confirmed: it flags nothing on any chart-bearing page in either theme, on
+  either branch or master, while the manual contrast walk does inspect those nodes
+  once the `fill`-vs-`color` property distinction is handled) — this is why point 2's
+  manual walk, not axe, is load-bearing for chart-label contrast; noting it because a
+  future checker relying on axe alone for chart pages would silently miss this class
+  of defect.

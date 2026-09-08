@@ -1,0 +1,105 @@
+VERDICT: PASS
+CHECKER: checker-second
+FAMILY: adversarial
+TASK: RF1
+ATTEMPT: 2
+---
+Setup: branch served via scripts/whatif-verify.sh on :8143 (worktree
+/home/darrell/bin/ai/budget2/.claude/worktrees/retiree-refresh); master
+baseline via `cp -a` scratch copy + `git checkout master -- web
+tailwind.config.js` served on :8153 (fresh copy, rf1-second2, distinct from
+attempt-1's rf1-second dir). Both stopped cleanly at the end.
+
+Fix under test (git diff master -- web/templates/layouts/base.html): the
+three group-label spans (#nav-group-money/plan/setup) changed from a bare
+`text-label uppercase text-white/60` class to `hidden 2xl:inline text-label
+uppercase text-white/60`; ids unchanged. This is the only change since
+attempt 1 (range-picker.html diff is byte-identical to attempt 1's already-
+PASSed version).
+
+Attack 1 — production Duplicates badge at 1280 (the attempt-1 FAIL case)
+  Injected the EXACT production markup (`relative px-2 py-2 ...
+  whitespace-nowrap` anchor + `<span class="ml-1 inline-flex items-center
+  justify-center px-2 py-0.5 text-xs font-semibold rounded-full
+  bg-warning-strong text-white">3</span>`) into the Setup nav group via
+  Playwright DOM injection at 1280px:
+    documentElement.scrollWidth = 1280 (exactly the container width, matches
+    acceptance criterion 5's literal `== 1280`); maxRight of the last real
+    nav link = 1207.75 (~72px headroom); all real links share one `top`
+    (14.875px) and are one line. The injected node itself lands at
+    top=14.4375 (0.4375px off) purely because my throwaway injected markup
+    lacks the template's exact whitespace/line-height context — reproduced
+    with a bare-bones clone, not a rendering defect in RF1's shipped
+    template (the real server-rendered Duplicates link, present when
+    UnresolvedDuplicateCount>0, uses identical classes to its siblings and
+    would sit at the same top).
+  This directly refutes and closes attempt 1's FAIL (RF-2026-09-07c).
+
+Attack 1b — escalate the badge case
+  - Two-digit ("12") and three-digit ("123") badges at 1280: scrollWidth
+    stays 1280 in both cases — extra headroom beyond the 1-digit contract
+    case. OBSERVATION (not required by acceptance, still passes).
+  - 1536 and 1920 with badge: scrollWidth == viewport width (no overflow);
+    #nav-group-money computed display != 'none' (reports 'block' — this is
+    Chrome's spec-compliant "blockification" of an inline flex item; the
+    CSS rule itself is `.2xl\:inline{display:inline}` inside
+    `@media(min-width:1536px)`, confirmed by grep on tailwind.css — the
+    label is visible and laid out inline within the flex row regardless of
+    the computed-style blockification, not a defect). 1366 and 1440 (two
+    unrequested but realistic desktop widths between the named breakpoints)
+    also clean with the badge present: scrollWidth == clientWidth.
+  - User-triggered zoom scenario (root font forced to 18.7px via
+    `document.documentElement.style.fontSize`, simulating ~10% browser zoom,
+    NOT the production 17px default) at 1280 with badge: scrollWidth = 1318,
+    a 38px overflow. Per the attack instructions this is OUTSIDE the named
+    contract (production badge at the DEFAULT 17px root, 1280-1535px) —
+    reported as an OBSERVATION for the backlog, not grounds for FAIL: RF1's
+    acceptance criterion 5 and ruling RF-2026-09-07c both specify the
+    default type scale, not a further user zoom on top of it.
+
+Attack 2 — 1536/1920 without badge complications, group accessible names
+  `page.getByRole('group', {name:'Money'|'Plan'|'Setup'})` at 1280 (labels
+  visually hidden) each resolve count=1 — `aria-labelledby` correctly reads
+  the hidden (`display:none`-equivalent) span text per ARIA's exception for
+  labelledby references (hidden-but-not-aria-hidden nodes remain valid label
+  sources). `aria-current="page"` still marks "Dashboard" as active.
+  Theme-toggle button (`#theme-toggle`) is visible, focusable
+  (`document.activeElement === btn` after `.focus()`), keeps its
+  `aria-label="Toggle dark mode"`. At 390px, mobile menu paragraphs
+  (`#mobile-nav-group-money/plan/setup`) are `display:block` with visible
+  text Money/Plan/Setup — untouched by this attempt's change (mobile menu
+  uses separate `mobile-nav-group-*` ids, confirmed by grep on base.html).
+
+Attack 3 — re-confirm attempt-1's clean surfaces (brief re-check)
+  `grep -c '!important' web/static/css/styles.css` -> 0
+  `go build ./...` -> exit 0
+  `node --test "web/static/js/**/*.test.cjs"` -> 10/10 pass
+  `make css && make css-verify` -> "tailwind.css is up to date"
+  Money-string parity (`/dashboard/kpis`, `/insights`, same data copy, same
+  range, Counter of `-?\$[\d,]+\.\d\d` tokens): 0 missing-in-branch on both
+  endpoints; extra-in-branch tokens ($12,396.71/$9,126.83 on kpis;
+  $25,659.73/-$3,950.41/$7,438.28 on insights) are RF2/RF3 lead-sentence
+  restatements of figures already in the fragment — same pattern attempt 1
+  already attributed away from RF1; RF1 owns no template that renders these
+  values.
+  `git diff master -- web/static/css/styles.css`: grep for
+  `--accent|--positive|--negative|--warning` hunks -> zero hits (still
+  byte-identical to master).
+  Reduced motion (`reducedMotion:'reduce'` context): `body`
+  (`transition-colors`) computes `transition-duration:0s`,
+  `transition-property:none`.
+  Base case (no badge) nav at 1280: scrollWidth=1280, maxRight=1207.75, one
+  uniform top (14.875) — identical to attempt 1's PASSed measurement.
+  Stray hex-grey grep across charts.js/styles.css/base.html/range-picker/
+  tailwind.config.js -> zero hits (insights.js hit from attempt 1 is
+  RF3-owned, out of RF1's manifest, unchanged).
+
+No regression found. Attempt 2's `hidden 2xl:inline` fix closes attempt 1's
+FAIL (RF-2026-09-07c) at the named 1280px breakpoint with the production
+badge present, without breaking accessible group naming, active-tab marking,
+theme-toggle reachability, the mobile menu, or any of attempt 1's
+already-PASSed surfaces. Two OBSERVATIONS recorded above (multi-digit badge
+headroom is generous; a user-zoom scenario beyond the default 17px root
+still overflows at 1280) — both outside the acceptance contract's stated
+scope (default type scale, badge digit count as shipped), not grounds for
+FAIL.

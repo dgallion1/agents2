@@ -1,0 +1,130 @@
+VERDICT: PASS
+CHECKER: checker-a11y
+FAMILY: anthropic
+TASK: RF2
+ATTEMPT: 1
+---
+Scope: web/templates/components/kpis.html plus the three RF-2026-09-07b-
+ruled test files (internal/templates/render_dashboard_lead_rf2_test.go,
+internal/handlers/dashboard/handlers_http_test.go, cmd/server/cross_money_di5_test.go).
+Foreign/attributed, not audited for their own defects: RF1 global palette,
+root font, nav; RF3 insights; RF4 dashboard.js.
+
+Setup:
+- `git diff master -- web/templates/components/kpis.html` reviewed in full;
+  matches RF-RUN-SPEC.md RF2 A/B/C exactly (lead <p id="dashboard-lead"
+  text-xl>, h2 text-sm->text-base, figures text-2xl->text-4xl (and
+  "Not set"/"No observed spending" text-lg->text-2xl), helper/caveat/link
+  text-sm->text-base, "Budget details" h2 text-lg->text-xl, h3
+  font-medium->text-lg font-medium, and the "About these numbers" <details>
+  wrapping the methodology + PlanExcluded paragraphs verbatim, placed after
+  the two-column grid and before "Plan explanation and comparison"). No
+  aria-hidden/sr-only/hidden additions anywhere in the diff.
+- `go build ./...`, `go vet ./...` clean.
+- `go test ./internal/templates/... ./internal/handlers/dashboard/... ./cmd/server/...`
+  -> ok x3. Confirmed the new test's fixtures match ruling RF-2026-09-07b
+  item 3 (10.001/9.999 substituted for the spec's incorrect 10.006/10.004,
+  yields exactly "Recorded income matched spending" and tile $0.00); case
+  (iv) TransactionCount 0 asserts absence of #dashboard-lead; a dedicated
+  test asserts #dashboard-lead is literally the first child after the
+  section's opening tag.
+- `make css-verify` -> "tailwind.css is up to date" (no drift).
+- Render harness: `scripts/whatif-verify.sh start 8149` (real server, real
+  data copy, real built stylesheet) / `stop 8149` when done. Never touched
+  :8080/:8081.
+
+1. axe (wcag2a/2aa/21aa/22aa), Playwright+axe-core 4.x, real render:
+   /dashboard and /dashboard?start=2026-01-01&end=2026-08-27, 1280x900 and
+   390x844, light and `classList.add('dark')` (+400ms), every <details>
+   forced open before the scan.
+   `node audit.js` -> default_1280_light/dark, default_390_light/dark,
+   ranged_1280_light/dark, ranged_390_light/dark: violations: 0 (all 8).
+   Zero violations total, so trivially zero introduced by RF2.
+
+2. Heading structure (Playwright DOM walk of /dashboard):
+   H1 Dashboard; H2 Recorded income / Net spending / Cash-flow balance /
+   Spending versus plan / Budget details; H3 Monthly Living Expenses /
+   Monthly Healthcare; H2 Accounts / Budget vs Actual.../Spending by Major
+   Expense/Spending Trend/Top Spending/Cumulative Balance. h1 count = 1, no
+   skipped levels (h1->h2->h3 only), tile h2s sit at the same level as
+   "Budget details" h2 (siblings, not nested wrongly). `#dashboard-lead`
+   tagName = P.
+
+3. Contrast (computed style + WCAG relative-luminance formula, effective
+   background walked up the DOM), both themes, 1280px:
+   - lead + lead .num span: 21.25px, light 16.03:1, dark 16.03:1 (floor 4.5:1)
+   - tile h2 label (e.g. "Recorded income"): 17px/500, light 9.42:1, dark 11.74:1
+   - tile figure (.num, 38.25px/600, ≥24px large-text floor 3:1): light
+     16.03:1, dark 16.03:1
+   - tile helper text (17px): light 6.99:1, dark 6.93:1
+   - "About these numbers" <summary> (accent color, 17px): light 5.76:1,
+     dark 8.77:1
+   - text-negative figure (Cash-flow tile, 38.25px large text, floor 3:1):
+     light 5.76:1, dark 9.25:1
+   - text-positive figure (Spending-vs-plan tile, 25.5px large text, floor
+     3:1): light 5.21:1, dark 8.43:1
+   All well clear of their respective floors in both themes; none of these
+   are RF1's plain stone-grey body text, they are the NEW/RESIZED RF2
+   elements this task owns.
+
+4. Sign semantics: rendered `/dashboard/kpis` lead ->
+   `Spending is <span class="num">$18,965.19</span> under plan for this
+   period. Recorded income did not cover spending by <span class="num">
+   $26,043.32</span>.` — both money figures inside `.num` spans, sign
+   carried entirely in the surrounding words ("under plan", "did not cover
+   … by"); no bare "-" anywhere in the lead's rendered text.
+
+5. Keyboard (Playwright, both themes, 1280px): `#dashboard-budget-details
+   summary` ("About these numbers") reaches native focus (outline: auto,
+   visible — no `outline:none` and no replacement needed since the UA
+   default is intact), Enter toggles `details.open` false->true in both
+   themes. `a[href="#dashboard-budget-details"]` click scrolls the target
+   section to the top of the viewport (rect.top ~= 0) in both themes —
+   anchor still lands.
+
+6. Reflow (Playwright, both themes): page `scrollWidth <= clientWidth` at
+   both 390 and 1280 (no new horizontal overflow). At 390 the four tiles
+   stack (4 distinct row `top` values: 905/1060/1266/1472). At 1280 all
+   four tiles share one row (`top` = 490 for all four). Every `.num`/figure
+   paragraph in the tiles has `scrollWidth == clientWidth` (no overflow) at
+   both viewports; the text-4xl figures ($44,123.21 / $70,166.53 /
+   -$26,043.32) and the text-2xl "$18,965.19 under" render on one line at
+   both 390 and 1280.
+
+7. HTMX swap + focus: changed `#dashboard-date-start` via a real user
+   interaction (click, fill, Tab) which triggers HTMX's `change`-bound
+   request against `#kpis-container`. Lead re-rendered with new figures
+   ("Spending is $13,341.75 under plan…, did not cover spending by
+   $19,857.63") after the swap, and `document.activeElement` remained the
+   `dashboard-date-start` input (native multi-segment `<input type=date>`
+   Tab behavior moves between the control's own segments before leaving
+   it — unrelated to and unaffected by the `#kpis-container` swap, which is
+   a sibling of the date-filter form, not an ancestor). Confirms "not
+   worse": this is not a regression RF2 could introduce since RF2 never
+   touches the date inputs or the swap target boundary.
+
+8. Reading order: rendered `/dashboard/kpis` fragment, line numbers of key
+   markers in DOM/source order: `#dashboard-lead` (line 23) ->
+   `#dashboard-overview` tiles (26) -> cash-flow caveat paragraph (53) ->
+   "Investigate this period in Insights" link (54) ->
+   `#dashboard-budget-details` (56). Matches the spec's required order
+   exactly; confirmed by direct diff review that no aria-hidden, sr-only,
+   or CSS-order tricks were introduced — the "About these numbers" caveat
+   fold is a `<details>` (visible summary, expandable content), which is
+   the mandated disclosure primitive (RF.0), not a suppression mechanism.
+
+FAILURES: none.
+
+OBSERVATIONS (non-blocking):
+- The `.num` span used for "Spending versus plan" tile's figure
+  (`<span class="num">$18,965.19</span> under`) reports `scrollWidth`/
+  `clientWidth` of 0/0 when queried directly, because it is an inline
+  element (clientWidth/scrollWidth are spec'd as 0 for non-replaced inline
+  elements). This is pre-existing structural behavior unrelated to RF2's
+  size bump; verified no overflow instead via the parent `<p>` element,
+  which is block and shows `scrollWidth == clientWidth` at both viewports.
+  Checkers auditing future `.num` reflow claims should query the parent
+  block element, not the inline span itself.
+- All contrast ratios measured (5.21:1 to 16.03:1) are far above their
+  floors; no near-miss values worth flagging for RF1's future palette
+  tuning.

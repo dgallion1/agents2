@@ -1,0 +1,156 @@
+VERDICT: FAIL
+CHECKER: checker-second
+FAMILY: adversarial
+TASK: RF1
+ATTEMPT: 1
+---
+Setup: served branch (worktree /home/darrell/bin/ai/budget2/.claude/worktrees/retiree-refresh)
+via scripts/whatif-verify.sh on :8143, and a `cp -a` scratch copy with
+`git checkout master -- web tailwind.config.js` served on :8153, both against
+the SAME underlying data (isolated per-instance copies of the same source).
+Both stopped cleanly at the end (`scripts/whatif-verify.sh stop 8143/8153`).
+
+1. Build/lint gate — PASS
+   `grep -c '!important' web/static/css/styles.css` -> 0
+   `go build ./...` -> exit 0, no output
+   `node --test "web/static/js/**/*.test.cjs"` -> 10/10 pass
+   `make css` then `make css-verify` -> "tailwind.css is up to date"
+
+2/3. Rendered tokens — PASS (Playwright, :8143/dashboard)
+   fontSize=17px; .text-sm computed 14.875px; .num font-family equals body's
+   (ui-sans-serif...), not monospace; font-variant-numeric=tabular-nums.
+   body background rgb(245,245,244) light / rgb(28,25,23) dark; card
+   (.bg-white.dark\:bg-gray-800) rgb(255,255,255) / rgb(41,37,36). All match
+   RF1 spec values exactly.
+
+Attack 2 (gray→stone remap) — PASS
+   `web/static/css/tailwind.css`: `.text-gray-500{...rgb(120 113 108...}`,
+   `.text-gray-600{...rgb(87 83 78...}`, `.bg-gray-800{...rgb(41 37 36...}`,
+   `.text-gray-900{...rgb(28 25 23...}` — all stone. Safelist entries
+   `.text-gray-600`/`.dark\:text-gray-400:is(.dark *)` resolve to stone
+   rgb(87 83 78)/rgb(168 162 158). Opacity variants sampled from grep
+   (`gray-[0-9]+/[0-9]+` across templates): `.dark\:bg-gray-700\/50:is(.dark *)`,
+   `.dark\:bg-gray-900\/50`, `/40`, `/95`, `.dark\:border-gray-700\/60`,
+   `.ring-gray-900\/10`, `.hover\:bg-gray-900\/10:hover` all compile to the
+   new stone rgba values; `.even\:bg-gray-50\/70:nth-child(2n)` compiles to
+   `hsla(60,9%,98%,.7)` which round-trips to rgb(250,250,249) == stone-50
+   (verified with colorsys) — a different but equivalent CSS color-function
+   serialization from the standalone CLI, not a wrong color.
+   `git diff master -- web/static/css/styles.css`: only `--neutral*` triplets,
+   scrollbar colors, `.qa-tab-active`/`.num` changed; `--accent*`,
+   `--positive*`, `--negative*`, `--warning*` byte-identical to master
+   (confirmed by reading the full diff — no hunks touch those lines).
+
+Attack 3 (stray hard-coded greys) — PASS, one attributable OBSERVATION
+   `grep -noE '#(111827|1f2937|374151|4b5563|6b7280|9ca3af|d1d5db|e5e7eb|f3f4f6|f9fafb)'`
+   across charts.js, dashboard.js, base.html, styles.css, whatif-*.js: zero
+   hits. One hit in web/static/js/insights.js:349 (`#9ca3af`/`#6b7280` in
+   `insightChartMarkers()`) — OBSERVATION only: insights.js is RF3's
+   manifest file, not RF1's, and `git show master:web/static/js/insights.js`
+   has the identical literal at its own line 311 — pre-existing on master,
+   not introduced by this run at all. Plotly `paper_bgcolor`/`plot_bgcolor`
+   in charts.js are `'transparent'` (2 occurrences) — no gray literal.
+
+Attack 1 (money/content parity) — PASS
+   Same-data-copy same-range fetch, tags stripped, whitespace-normalized:
+   /insights/recurring and /whatif (default tab) and /explorer (first page)
+   are byte-identical text between branch and master. /dashboard/kpis and
+   /insights/trends differ only in RF2's lead-sentence insertion / caveat
+   `<details>` move / RF3's "Show all N categories" toggle text — confirmed
+   by extracting every `$X,XXX.XX` token from both bodies with a Counter
+   diff: /insights/trends has an EXACT multiset match (0 missing, 0 extra);
+   /dashboard/kpis has 0 missing figures and only 2 "extra" tokens
+   ($18,965.19, $26,043.32), both of which are the lead sentence RESTATING
+   figures already present elsewhere in the SAME master fragment (RF2's
+   contribution, not a new/changed figure). RF1 changed zero rendered
+   figures on any of the five probed endpoints.
+
+Attack 7 (reduced motion) — PASS
+   Playwright `reducedMotion:'reduce'` on :8143/dashboard: `.transition-colors`
+   element (`bg-gray-100 dark:bg-gray-900 min-h-screen transition-colors
+   duration-200`) computes `transition-duration: 0s`, `transition-property:
+   none`. `.animate-spin` element's `animation-name` is still `spin`.
+
+Attack 6 (range picker) — PASS
+   `git diff master -- web/templates/components/shared/range-picker.html`:
+   one class added (`flex-wrap`) to the `$group` wrapper. Dashboard and
+   Insights pass `GroupInputs false`, so `$group` is false and that wrapper
+   div is never rendered for them — structurally unaffected regardless
+   (confirmed by reading both templates' range-picker calls). /explorer (the
+   only stacked+grouped caller) renders the wrapper with `flex flex-wrap
+   items-end gap-2` at 390px with no new horizontal overflow
+   (`document.documentElement.scrollWidth <= clientWidth`), and clicking a
+   `.date-range-btn[data-months="1"]` preset updates `#explorer-date-start`'s
+   value (2026-07-27) confirming the JS hook still fires.
+
+Attack 4 (root-bump clipping) — PASS
+   Enumerated all 9 nav pages x {1280,390}, non-`.truncate` elements with
+   `overflow:hidden` and `scrollWidth/scrollHeight > client*`: branch and
+   master have IDENTICAL counts at every page/viewport (0 on dashboard,
+   insights, duplicates; 1 on explorer@390, whatif@1280/filemanager; 2 on
+   major-expenses, transfers; 15 on accounts — all pre-existing, unchanged
+   by RF1). `/major-expenses` and `/whatif` scrollWidth at 390 and 1280
+   checked against the "not more than master's *1.0625+8px" budget: whatif@390
+   branch=498 vs master=476 (budget 513.75, PASS); major-expenses unchanged
+   (390 exact match).
+
+Attack 5 (desktop nav) — FAIL, in-scope regression
+   Baseline (no Duplicates badge, current fixture data — UnresolvedDuplicateCount
+   is 0 so the real badge never renders): branch nav at 1280 is one line,
+   maxRight=1207.75 inside the 1280 container (72px headroom); this matches
+   RF1 acceptance criterion 5 as literally tested and PASSES.
+
+   BUT the attack-surface instruction explicitly requires simulating the
+   Duplicates badge (a real, existing conditional block in base.html,
+   `{{if .UnresolvedDuplicateCount}}`, unowned/untouched by RF1, that fires
+   whenever a household has unresolved duplicate transactions — a normal
+   production state, not a contrived one). Injecting the EXACT real anchor
+   markup (`relative px-2 py-2 ... whitespace-nowrap ...` + the badge span,
+   copied verbatim from the current base.html diff) into the Setup nav group
+   at a 1280px viewport:
+     - BRANCH (:8143, RF1's fix — px-2/gap-4/whitespace-nowrap, 17px root):
+       `document.documentElement.scrollWidth` = 1349 at a 1280px viewport —
+       a NEW 69px horizontal page overflow. `maxRight` of the last nav link
+       = 1293.33, past the 1280 container edge.
+     - MASTER (:8153, true `git checkout master -- web tailwind.config.js`,
+       same injected badge with MASTER's own real classes — px-3/gap-6, no
+       whitespace-nowrap, 16px root): `document.documentElement.scrollWidth`
+       stays exactly 1280 — NO horizontal overflow. (Master instead lets the
+       badge-bearing link's text wrap onto a second line — several links'
+       `top`s become non-uniform, `offsetHeight` 56-57px — a pre-existing,
+       out-of-scope ugliness, but it does not create page-level horizontal
+       overflow.)
+     - Isolating cause: re-running the branch injection WITHOUT
+       `whitespace-nowrap` (branch's own px-2/gap-4 + 17px root, badge
+       present) still overflows (`scrollWidth`=1316), just by a smaller
+       margin and via 2-line wrap instead of a fully off-container link —
+       i.e. the 17px root bump alone leaves too little headroom for a 9th
+       nav item at 1280px, and RF1's own `whitespace-nowrap` fix (needed to
+       stop the base-case 3-link wrap named in ruling RF-2026-09-07a) turns
+       that shortfall into full horizontal page overflow instead of vertical
+       wrap once a realistic 9th item (the badge) is present.
+     - At 1440px the same injected badge fits on branch with margin
+       (maxRight=1373.33 < 1440) — the regression is specific to the named
+       1280px breakpoint.
+
+   This is a NEW horizontal overflow (RF.0: "no NEW horizontal overflow" at
+   1280px, one of the run's three mandated viewports) directly caused by
+   RF1's own committed file (web/templates/layouts/base.html, in-manifest)
+   interacting with RF1's own root-font change (styles.css, in-manifest), in
+   a state reachable through an existing, unmodified feature (the Duplicates
+   badge) that ruling RF-2026-09-07a itself named as the failure mode this
+   task's nav fix exists to close ("wraps three desktop nav links at
+   1280 px"). The fix closes it only for the fixture's current 8-link,
+   no-badge state; a realistic 9th-item state reopens it as overflow rather
+   than wrap. In scope: base.html and styles.css are both in RF1's manifest,
+   and RF1 acceptance criterion 5 states unconditionally "the nav's right
+   edge stays inside the container."
+
+FINDINGS for backlog (not grounds for FAIL, out of RF1 scope):
+- web/static/js/insights.js:349 hard-coded `#9ca3af`/`#6b7280` (theme-role,
+  chart marker colors) never converted to stone — pre-existing on master,
+  owned by RF3 if anyone, not RF1.
+- Master itself (independent of this run) already mishandles the desktop
+  nav when the Duplicates badge is present at 1280px — links wrap to 2
+  lines rather than staying single-line. Pre-existing, out of RF1's
+  territory; worth a follow-up task regardless of RF1's disposition.
