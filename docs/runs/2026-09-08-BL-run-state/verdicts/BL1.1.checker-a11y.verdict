@@ -1,0 +1,150 @@
+VERDICT: PASS
+CHECKER: checker-a11y
+FAMILY: anthropic
+TASK: BL1
+ATTEMPT: 1
+---
+Scope: web/templates/pages/major-expenses.html only (manifest BL1.1.files
+confirms single file). `/usr/bin/git diff master -- web/templates/pages/major-expenses.html`
+shows exactly 12 changed lines: four `<div class="overflow-x-auto" tabindex="0"
+role="region" aria-label="...">...</div>` wrappers added around the four tables
+named in BL1's contract (deleted-definitions ~153, legacy-unmatched ~546,
+unmatched ~600, new-merchants ~747 — the anomalous-amount table ~673 already
+had a wrapper and was untouched), and the Restore/Discard button classes
+changed `text-xs px-2 py-0.5` -> `text-body-sm px-3 py-1.5`. No other diff
+lines. Constitution used: ACCESSIBILITY.md at
+/home/darrell/bin/ai/budget2/.claude/worktrees/backlog-a11y/ACCESSIBILITY.md
+(the SimpleBudget standard — the retired-couple-ui-layout worktree's own
+ACCESSIBILITY.md is for a *different* project/dashboard and does not apply
+here; confirmed by content mismatch, e.g. "task-drawer", "SSE live-reload").
+
+HARNESS HAZARD (attribute, not a task defect): the shared `.swarm` scratchpad
+and the "checker ports 8181-8184" pool are being used concurrently by sibling
+BL-run processes (observed: my scratchpad's audit.js was overwritten mid-session
+by a /whatif-focused script belonging to another concurrent checker/worker;
+processes appeared/vanished on 8183/8188 without my action; my own server on
+8184 was killed out from under me by someone else's `killPreviousInstance`
+on the same port). All real audit numbers below are from a REBUILT branch
+server on an exclusive private port (8295, data/backups isolated per
+scripts/whatif-verify.sh's own isolation pattern) and a master baseline
+served directly from the clean base checkout /home/darrell/bin/ai/budget2
+(port 8194, verified `git status` clean at 43ce76e = the branch's base
+commit) — both confirmed via `strings`/a one-off `go run` dump of
+web.EmbeddedFS and live curl before use that they truly served the intended
+commit's markup. Both stopped and cleaned at the end of the audit.
+
+(1) Automated audit — axe (wcag2a/wcag2aa/wcag21aa/wcag22aa), real Playwright
+render (chromium headless, --no-sandbox), 390 and 1280, light and real
+`#theme-toggle`/`#theme-toggle-mobile` click for dark, every `<details>`
+force-opened before each run:
+  branch (8295) 390 light: violations=[] , scrollWidth=390=clientWidth
+  branch (8295) 390 dark:  violations=[] , scrollWidth=390=clientWidth
+  branch (8295) 1280 light: violations=[]
+  branch (8295) 1280 dark:  violations=[]
+  master (8194) 390 light: violations=[target-size ×6 nodes] (the 3 deleted
+    rows' Restore+Discard buttons), scrollWidth=436 != clientWidth=390
+  master (8194) 390 dark:  same 6 target-size violations, scrollWidth=436
+  master (8194) 1280 light/dark: violations=[] (no reflow at 1280)
+  Zero violations on branch at every combo; master reproduces exactly the
+  BL.0-documented pre-existing defect (`target-size` ×6, overflow at 390).
+  Command: node script using
+  /home/darrell/.npm/_npx/e41f203b7505f1fb/node_modules/playwright,
+  executablePath .../chromium-1243/chrome-linux64/chrome, args
+  ['--no-sandbox'], axe.min.js from
+  .../scratchpad/a11y-u12/node_modules/axe-core/axe.min.js.
+
+(2) `<th scope="col">` retained in all four newly-wrapped tables (verified by
+grep on the live-rendered HTML at lines matching 157-160, 550-561, 604-621,
+751-762 in the current build) plus the pre-existing anomalous-amount table
+(677-690) — no layout-table conversion, headers unchanged (point 2/A-7).
+Region reachability + names (point 9): real keyboard `Tab` walk (400
+presses) from page top, both themes, at 390: unique `role="region"` hits in
+DOM/visual order = ["Matched but anomalous amount table", "New merchant
+exceptions", "Deleted major expense definitions"] (the 4th region,
+"Unmatched exceptions [over threshold]", didn't render because this data
+copy currently has zero unmatched-exception rows — mutually exclusive
+{{if}} branches in the template, confirmed via curl: page shows "None." at
+that slot; not a defect). All three names are distinct and descriptive.
+Visible focus indicator: screenshot after a genuine Tab-key walk to the
+"New merchant exceptions" region shows a solid blue focus ring fully
+surrounding the region box in BOTH light and dark themes (clearly visible
+against white and near-black backgrounds respectively) — files
+.../scratchpad/bl1-private-3071115647/ring-light.png and ring-dark.png.
+Landmark count: 3 `role="region"` on this page load (would be 4 with
+unmatched-exception data present) — reasonable, not landmark clutter.
+
+(3) Buttons remain real `<button type="submit">` inside their original
+`<form hx-post/hx-delete ...>` (confirmed unchanged by the diff — only the
+`class` attribute changed, ids/hx-*/form structure byte-identical). Target
+size, measured via Playwright boundingBox() on the live render:
+  branch Restore: 80.8x36 px (light & dark, 390 and 1280) — passes 24x24.
+  branch Discard: 79.75x36 px — passes.
+  master Restore: 64.75x23.25 px — FAILS 24px height (matches BL.0 fact).
+  master Discard: 63.84x23.25 px — FAILS.
+Bulk-pin Apply/Clear (`#major-expenses-bulk-pin-apply/-clear`): not present
+in the default render (hidden/conditional, only appears once pins are
+selected) — could not measure without exercising JS state; these were NOT
+touched by BL1's diff (absent from `git diff`) and are OBSERVATIONS, not a
+FAIL, per the task's explicit scope note.
+OBSERVATION: ~60 `.major-expense-row-toggle` chevron icon buttons at
+14.875x14.875 CSS px (< 24x24) exist in the always-visible definitions list
+above the four wrapped tables — unchanged by this diff (absent from `git
+diff`, present identically in master), and axe does not flag them (WCAG
+2.5.8 spacing exception likely applies — rows are vertically separated).
+Also inline text links ("Booze", "Ignore", "Amazon" — h=20px) are exempt
+under the WCAG 2.5.8 inline-text-in-a-sentence exception and axe agrees
+(zero target-size violations reported). Both pre-existing, out of BL1's
+scope (file/lines absent from the diff) — reported as OBSERVATIONS for the
+backlog, not FAILures, per the task's "No other change" contract and the
+CLAUDE.md scope-of-reopened-attempt precedent.
+
+(4) Reflow at 390, both themes: `document.documentElement.scrollWidth (390)
+== clientWidth (390)` on branch (was 436 on master, confirmed above).
+Tables scroll INSIDE their regions, not the page: for the "New merchant
+exceptions" region, `region.clientWidth=320` vs `region.scrollWidth=401` vs
+`table.scrollWidth=401` — the table is wider than its region and scrolls
+there, while the page itself does not overflow. Screenshot
+ring-light.png/ring-dark.png visually confirms the "Pin to" column is
+clipped at the region boundary (available via horizontal scroll inside the
+region) rather than causing page-level overflow.
+
+(5) Heading outline: branch and master both render ["H1","H2","H2","H3"] at
+/major-expenses (390, both themes force-opened) — identical, one h1, no
+skipped levels. Landmarks: `main`/`nav`/`footer` present on both branch and
+master (identical). Confirms point 1/A-6 unaffected by BL1.
+
+(6) `hx-confirm` text: byte-identical between branch and master for all
+three Discard buttons currently rendered — "Permanently discard transfer to
+USAA? This cannot be undone.", "...brokerage?...", "...Eat out?..." (curl
+diff, only the line numbers shifted by +3 for the new wrapper divs; text
+unchanged). Confirms points 3/5/6 (confirmation text intact, no figure or
+sentence changes, matches BL.0 "no figure or sentence changes" rule).
+
+FAILURES: none.
+
+OBSERVATIONS (non-blocking, out of BL1's scope — none are FAILs):
+- Bulk-pin Apply/Clear buttons (`text-xs`, `px-2 py-0.5`) remain
+  sub-24px when visible (not exercised here since hidden by default) —
+  pre-existing, untouched by this diff; candidate for a future backlog item
+  alongside the row-toggle chevrons noted above.
+- ~60 `.major-expense-row-toggle` chevron buttons at 14.875x14.875 CSS px
+  are pre-existing (unchanged by this diff) and not flagged by axe (spacing
+  exception); same backlog candidate.
+- Foreign, uncommitted, in-progress edits in the SAME worktree per the
+  task's stated territory list: BL2 (spending-phases.html), BL3
+  (transfers.html), BL4 (base.html, roth-conversion.html, insights.js,
+  dashboard handlers.go, tailwind.css) — none touched by BL1's diff, not
+  evaluated here, not attributed to this task.
+- Harness hazard noted above (shared scratchpad/port collisions across
+  concurrent BL-run processes) cost significant audit time chasing a false
+  "stale build" signal; recommend concurrent BL-task checkers use
+  session-unique scratch dirs and ports outside any shared pool advertised
+  in a run spec, to avoid `killPreviousInstance`-style collisions.
+- go test (`./internal/handlers/majorexpenses/...`, `./internal/templates/...`)
+  and `make css`/`make css-verify` are checker-tests' named checks for this
+  Tier-2 task (ledger `checks: tests,a11y`) and a mutating `make css` risks
+  clobbering BL4's concurrent, uncommitted tailwind.css edit — not run here;
+  out of checker-a11y's lane. The live render already empirically proves the
+  new Tailwind utility classes (`text-body-sm`, `px-3 py-1.5`,
+  `overflow-x-auto`) compile and apply correctly (measured button/region
+  boxes above), which is the a11y-relevant consequence of that build step.
