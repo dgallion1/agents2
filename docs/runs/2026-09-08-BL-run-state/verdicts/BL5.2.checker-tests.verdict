@@ -1,0 +1,157 @@
+VERDICT: PASS
+CHECKER: checker-tests
+FAMILY: anthropic
+TASK: BL5
+ATTEMPT: 2
+---
+Subject: /home/darrell/bin/ai/budget2/.claude/worktrees/backlog-a11y
+(branch feat/backlog-a11y, HEAD 43ce76e == master 43ce76e; output UNCOMMITTED, so
+every diff below is `git diff master -- <path>` against the WORKING TREE).
+All mutations were run only in a `.git`-stripped `cp -a` scratch copy at
+/tmp/claude-1000/.../scratchpad/bl5-tests2 with the `data` symlink replaced by an
+empty directory (`rm -f data && mkdir -p data`), so live data/ was never reachable.
+The built budget2 binary was never executed; no server was started or touched.
+
+=== CRITERION 1 — gofmt clean, tests green, diff vs attempt 1 is exactly the four
+    assertion strings ===
+
+(1a) `gofmt -l internal/templates/` in the worktree -> NO OUTPUT, "gofmt exit=0".
+     Same in the scratch copy: "gofmt exit=0". `go vet ./internal/templates/`
+     (scratch) -> no output, "vet exit=0".
+
+(1b) `go test -count=1 ./internal/templates/...` (scratch, cache defeated) ->
+         ok  	budget2/internal/templates	1.177s
+     Verbose run of the three guarded tests
+     (`go test -count=1 -v -run 'TestRenderMajorExpenses_UnmatchedBucketShowsAll\
+     RowsWithDimming|TestRenderMajorExpenses_UnmatchedBadgeAndDeletedPanel|\
+     TestRenderMajorExpenses_WithEntriesAndExceptions' ./internal/templates/`):
+         --- PASS: TestRenderMajorExpenses_UnmatchedBucketShowsAllRowsWithDimming (0.02s)
+         --- PASS: TestRenderMajorExpenses_UnmatchedBadgeAndDeletedPanel (0.01s)
+         --- PASS: TestRenderMajorExpenses_WithEntriesAndExceptions (0.02s)
+         ok  	budget2/internal/templates	0.053s
+
+(1c) Repo composite target, `make check` in the scratch copy (Makefile line 84:
+     `check: vet static vuln css-verify test`; the `test` recipe runs
+     `go test -count=1`) -> final line:
+         ✓ all checks passed
+     with `ok  budget2/internal/templates  2.370s` and every other package ok
+     (this also exercises BL1–BL4 territory; reported as context only).
+
+(1d) Diff size unchanged from attempt 1:
+     `git diff master --numstat -- internal/templates/render_major_expenses_test.go`
+         25	0	internal/templates/render_major_expenses_test.go
+     (25 additions, ZERO deletions). `git diff master -U0` hunk headers are
+     BYTE-IDENTICAL to the three quoted in the BL5.1 verdict:
+         @@ -60,0 +61,4 @@ func TestRenderMajorExpenses_UnmatchedBucketShowsAllRowsWithDimming(t *testing.T
+         @@ -133,0 +138,9 @@ func TestRenderMajorExpenses_UnmatchedBadgeAndDeletedPanel(t *testing.T) {
+         @@ -328,0 +342,12 @@ func TestRenderMajorExpenses_WithEntriesAndExceptions(t *testing.T) {
+     Same three hunks, same offsets, same added-line counts, same marker comments
+     -> the ONLY change vs attempt 1 is the content of the pinned string literals.
+     The five literals now read (from the diff body):
+         `<div class="overflow-x-auto" tabindex="0" role="region" aria-label="Unmatched exceptions">`
+         `<div class="overflow-x-auto" tabindex="0" role="region" aria-label="Deleted major expense definitions">`   (unchanged from attempt 1)
+         `<div class="overflow-x-auto" tabindex="0" role="region" aria-label="Unmatched exceptions over threshold">`
+         `<div class="overflow-x-auto" tabindex="0" role="region" aria-label="New merchant exceptions">`
+         `<div class="overflow-x-auto" tabindex="0" role="region" aria-label="Matched but anomalous amount table">`
+     The BL5.1 verdict recorded (lines 131-137) that blocks A and C pinned ONLY
+     `role="region" aria-label="X">`; those FOUR are now the full wrapper, block B
+     is unchanged. Exactly the change ruling BL-2026-09-08g asked for. MET.
+
+=== CRITERION 2 — mutation kill: strip tabindex="0" from each region in turn ===
+
+Template regions in the scratch copy (`role="region"` lines, printed verbatim by
+python3 to defeat grep truncation):
+    153 <div class="overflow-x-auto" tabindex="0" role="region" aria-label="Deleted major expense definitions">
+    546 <div class="overflow-x-auto" tabindex="0" role="region" aria-label="Unmatched exceptions over threshold">
+    600 <div class="overflow-x-auto" tabindex="0" role="region" aria-label="Unmatched exceptions">
+    673 <div class="overflow-x-auto" tabindex="0" role="region" aria-label="Matched but anomalous amount table">
+    747 <div class="overflow-x-auto" tabindex="0" role="region" aria-label="New merchant exceptions">
+Each mutation removed the single substring ` tabindex="0"` from ONE line, ran
+`go test -count=1 -run <the three tests> ./internal/templates/`, then restored the
+file from a pre-mutation backup (md5 verified back to 1e883101… at the end).
+
+    M1 line 153 (Deleted)            -> FAIL TestRenderMajorExpenses_UnmatchedBadgeAndDeletedPanel
+       render_major_expenses_test.go:142: BL5 guard: deleted-definitions table must be wrapped in a labelled scroll region
+    M2 line 546 (over threshold)     -> FAIL TestRenderMajorExpenses_WithEntriesAndExceptions
+       render_major_expenses_test.go:351: BL5 guard: missing scroll region <div class="overflow-x-auto" tabindex="0" role="region" aria-label="Unmatched exceptions over threshold">
+    M3 line 600 (Unmatched excep.)   -> FAIL TestRenderMajorExpenses_UnmatchedBucketShowsAllRowsWithDimming
+       render_major_expenses_test.go:63: BL5 guard: AllUnmatched table must be wrapped in a labelled scroll region
+    M4 line 673 (anomalous amount)   -> FAIL TestRenderMajorExpenses_WithEntriesAndExceptions
+       render_major_expenses_test.go:351: BL5 guard: missing scroll region <div class="overflow-x-auto" tabindex="0" role="region" aria-label="Matched but anomalous amount table">
+    M5 line 747 (new merchant)       -> FAIL TestRenderMajorExpenses_WithEntriesAndExceptions
+       render_major_expenses_test.go:351: BL5 guard: missing scroll region <div class="overflow-x-auto" tabindex="0" role="region" aria-label="New merchant exceptions">
+All five runs ended `FAIL	budget2/internal/templates`. In every run the ONLY
+failure line emitted was the one guard naming that region (output deduped with
+`sort -u`; no collateral assertion moved), so each of the five regions'
+tabindex is guarded INDEPENDENTLY and by name. After restore:
+`go test -count=1 ./internal/templates/` -> `ok  budget2/internal/templates 1.052s`.
+
+(2b) DECISIVE REPLAY of the BL5.1 observation O1 — the exact mutation that was
+     GREEN at attempt 1 (strip tabindex from all FOUR non-Deleted regions at once;
+     `grep -c 'tabindex="0" role="region"'` = 1 remaining, the Deleted one) is now
+     RED:
+         --- FAIL: TestRenderMajorExpenses_UnmatchedBucketShowsAllRowsWithDimming (0.01s)
+         --- FAIL: TestRenderMajorExpenses_WithEntriesAndExceptions (0.01s)
+         render_major_expenses_test.go:63:  BL5 guard: AllUnmatched table must be wrapped in a labelled scroll region
+         render_major_expenses_test.go:351: BL5 guard: missing scroll region ... "Unmatched exceptions over threshold">
+         render_major_expenses_test.go:351: BL5 guard: missing scroll region ... "New merchant exceptions">
+         render_major_expenses_test.go:351: BL5 guard: missing scroll region ... "Matched but anomalous amount table">
+         FAIL	budget2/internal/templates	1.351s
+     Attempt 1 reported `ok budget2/internal/templates 0.044s` for this same
+     mutation. Restored -> `ok budget2/internal/templates 1.228s`. MET.
+
+=== CRITERION 3 — master's template still fails all three guarded tests ===
+
+Baseline provenance: in the main checkout /home/darrell/bin/ai/budget2,
+`git rev-parse HEAD` = 43ce76e = `git rev-parse master`, and
+`git status --porcelain -- web/templates/pages/major-expenses.html` is EMPTY,
+i.e. that file is verbatim master (md5 6277ac09b8369bd3bbdc9a757983d09b; the
+worktree's BL1 version is 1e883101cd379bd887cba6a06f962b1b).
+Copied over the scratch copy's template (md5 confirmed 6277ac09… after copy);
+master has exactly ONE `role="region"` line:
+    667 <div class="overflow-x-auto" tabindex="0" role="region" aria-label="Matched but anomalous amount table">
+`go test -count=1 -run <the three tests> ./internal/templates/`:
+    --- FAIL: TestRenderMajorExpenses_UnmatchedBucketShowsAllRowsWithDimming (0.02s)
+    --- FAIL: TestRenderMajorExpenses_UnmatchedBadgeAndDeletedPanel (0.01s)
+    --- FAIL: TestRenderMajorExpenses_WithEntriesAndExceptions (0.01s)
+    render_major_expenses_test.go:63:  BL5 guard: AllUnmatched table must be wrapped in a labelled scroll region
+    render_major_expenses_test.go:142: BL5 guard: deleted-definitions table must be wrapped in a labelled scroll region
+    render_major_expenses_test.go:145: BL5 guard: Restore/Discard buttons must carry text-body-sm px-3 py-1.5
+    render_major_expenses_test.go:351: BL5 guard: missing scroll region ... "Unmatched exceptions over threshold">
+    render_major_expenses_test.go:351: BL5 guard: missing scroll region ... "New merchant exceptions">
+    FAIL	budget2/internal/templates	0.050s
+All three guarded tests fail and EVERY failure line is a BL5 guard — the guards
+are the sole discriminator between master and BL1's template. The "Matched but
+anomalous amount table" guard does not fire here because that region is
+master-native (line 667 above); it is a forward regression guard, and it IS
+killed by mutation M4. Template restored to 1e883101… afterwards. MET.
+
+=== OBSERVATIONS (backlog, not failures) ===
+
+O-a (carried from BL5.1, now broader): the pinned strings are attribute-ORDER
+     and class-list sensitive in all five regions — an equivalent rewrite such as
+     `<div role="region" tabindex="0" class="overflow-x-auto" …>` would fail.
+     That brittleness is the price of the tabindex guard the ruling asked for;
+     noted, not a defect.
+O-b (carried from BL5.1, unchanged): the negative clause
+     `strings.Contains(html, "text-xs px-2 py-0.5")` is evaluated over the WHOLE
+     rendered page, so an unrelated future small-badge on major-expenses would
+     trip it spuriously.
+
+=== SCOPE ===
+
+Manifest .swarm/manifests/BL5.2.files lists internal/templates/render_major_expenses_test.go
+ONLY; `git diff master --numstat` for that path is 25/0, confined to the three
+named tests (hunk context lines show each hunk sits inside its test body).
+`git status --porcelain` shows no new/untracked files beyond `?? data`.
+No path in .swarm/critical.globs (internal/services/storage|dataloader|
+retirement/engine|transfers, accounts.go, mcpsvc/confirm, handlers/backup) is
+touched — BL5 is entirely test code under internal/templates.
+The other working-tree modifications — internal/handlers/dashboard/handlers.go,
+web/static/css/{styles,tailwind}.css, web/static/js/insights.js,
+web/templates/components/whatif/{roth-conversion,spending-phases}.html,
+web/templates/layouts/base.html, web/templates/pages/{major-expenses,transfers}.html
+— are BL1–BL4 territory (ledger rows BL1–BL4 = accepted) and are ATTRIBUTED,
+not charged to BL5.
+No project file was edited by this checker; the only write to the real tree is
+this verdict file. All mutations were confined to the .git-less scratch copy.

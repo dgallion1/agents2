@@ -1492,3 +1492,238 @@ clean.
   live on :8080) made local master diverge — the ship rule stopped the
   deploy until that session merged (master 43ce76e); deployed to :8080 the
   same morning (pid 3512799, health v1.4.0-1105-g43ce76e).
+
+# Run BL — deferred accessibility backlog (2026-09-08)
+
+Constitution for a four-task run in budget2 closing the pre-existing items
+deferred by runs LT and RF. Approved by the user in chat 2026-09-08 ("Go
+ahead") after the measured triage and the four-task design were presented.
+
+## BL.0 Facts (measured on live :8080 = master 43ce76e, 2026-09-08)
+
+| Page | Defect |
+|---|---|
+| /major-expenses @390 | `scrollWidth` 436 (three `table.w-full.text-body-sm.mt-1` without a scroll region; the anomalous-amount table at ~line 667 already has one); axe `target-size` on six row action buttons (`text-xs px-2 py-0.5`, Restore/Discard and approve/reject) |
+| /whatif @390 | `scrollWidth` 498 — `components/whatif/spending-phases.html` phase rows (`flex items-center gap-3` → `flex-1 flex items-center gap-2` slider row) never wrap |
+| /transfers @390 | axe `scrollable-region-focusable` on the history table's `div.mt-3.overflow-x-auto` |
+| contrast (all pages) | nav group labels `text-white/60` ≈3.3:1; active nav link white on `bg-white/20` ≈4.2:1; the Budget-vs-Actual "Target $N" line label in a literal old-grey at 11 px ≈3.0:1 dark; `components/whatif/roth-conversion.html` `$` span lacks `dark:text-gray-400` (1.9:1 dark); `insights.js` prior-period marker colour uses old gray hexes |
+
+Not in scope (deliberate): /explorer has no footer by design; the dead
+`/insights/recurring` partial's caveat; nav overflow at a user-chosen 110 %
+browser zoom.
+
+Rules: no figure or sentence changes; ACCESSIBILITY.md points 3, 7, 9, 12;
+both themes; 390/1280; `make css` + `make css-verify`; no `!important`.
+
+## BL.1 Territory
+
+- Worktree `/home/darrell/bin/ai/budget2/.claude/worktrees/backlog-a11y`, branch
+  `feat/backlog-a11y` off master 43ce76e (`data` symlink, `tmp/tailwindcss-3.4.17`).
+- BL1 (worker): `web/templates/pages/major-expenses.html` only.
+- BL2 (worker): `web/templates/components/whatif/spending-phases.html` only.
+- BL3 (lead): `web/templates/pages/transfers.html`; from attempt 2 (ruling
+  BL-2026-09-08b) also `web/static/css/styles.css` (one selector in the
+  existing focus-outline rule).
+- BL4 (lead): `web/templates/layouts/base.html` (nav label opacity, active-link
+  overlay), `web/templates/components/whatif/roth-conversion.html` (one span),
+  `web/static/js/insights.js` (two hex literals), and wherever the
+  Budget-vs-Actual "Target" annotation colour is set (`web/static/js/charts.js`
+  or `internal/handlers/dashboard/*.go`).
+- All in one wave; the lead runs the final `make css` + `make css-verify`.
+
+## BL.2 Worker constraints (paste into every dispatch)
+
+Same as RF.2: work only in the worktree; never git checkout/stash/commit or
+touch the index; never run the built binary directly (kills live :8080);
+`scripts/whatif-verify.sh start <port>` / `stop <port>` for rendered checks
+(BL1 8171, BL2 8172, lead 8173, checkers 8181–8184; never :8080/:8081);
+Playwright at `/home/darrell/.npm/_npx/e41f203b7505f1fb/node_modules/playwright`
+with executablePath `/home/darrell/.cache/ms-playwright/chromium-1243/chrome-linux64/chrome`
+and `args:['--no-sandbox']`; drive dark mode by clicking `#theme-toggle` (or
+`#theme-toggle-mobile` at 390), NOT a bare classList toggle; axe via
+addScriptTag with `/tmp/claude-1000/-home-darrell-work-agents2/fdc3d3ad-6feb-42fa-95ef-64e528e5cac8/scratchpad/a11y-u12/node_modules/axe-core/axe.min.js`;
+`make css` for own verification; manifest at
+`/home/darrell/work/agents2/.claude/worktrees/retired-couple-ui-layout-397a9a/.swarm/manifests/<task>.<attempt>.files`;
+STOP with BLOCKED on ambiguity.
+
+## BL.3 Tasks
+
+| ID | Task | Files | Tier | Checks | Why |
+|----|------|-------|------|--------|-----|
+| BL1 | Major Expenses tables into scroll regions; row buttons to ≥24 px targets | `pages/major-expenses.html` | 2 | tests,a11y | Several tables and every row's forms; handler tests are the regression oracle, axe the a11y oracle. |
+| BL2 | What-If spending-phase rows wrap at narrow widths | `components/whatif/spending-phases.html` | 2 | a11y | Visual oracle (overflow probe); JS hooks untouched but the slider must still work. |
+| BL3 | Transfers history scroll region focusable + named | `pages/transfers.html` | 1 | a11y | Three attributes, strong oracle. Lead-direct. |
+| BL4 | Contrast quartet | `layouts/base.html`, `components/whatif/roth-conversion.html`, `static/js/insights.js`, chart Target label source | 1 | a11y | Colour-only edits, strong oracle (measured contrast). Lead-direct. |
+
+### BL1 — Major Expenses (Tier 2, checks: tests,a11y)
+
+1. Every `<table class="w-full text-body-sm mt-1"...>` in the page that is
+   not already inside an `overflow-x-auto` wrapper (the deleted-definitions
+   table ~line 153, the two at ~544 and ~596, and ~741 — enumerate them all)
+   gets wrapped exactly like the existing anomalous-amount table (~line 667):
+   `<div class="overflow-x-auto" tabindex="0" role="region" aria-label="<what the table lists>">…</div>`
+   with a distinct, descriptive label per table (e.g. "Deleted major expense
+   definitions", "Exceptions", "Major expense definitions", …). Sortable
+   table JS (`major-expenses-sortable`, `data-default-sort`) untouched.
+2. Row action buttons (`Restore`, `Discard`, approve/reject and any sibling
+   with `text-xs px-2 py-0.5`): change to `text-body-sm px-3 py-1.5` so the
+   target is ≥ 24 × 24 CSS px (WCAG 2.5.8); keep the border/colour classes,
+   ids, `hx-*` attributes and confirm texts byte-identical.
+3. No other change.
+
+Acceptance: `go test ./internal/handlers/majorexpenses/... ./internal/templates/...`
+green; at 390 both themes `scrollWidth == clientWidth`, axe zero
+`target-size` and zero `scrollable-region-focusable` on /major-expenses
+(open every `<details>` first), each wrapped table's region reachable by
+Tab with a distinct accessible name; at 1280 layout unchanged (tables
+full width); `make css` / `make css-verify`.
+
+### BL2 — What-If spending phases (Tier 2, checks: a11y)
+
+In `spending-phases.html` (~lines 61–80): the phase row
+`<div class="flex items-center gap-3">` → `flex flex-wrap items-center gap-3`;
+the slider row `<div class="flex-1 flex items-center gap-2">` →
+`flex-1 min-w-0 flex flex-wrap items-center gap-2` and the range input
+`class="flex-1 …"` → `flex-1 min-w-[8rem] …`. Nothing else: ids, names,
+`data-quick-adjust-*` hooks, `oninput` and label widths unchanged.
+
+Acceptance: at 390 both themes `/whatif` `scrollWidth == clientWidth` (was
+498) and no element in `main` extends past `innerWidth`; at 1280 and 1536
+no phase-row element extends past its own card (ruling BL-2026-09-08a: the
+card is a narrow sidebar column at 1280 where master's value spans already
+spill ~106 px past the row; rows MAY wrap to two lines, which fixes that);
+the range input keeps ≥ 8 rem of width;
+dragging/keyboard-changing a phase slider still updates its two labels and
+the quick-adjust key (Playwright: focus the range, ArrowRight, read the
+`data-quick-adjust-display` spans); axe clean on /whatif (default tab) at
+390/1280 both themes; `go test ./internal/handlers/whatif/...` green;
+`make css` / `make css-verify`.
+
+### BL3 — Transfers scroll region (Tier 1, checks: a11y; lead)
+
+`div.mt-3.overflow-x-auto` gains `tabindex="0" role="region"
+aria-label="Paired and external transfers"` (the table's sr-only caption
+text). Acceptance: axe zero `scrollable-region-focusable` on /transfers at
+390 both themes; Tab reaches the region; nothing else changed. Attempt 2
+(ruling b): `[role="region"][tabindex="0"]:focus-visible` joins the
+styles.css accent-outline rule, so EVERY keyboard-focusable scroll region
+(transfers, major-expenses, insights tables, the dashboard chart tables)
+shows a 2 px accent ring ≥ 3:1 against its card in both themes; verified
+by a real keyboard Tab (not `.focus()`) on /transfers, /insights and
+/dashboard in both themes.
+
+### BL4 — Contrast quartet (Tier 1, checks: a11y; lead)
+
+1. `base.html` desktop nav: the three group-label spans `text-white/60` →
+   `text-white/80` (≥ 4.5:1 on the accent header, both themes).
+2. `base.html` active nav link: `bg-white/20` → the largest opacity at which
+   white `text-sm font-medium` still measures ≥ 4.5:1 against the blended
+   header in BOTH themes (lead measures with a probe; expected `bg-white/10`
+   or `/15`), desktop and mobile menus alike. `aria-current` stays the
+   programmatic indicator.
+3. `roth-conversion.html`: the `$` span gets `dark:text-gray-300` (attempt 2,
+   ruling BL-2026-09-08c: the span paints over the input's `dark:bg-gray-700`
+   fill, where gray-400 measures 4.07:1; gray-300 ≈ 6.7:1).
+4. `insights.js`: the prior-period marker colours `#9ca3af`/`#6b7280` →
+   stone `#a8a29e`/`#78716c`.
+5. Budget-vs-Actual "Target $N" line label: drawn with the chart theme text
+   colour (`colors.text` in charts.js, or the equivalent value if set in Go)
+   at ≥ 12 px; if the label is set server-side, the Go change is limited to
+   the annotation font colour/size.
+
+Acceptance: a contrast probe (real `#theme-toggle` click for dark) of the
+nav labels at 1536, the active nav link at 1280 and in the mobile menu at
+390, the Roth `$` span, and the Target label, all ≥ 4.5:1 in both themes;
+axe clean on /dashboard, /whatif, /insights at 390/1280 both themes; no
+figure changes; `go build`, `go test ./internal/handlers/dashboard/...`,
+`make css` / `make css-verify`.
+
+## BL.4 Rulings
+
+(recorded as they happen; each catch names its mechanism)
+
+- **BL-2026-09-08a** (catch — mechanism: WORKER stop, BL2 attempt 1; a
+  brief-level error): the lead wrote "at 1280 the phase rows render on one
+  line as before" without looking at the card's width. The phase-config card
+  is a narrow sidebar column at 1280 (~222 px of row width); on master the
+  `%`/`$/mo` spans already overflow their row by ~106 px into adjacent
+  whitespace, invisible to the page-level scrollWidth probe. The pinned
+  `flex-wrap` + `min-w-[8rem]` therefore wraps at 1280 too — an improvement.
+  Ruling: option (b); acceptance amended to "nothing extends past its card;
+  rows may wrap; slider ≥ 8 rem". Attempt count unchanged.
+- **BL-2026-09-08b** (catch — mechanism: PRIMARY CHECKER checker-a11y,
+  BL3 attempt 1, FAIL CONCEDED; against the LEAD's own change): the new
+  `role="region" tabindex="0"` wrapper relied on the browser's default
+  `outline: auto`, which paints near-black in both themes — ≈1.3–1.9:1 on
+  the dark card (points 7/9/12, WCAG 1.4.11). Found only with a real
+  keyboard Tab; a synthetic `.focus()` after a mouse click hides it. The
+  same latent defect exists on every pre-existing focusable scroll region
+  (major-expenses.html:667, the LT5/RF4 regions). Ruling: styles.css gains
+  `[role="region"][tabindex="0"]:focus-visible` in the accent-outline rule
+  (sitewide fix); BL3 attempt 2. Lesson: any new focusable element must
+  name its focus indicator, and checkers should Tab, not `.focus()`.
+- **BL-2026-09-08c** (catch — mechanism: PRIMARY CHECKER checker-a11y,
+  BL4 attempt 1, FAIL CONCEDED; against the LEAD's own change): the Roth
+  `$` prefix sits over the amount input's `dark:bg-gray-700` fill, not the
+  card, so the sibling-template pairing `dark:text-gray-400` the lead copied
+  measures 4.07:1 there (axe misses it: single-glyph text is exempted by
+  its short-text heuristic). Ruling: `dark:text-gray-300`; attempt 2. The
+  other four BL4 items measured 4.63–12.08:1 and stand. Lesson: measure
+  against the element's own painted background, not the card's.
+- **BL-2026-09-08d** (observation — mechanism: PRIMARY CHECKER checker-a11y
+  on BL2, PASS): the range inputs' indigo focus box-shadow (the sitewide
+  `input:focus` rule in styles.css) measures ≈2.3:1 against the dark card,
+  below WCAG 1.4.11's 3:1; byte-identical on master. Backlog: give
+  `input:focus`/`select:focus` a theme-aware ring (the accent token) like
+  the outline rule BL3 extended.
+- **BL-2026-09-08e** (observations — mechanism: PRIMARY CHECKER
+  checker-tests on BL1, PASS): (1) brief fact error — BL.0 named
+  "approve/reject" buttons that do not exist; the six target-size hits were
+  three Restore + three Discard, so the two class edits cover all six.
+  (2) axe's `target-size` rule is OFF in the default rule set — a plain
+  `axe.run` silently misses it; checkers must force it via `runOnly`.
+  (3) No in-repo test guards the four new regions or the button classes —
+  promoted to BL5 (test-only, V3 pattern). (4) `empty-table-header` on a
+  `w-6` header cell and the bulk-pin Apply/Clear at 21 px tall are
+  pre-existing (the latter passes 2.5.8 under the spacing exception).
+
+### BL5 — Regression guards for BL1 (Tier 1, checks: tests; lead)
+
+Test-only (V3 pattern): `internal/templates/render_major_expenses_test.go`
+gains assertions in three existing tests — the Deleted panel renders inside
+`role="region" aria-label="Deleted major expense definitions"` and its
+buttons carry `text-body-sm px-3 py-1.5` (and never `text-xs px-2 py-0.5`);
+the AllUnmatched table renders inside `aria-label="Unmatched exceptions"`;
+the legacy/exceptions fixture renders the "Unmatched exceptions over
+threshold", "New merchant exceptions" and "Matched but anomalous amount
+table" regions. Acceptance: `go test ./internal/templates/...` green;
+reverting BL1's template in a scratch copy makes the guarded tests FAIL;
+`gofmt -l` clean.
+
+- **BL-2026-09-08f** (harness observation — mechanism: a11y lane on BL1):
+  checker ports 8181–8184 were shared by concurrent checkers and one
+  checker's server was killed from under it by a sibling reusing the port,
+  and a scratch script was overwritten. Give every checker its OWN port and
+  scratch subdirectory in the brief (the lead assigned a pool, not a slot).
+  Also pre-existing, out of scope: bulk-pin Apply/Clear (21 px) and the
+  ~60 row-toggle chevrons (15 px) stay under 24 px (spacing exception).
+- **BL-2026-09-08g** (observation acted on — mechanism: PRIMARY CHECKER
+  checker-tests on BL5 attempt 1, PASS): four of the five region guards
+  pinned only `role`/`aria-label`, so stripping `tabindex="0"` (the very
+  defect BL1 fixed) left the suite green. Attempt 2 pins the full wrapper
+  string on all five. Not a FAIL (in contract), re-verified anyway because
+  a guard that misses its own defect is not a guard.
+- **Run BL closed 2026-09-08**: `gate.sh done` exit 0; `gate.sh stats`
+  verbatim: `first-attempt clean: 13/16 (no-evidence rows: 0)` across
+  LT+RF+BL (BL alone 3/5: BL3 and BL4, both lead-direct, failed attempt 1
+  on real primary-checker catches — rulings b and c). `make check` green;
+  agents2 smoketest ALL PASS. Shipped as budget2 commit 23a949c on
+  `feat/backlog-a11y`, PR opened; not merged, not deployed. Catches by
+  mechanism: WORKER stop ×1 (ruling a, brief error), PRIMARY CHECKER
+  FAIL ×2 (rulings b, c — both against the lead's own edits, both invisible
+  to axe: a keyboard-only focus ring and single-glyph text), PRIMARY
+  CHECKER observations promoted ×2 (rulings e→BL5, g). Lessons: the lead
+  is not exempt from the fresh-eyes rule — both lead-direct tasks failed
+  where the worker tasks did not; measure contrast against the element's
+  own painted background; Tab, never `.focus()`; force `target-size` in
+  axe; give each checker its own port and scratch dir.

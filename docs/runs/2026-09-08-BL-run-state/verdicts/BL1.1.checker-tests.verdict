@@ -1,0 +1,295 @@
+VERDICT: PASS
+CHECKER: checker-tests
+FAMILY: anthropic
+TASK: BL1
+ATTEMPT: 1
+---
+Worked in a cp -a copy of the worktree (.git stripped) at
+/tmp/claude-1000/-home-darrell-work-agents2--claude-worktrees-retired-couple-ui-layout-397a9a/5f1798f7-0ebe-4e24-a3e8-2690e59504b6/scratchpad/bl1-tests/wt
+(branch) and .../wtm (same tree with major-expenses.html reverted to master =
+BL1-only twin baseline). Verify servers :8183 (branch) and :8188/:8184 (master
+twin), both stopped at the end. Never touched :8080/:8081, never ran the binary
+directly. Diff read with /usr/bin/git (plain binary).
+
+=== CRITERION 1 — build/vet/tests green; diff scope ===
+
+$ go build ./...            -> BUILD_EXIT=0 (no output)
+$ go vet ./...              -> VET_EXIT=0 (no output)
+$ go test -count=1 ./internal/handlers/majorexpenses/... ./internal/templates/...
+  ok  budget2/internal/handlers/majorexpenses 0.320s
+  ok  budget2/internal/templates             1.264s
+  EXIT=0
+
+Composite target (repo's own): $ make check   (= vet static vuln css-verify test)
+  tailwind.css is up to date
+  ok  budget2/internal/handlers/majorexpenses  0.717s
+  ok  budget2/internal/templates               2.799s
+  ... (52 packages, all ok)
+  go test -count=1 ./internal/handlers/accounts -> ok 0.821s
+  "✓ all checks passed"   CHECK_EXIT=0
+  (run with BL2/BL3/BL4 foreign edits present in the shared tree; all green)
+
+$ /usr/bin/git diff --numstat master -- web/templates/pages/major-expenses.html
+  10  2   web/templates/pages/major-expenses.html
+Diff sha256 97f7205169... re-checked at the end of the run: unchanged.
+
+Six hunks, enumerated (all in web/templates/pages/major-expenses.html, nothing else):
+  H1 @@ -150,+151  ADD  <div class="overflow-x-auto" tabindex="0" role="region"
+                        aria-label="Deleted major expense definitions">
+  H2 @@ -171/172       CHANGE Restore button class
+                        text-xs px-2 py-0.5  ->  text-body-sm px-3 py-1.5
+                        (rounded border border-positive text-positive
+                         hover:bg-positive-soft kept byte-identical)
+  H3 @@ -180/181       CHANGE Discard button class, same substitution,
+                        border-negative/text-negative/hover:bg-negative-soft kept
+  H4 @@ -189,+190  ADD  </div>   (closes H1)
+  H5 @@ -541,+543  ADD  <div ... aria-label="Unmatched exceptions over threshold">
+       @@ -588,+591 ADD  </div>
+       @@ -650,+655 ADD  </div>
+       and @@ -588,+594 ADD <div ... aria-label="Unmatched exceptions"> before the
+       sortable table
+  H6 @@ -738,+744  ADD  <div ... aria-label="New merchant exceptions">
+       @@ -801,+808 ADD  </div>
+  Net: 4 wrapper <div> opens + 4 matching </div> closes + 2 class strings. No
+  other line changed (10 added / 2 changed, confirmed by numstat and by reading
+  the whole 84-line diff).
+
+Rendered-output proof that nothing else changed (stronger than the source diff):
+  $ curl :8183/major-expenses  vs  curl :8188/major-expenses, then remove the 2
+    NEW wrapper open tags that render on this data and substitute the 2 button
+    class strings back to master's -> residual unified diff = 10 lines, and the
+    ONLY residual content is the 2 matching "</div>" lines. Every other byte of
+    the 1.59 MB page is identical to master.
+
+=== CRITERION 2 — HTMX / sortable hooks unchanged; sort still works ===
+
+Byte-compare of every hx-* attribute, every <form ...> open tag and every
+sortable hook, master vs branch (grep -o, then cmp):
+  $ cmp master.hx branch.hx           -> IDENTICAL  (38 hx-* attributes)
+  $ cmp master.forms branch.forms     -> IDENTICAL  (6 <form ...> tags, incl.
+      <form class="inline" hx-post="/major-expenses/{{.Expense.ID}}/restore" and
+      <form class="inline ml-1" hx-delete="/major-expenses/deleted/{{.Expense.ID}}")
+  $ cmp master.sort branch.sort       -> IDENTICAL  (major-expenses-sortable x2,
+      data-default-sort="amount", data-default-dir="desc", data-sort-groups="tbody")
+hx-confirm text verified verbatim in the rendered output:
+  hx-confirm="Permanently discard Vanished Subscription? This cannot be undone."
+  (probe test TestBL1_DeletedPanelWrappedAndButtonsEnlarged asserts it)
+
+Structural safety of the wrapper:
+  $ grep -n "parentElement|parentNode|nextElementSibling|previousElementSibling|children\[" \
+      web/static/js/major-expenses.js  -> NO MATCHES.
+  The sort handler is a delegated document click listener using
+  th.closest('table.major-expenses-sortable') and
+  table.querySelectorAll(':scope > tbody[data-expense-id]') — neither can be
+  broken by an intervening parent div.
+
+Live click test (Playwright, :8183 and :8188, 390px):
+  clicked th[data-sort-key="total"] on #major-expenses-list
+  -> {"key":"total","type":"number","ariaAfter":"descending","ind":"▼"}
+  -> nGroups 47, reordered TRUE, top data-sort-total values after the click:
+     21175.39, 18753.24, 11063.01, 8796.44, 6961.20  (descending)
+  -> BRANCH and MASTER produced byte-identical before5/after5 id orders.
+  -> pageErrors: []
+
+The one WRAPPED sortable table (Unmatched) has no rows on this data, so I proved
+the wrapper does not break the handler directly: on the branch page I injected an
+identical <div class="overflow-x-auto" tabindex="0" role="region"
+aria-label="Probe wrapper"> around #major-expenses-list and re-clicked:
+  {"wrapperIsParent":"Probe wrapper","closestResolved":true,"reordered":true,
+   "ariaAfter":"descending","top5":["21175.39","18753.24","11063.01","8796.44",
+   "6961.20"],"pageErrors":[]}
+
+=== CRITERION 3 — 390px, both themes, every <details> open ===
+
+Playwright 390x900, dark driven by clicking #theme-toggle-mobile (isDark
+confirmed true from documentElement.classList), 7 <details> forced open.
+
+Overflow (document scrollWidth vs clientWidth):
+  BRANCH light: 390/390    BRANCH dark: 390/390     (body 390/390, innerW 390)
+  MASTER light: 436/390    MASTER dark: 436/390     <- the BL.0 defect, reproduced
+  => scrollWidth == clientWidth on the branch in both themes.
+
+axe-core 4.13.0, addScriptTag, runOnly rules target-size +
+scrollable-region-focusable (NOTE: target-size is DISABLED in axe's default
+rule set — a default axe.run misses it entirely; I forced it explicitly):
+  MASTER light: violations [("target-size", 6)]  — messages:
+     "Target has insufficient size (64.8px by 23.3px, should be at least 24px by
+      24px)" + "Target has insufficient space to its closest neighbors"
+     on 3x <button class="text-xs px-2 py-0.5 ... border-positive"> (Restore)
+     and 3x <button class="text-xs px-2 py-0.5 ... border-negative"> (Discard)
+  MASTER dark:  same 6.
+  BRANCH light: violations []   passes: target-size 131, scrollable-region-focusable 2
+  BRANCH dark:  violations []   passes: target-size 131, scrollable-region-focusable 2
+  => zero target-size, zero scrollable-region-focusable on the branch, both themes.
+
+Region accessible names actually rendered on this data (role=region, tabindex=0),
+each focused programmatically and document.activeElement confirmed:
+  1. "Matched but anomalous amount table"  tabindex=0 focused=true  scrollW 764 / clientW 320  (PRE-EXISTING on master)
+  2. "New merchant exceptions"             tabindex=0 focused=true  scrollW 401 / clientW 320  (NEW)
+  3. "Deleted major expense definitions"   tabindex=0 focused=true  scrollW 320 / clientW 320  (NEW)
+  All distinct; all reachable by focus.
+
+Restore/Discard boxes at 390 (getBoundingClientRect, both themes, 6 buttons):
+  Restore 80.83 x 36.00   Discard 79.75 x 36.00   (min over all 6 = 79.75 x 36)
+  MASTER for comparison: 64.75 x 23.25 / 63.84 x 23.25  -> under 24 px.
+  => >= 24 x 24 satisfied.
+
+Bulk-pin Apply/Clear (requested explicitly): hidden by default (0x0). After
+clicking a .major-expenses-pin-check checkbox to reveal the toolbar:
+  #major-expenses-bulk-pin-apply  50.63 x 21.25
+  #major-expenses-bulk-pin-clear  47.97 x 21.25
+  => raw box height 21.25 px, BELOW 24 px, on BOTH branch and master (unchanged
+  by BL1). HOWEVER, with the toolbar revealed AND an expense row expanded, axe
+  target-size on the branch still reports violations: [] (424 passing nodes) —
+  axe accepts them under the WCAG 2.5.8 spacing exception, which the adjacent
+  Restore/Discard pair did NOT satisfy. Master in the same state: 6 violations,
+  418 passes (418 + 6 = 424 = branch's 424, so BL1 added/removed no
+  target-size-applicable element). Reported as an OBSERVATION below, not a fail:
+  the contract scoped point 2 to row action buttons "with text-xs px-2 py-0.5",
+  and these carry the utilities in a different order, act on a selection rather
+  than a row, were not among BL.0's six measured defects, and pass axe.
+
+=== CRITERION 4 — the two Unmatched-bucket branches have no rows on live data ===
+
+Confirmed empty: the rendered :8183 page contains regions
+["Matched but anomalous amount table","New merchant exceptions","Deleted major
+expense definitions"] only — neither Unmatched region renders.
+
+Rendered those branches through the existing render harness
+(internal/templates/render_major_expenses_test.go's renderMajorExpensesContent,
+package templates) with a throwaway probe file
+internal/templates/zz_bl1_probe_test.go in the SCRATCH copy only (never in the
+project tree; removed before `make check`):
+
+$ go test -count=1 -run 'TestBL1_' -v ./internal/templates/
+  --- PASS: TestBL1_DeletedPanelWrappedAndButtonsEnlarged
+        REGIONS(deleted-branch)=["Deleted major expense definitions"]
+  --- PASS: TestBL1_LegacyUnmatchedBranchWrapped
+        REGIONS(legacy-branch)=["Unmatched exceptions over threshold"]
+        (data-hash="h-legacy" present -> the legacy branch really rendered)
+  --- PASS: TestBL1_SortableUnmatchedAndNewMerchantsWrapped
+        REGIONS(sortable-branch)=["Unmatched exceptions","Matched but anomalous
+          amount table","New merchant exceptions"]
+        tables(w-full text-body-sm mt-1)=3 regions=3  -> every such table wrapped
+        <table class="w-full text-body-sm mt-1 major-expenses-sortable"
+          data-default-sort="amount" data-default-dir="desc"> intact INSIDE the
+          wrapper, and the wrapper is its immediate parent (asserted on the exact
+          adjacency string)
+  ok  budget2/internal/templates
+All four new aria-labels therefore verified in RENDERED output, not just source.
+
+MUTATION KILL (the probes are evidence, not decoration): with
+web/templates/pages/major-expenses.html reverted to master and the probe file
+unchanged:
+  --- FAIL: TestBL1_DeletedPanelWrappedAndButtonsEnlarged
+        MISSING deleted-definitions region
+        MISSING enlarged Restore button class
+        MISSING enlarged Discard button class
+        STILL PRESENT: text-xs px-2 py-0.5 in deleted panel render
+  --- FAIL: TestBL1_LegacyUnmatchedBranchWrapped
+        MISSING legacy unmatched region
+  --- FAIL: TestBL1_SortableUnmatchedAndNewMerchantsWrapped
+        MISSING region "... aria-label=\"Unmatched exceptions\">"
+        MISSING region "... aria-label=\"New merchant exceptions\">"
+        unwrapped table(s): 3 tables vs 1 regions
+  MUT_EXIT=1.  Template restored afterwards.
+
+Source-level completeness cross-check:
+  $ grep -n "<table" web/templates/pages/major-expenses.html
+    154, 547, 601, 674, 748 = the five `w-full text-body-sm mt-1` tables
+    199 (#major-expenses-list, "w-full text-sm") and 309 ("w-full", per-expense
+    matched transactions) are NOT of the contract's enumerated class string
+  $ grep -n "overflow-x-auto"  -> 153, 546, 600, 673, 747
+  => all five w-full/text-body-sm/mt-1 tables are wrapped (673/674 pre-existing).
+  $ grep -n "text-xs px-2 py-0.5" web/templates/pages/major-expenses.html -> none
+    (master had exactly 2 occurrences: lines 174 and 183 = Restore and Discard).
+
+=== CRITERION 5 — make css-verify ===
+
+$ make css-verify   (in the scratch copy, no retry needed)
+  ./tmp/tailwindcss-3.4.17 -c tailwind.config.js -i web/static/css/tailwind.src.css
+    -o tmp/tailwind.check.css --minify
+  Done in 636ms.
+  tailwind.css is up to date
+  EXIT=0
+Also re-run inside `make check` (Done in 658ms; "tailwind.css is up to date").
+The rendered 36 px button height independently proves text-body-sm/px-3/py-1.5
+are live in the built stylesheet.
+
+=== 1280 layout unchanged (contract acceptance clause) ===
+
+Twin geometry dumps at 1280x1000, both themes, all <details> open,
+branch(:8183) vs BL1-only master twin(:8188), 94 element signatures each:
+  docScrollW/clientW 1280/1280 on both.
+  Table widths IDENTICAL on both: 1210, 1210, 1212 (#major-expenses-list), 1210;
+  identical left offsets (35/35/34/35). Tables remain full width.
+  6 of 94 signature entries differ, ALL height-only and ALL inside the deleted-
+  definitions panel:
+    TR 1210x46 vs 1210x33  (x2), TR 1210x45 vs 1210x32,
+    TABLE 1210x166 vs 1210x128, DETAILS 1212x215 vs 1212x177,
+    DETAILS 1212x2674 vs 1212x2636
+  docScrollH 4269 vs 4231 = +38 px, exactly the 3 rows x ~12.75 px of the
+  intended larger tap targets. No width changed anywhere. Identical in dark.
+
+=== SCOPE ===
+
+$ /usr/bin/git diff --name-only master   (shared worktree, uncommitted)
+  internal/handlers/dashboard/handlers.go        <- BL4 (lead)
+  web/static/css/styles.css                      <- BL4 (lead, appeared mid-run)
+  web/static/css/tailwind.css                    <- BL4 (lead)
+  web/static/js/insights.js                      <- BL4 (lead)
+  web/templates/components/whatif/roth-conversion.html  <- BL4 (lead)
+  web/templates/components/whatif/spending-phases.html  <- BL2 (worker)
+  web/templates/layouts/base.html                <- BL4 (lead)
+  web/templates/pages/major-expenses.html        <- BL1  (== manifest, sole entry)
+  web/templates/pages/transfers.html             <- BL3 (lead)
+Untracked: `data` only (the pre-existing worktree symlink to live data).
+BL1's footprint is exactly its manifest: web/templates/pages/major-expenses.html.
+No file matching .swarm/critical.globs (internal/services/**,
+internal/handlers/backup/**, ...) was touched by anyone in this tree.
+NOTE: web/static/css/styles.css was NOT in the brief's foreign-edit list given to
+me; it appeared during my run and is attributed to BL4-in-progress, reported for
+the lead rather than treated as a BL1 defect.
+
+=== OBSERVATIONS (backlog, not BL1 failures) ===
+
+O1. No regression test landed. The BL1 manifest contains the template only; the
+    four new aria-labelled regions and the two button class strings are guarded
+    by NO test in the repo. My mutation-killing probes were throwaway (scratch
+    copy only). Recommend the V3 promotion pattern: a test-only follow-up that
+    asserts the four regions and the >=24 px classes in rendered output.
+
+O2. axe `empty-table-header` (impact minor, 1 node,
+    `<th scope="col" class="w-6"></th>`) fires on /major-expenses at 390 in both
+    themes on BOTH master and the branch. Pre-existing, unchanged by BL1, not in
+    BL.0's defect table.
+
+O3. Bulk-pin toolbar Apply (50.63 x 21.25) and Clear (47.97 x 21.25) are under
+    24 CSS px on branch and master alike. axe passes them (2.5.8 spacing
+    exception), so the acceptance criterion is met either way, but if the run
+    wants a strict 24 px minimum-size policy these are the remaining two.
+    Both readings were judged: the worker's literal reading (leave them) is the
+    one the contract's own words support ("text-xs px-2 py-0.5" row action
+    buttons; these are toolbar buttons with the utilities in a different order),
+    AND it is the one the acceptance oracle (axe) confirms.
+
+O4. Lead brief fact error, no impact on the work: BL.0 attributes the six
+    target-size hits to "Restore/Discard and approve/reject". There are no
+    approve/reject buttons anywhere in major-expenses.html (grep for
+    <button/Approve/Reject enumerates 9 buttons, none of them approve/reject).
+    The six are 3x Restore + 3x Discard — this data has three deleted
+    definitions. The worker's two source-level edits therefore cover all six
+    rendered buttons, which the master-vs-branch axe run confirms (6 -> 0).
+
+O5. The pre-existing anomalous-amount region's label is
+    "Matched but anomalous amount table", not the contract's illustrative
+    "Exceptions". The four new labels are distinct from it and from each other;
+    the two Unmatched labels sit on mutually exclusive template branches so at
+    most four regions can ever co-exist.
+
+O6. Harness gap disclosed: the 57 `aria-label="Unpin transaction"` buttons never
+    became visible in my probe (0 x 0 even after clicking .major-expense-row-toggle),
+    so their target size is unmeasured. The axe applicable-node arithmetic
+    (master 418 pass + 6 violations = 424 = branch 424 pass) shows BL1 neither
+    added nor removed any target-size-applicable element, so this gap cannot
+    hide a BL1-introduced regression.

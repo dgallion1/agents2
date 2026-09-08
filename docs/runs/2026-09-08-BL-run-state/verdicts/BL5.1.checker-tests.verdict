@@ -1,0 +1,179 @@
+VERDICT: PASS
+CHECKER: checker-tests
+FAMILY: anthropic
+TASK: BL5
+ATTEMPT: 1
+---
+Scope of work verified: /home/darrell/bin/ai/budget2/.claude/worktrees/backlog-a11y
+(branch feat/backlog-a11y, HEAD 43ce76e == master 43ce76e; output UNCOMMITTED,
+so all diffs are `git diff master -- <path>` against the working tree).
+Mutations run only in a `cp -a` scratch copy with `.git` removed at
+/tmp/claude-1000/.../scratchpad/bl5-tests (data symlink replaced by a private
+copy before any test run, so live data/ was never writable). The built binary
+was never executed; no server started.
+
+=== CRITERION 1 — gofmt / vet / tests green; diff is exactly the three blocks ===
+
+(a) `gofmt -l internal/templates/` (in the worktree) -> no output, exit=0.
+    Same in the scratch copy: "gofmt exit=0".
+
+(b) `go vet ./internal/templates/` (scratch) -> no output, "vet exit=0".
+
+(c) `go test -count=1 ./internal/templates/...` (scratch) ->
+        ok  	budget2/internal/templates	1.132s
+    Verbose run of the three guarded tests, `go test -count=1 -v -run
+    'TestRenderMajorExpenses_UnmatchedBucketShowsAllRowsWithDimming|
+     TestRenderMajorExpenses_UnmatchedBadgeAndDeletedPanel|
+     TestRenderMajorExpenses_WithEntriesAndExceptions' ./internal/templates/`:
+        --- PASS: TestRenderMajorExpenses_UnmatchedBucketShowsAllRowsWithDimming (0.02s)
+        --- PASS: TestRenderMajorExpenses_UnmatchedBadgeAndDeletedPanel (0.01s)
+        --- PASS: TestRenderMajorExpenses_WithEntriesAndExceptions (0.01s)
+        ok  	budget2/internal/templates	0.050s
+
+(d) Composite target (beyond BL5's written acceptance, run because the repo has
+    one): `make check` in the scratch copy — Makefile:84 defines
+    `check: vet static vuln css-verify test` and `test` uses `-count=1` —
+    final line:
+        ✓ all checks passed
+    with `ok  budget2/internal/templates 2.505s` and every other package ok.
+    Re-run of the non-test prerequisites separately, `make vet static css-verify`:
+        go vet ./... / staticcheck ./... / "tailwind.css is up to date", exit 0.
+    (This also exercises BL1–BL4's territory; reported only as context.)
+
+(e) `/usr/bin/git diff master -- internal/templates/render_major_expenses_test.go`
+    -> `--numstat` = "25	0	internal/templates/render_major_expenses_test.go"
+    (25 additions, ZERO deletions; `grep -c '^-[^-]'` on the diff = 0).
+    `git diff master -U0` shows exactly three hunks, each inside one of the
+    three named tests and each opening with the required marker comment:
+        @@ -60,0 +61,4 @@  func TestRenderMajorExpenses_UnmatchedBucketShowsAllRowsWithDimming
+            + // BL1/BL5 (2026-09-08): the AllUnmatched table is a labelled scroll region.
+        @@ -133,0 +138,9 @@ func TestRenderMajorExpenses_UnmatchedBadgeAndDeletedPanel
+            + // BL1/BL5 (2026-09-08): the Deleted panel's table lives in a keyboard-...
+        @@ -328,0 +342,12 @@ func TestRenderMajorExpenses_WithEntriesAndExceptions
+            + // BL1/BL5 (2026-09-08): every exceptions table is a labelled, ...
+    Nothing else in the file changed. MET.
+
+=== CRITERION 2 — mutation kill ===
+
+Baseline for reverts: /home/darrell/bin/ai/budget2/web/templates/pages/major-expenses.html
+in the main checkout — `git rev-parse HEAD` = 43ce76e and
+`git status --porcelain -- web/templates/pages/major-expenses.html` is EMPTY,
+i.e. it is verbatim master. (md5 6277ac09… vs the worktree's 1e883101…)
+
+(2a) Whole-template revert (master's major-expenses.html copied into the scratch
+     copy, then `go test -count=1 -run <the three tests>`):
+        --- FAIL: TestRenderMajorExpenses_UnmatchedBucketShowsAllRowsWithDimming
+            render_major_expenses_test.go:63: BL5 guard: AllUnmatched table must be wrapped in a labelled scroll region
+        --- FAIL: TestRenderMajorExpenses_UnmatchedBadgeAndDeletedPanel
+            render_major_expenses_test.go:142: BL5 guard: deleted-definitions table must be wrapped in a labelled scroll region
+            render_major_expenses_test.go:145: BL5 guard: Restore/Discard buttons must carry text-body-sm px-3 py-1.5
+        --- FAIL: TestRenderMajorExpenses_WithEntriesAndExceptions
+            render_major_expenses_test.go:351: BL5 guard: missing scroll region role="region" aria-label="Unmatched exceptions over threshold">
+            render_major_expenses_test.go:351: BL5 guard: missing scroll region role="region" aria-label="New merchant exceptions">
+        FAIL	budget2/internal/templates
+     All three guarded tests fail, and EVERY failure line is a BL5 guard — no
+     unrelated assertion moved, so the guards are the sole discriminator.
+     The "Matched but anomalous amount table" region does NOT fail here because
+     it is master-native (grep master template line 667 shows the wrapper already
+     present) — that guard is a forward regression guard, killed in (2b) below.
+
+(2b) Single-attribute mutations, each applied to BL1's template alone
+     (one region at a time), same test command:
+        M1 aria-label="Matched but anomalous amount table" -> "MUTATED anomalous"
+           => FAIL line 351: missing scroll region ... "Matched but anomalous amount table"> (ONLY that one)
+        M2 "New merchant exceptions" -> "MUT merchants"
+           => FAIL line 351: missing ... "New merchant exceptions">
+        M3 "Unmatched exceptions"> -> "MUT unmatched">
+           => FAIL line 63: AllUnmatched table must be wrapped in a labelled scroll region
+        M4 "Deleted major expense definitions" -> "MUT deleted"
+           => FAIL line 142: deleted-definitions table must be wrapped ...
+        M5 "Unmatched exceptions over threshold" -> "MUT legacy"
+           => FAIL line 351: missing ... "Unmatched exceptions over threshold">
+     Each of the five regions is guarded INDEPENDENTLY and named precisely.
+     The trailing `>` in each pinned string is load-bearing: it is what keeps
+     the "Unmatched exceptions" guard from being satisfied by the longer
+     "Unmatched exceptions over threshold" label.
+
+(2c) Button-class mutations (Deleted panel):
+        M6 Restore button back to `text-xs px-2 py-0.5 ... border-positive`
+           => FAIL line 145 (both clauses).
+        M7 ONLY the Discard button (border-negative) back to `text-xs px-2 py-0.5`
+           => FAIL line 145 — caught by the negative `!Contains("text-xs px-2 py-0.5")`
+           clause, so the guard covers the button the positive clause does not name.
+        M8 tabindex="0" removed from the Deleted region wrapper only
+           => FAIL line 142 (the guard pins the whole wrapper string).
+     MET.
+
+=== CRITERION 3 — non-vacuity (each fixture really renders the guarded section) ===
+
+A throwaway probe test (zz_bl5_probe_test.go, created in the scratch copy only,
+deleted after use) re-rendered the three fixtures verbatim and dumped the HTML;
+a python pass located each `aria-label="…">` and counted <tr> in the following
+<tbody>:
+    bl5probe_allunmatched.html
+        "Unmatched exceptions"                tbody<tr>=2  text: ['Big Unknown Charge', 'Tiny Coffee']
+    bl5probe_deleted.html
+        "Deleted major expense definitions"   tbody<tr>=1  text: ['Vanished Subscription', 'Restore', 'Discard']
+    bl5probe_exceptions.html
+        "Unmatched exceptions over threshold" tbody<tr>=1  text: ['Random Big Purchase']
+        "New merchant exceptions"             tbody<tr>=1  text: ['Brand New Store']
+        "Matched but anomalous amount table"  tbody<tr>=1  text: ['Rent', 'My Landlord LLC']
+No guarded region is an empty branch: every one wraps a populated tbody, and the
+Deleted region physically contains the Restore/Discard buttons whose classes the
+second assertion pins. This is corroborated by the tests' own pre-existing
+assertions on the same row text (Big Unknown Charge / Tiny Coffee, Vanished
+Subscription + hx-post restore, Random Big Purchase / Brand New Store /
+My Landlord LLC). MET.
+
+=== CRITERION 4 — over-pinning report (observations, not failures) ===
+
+What the three blocks pin, exactly:
+  - Blocks A and C (four regions) pin ONLY `role="region" aria-label="X">`.
+    They pin nothing else — no class, no tabindex, no table markup.
+  - Block B (Deleted) pins the FULL wrapper string
+    `<div class="overflow-x-auto" tabindex="0" role="region" aria-label="Deleted major expense definitions">`
+    — i.e. class list AND attribute ORDER — plus
+    `class="text-body-sm px-3 py-1.5 rounded border border-positive` and the
+    page-wide absence of `text-xs px-2 py-0.5`.
+
+O1 (UNDER-pinning, the more interesting direction): removing `tabindex="0"` from
+   the four NON-Deleted regions leaves the suite GREEN. Verified: mutation M9
+   stripped tabindex from the "Unmatched exceptions", "Unmatched exceptions over
+   threshold", "New merchant exceptions" and "Matched but anomalous amount table"
+   wrappers (grep confirmed 1 remaining `tabindex="0" role="region"`, the Deleted
+   one) and `go test -count=1` reported `ok budget2/internal/templates 0.044s`.
+   `overflow-x-auto` is likewise unpinned on those four. Keyboard focusability —
+   the actual axe `scrollable-region-focusable` defect BL1 fixed — is therefore
+   guarded for one of five regions. The BL5 contract only asks for the region
+   LABELS there ("renders inside aria-label=…"), so this is in-contract; flagging
+   it as a cheap hardening for the backlog (pin the full wrapper string in all
+   five, as block B already does).
+
+O2 (OVER-pinning, mild): block B's positive button clause includes the unrelated
+   styling classes `rounded border border-positive`, so a pure restyle of the
+   Restore button's border colour would fail a target-size guard. Similarly the
+   wrapper assertion is order-sensitive: reordering attributes to an equivalent
+   `role="region" tabindex="0" …` would fail. Both are brittleness, not
+   incorrectness.
+
+O3 (scope of the negative clause): `strings.Contains(html, "text-xs px-2 py-0.5")`
+   is asserted over the WHOLE rendered page, not the Deleted panel. Measured
+   today that is precise — `grep -c 'text-xs px-2 py-0\.5'` = 2 on master's
+   major-expenses.html (the two buttons), 0 on BL1's, and the only other repo
+   occurrence is components/whatif/healthcare-person.html:16, not rendered by
+   `major-expenses-content`. A future unrelated small badge on this page would
+   trip it spuriously.
+
+=== SCOPE ===
+
+Manifest BL5.1.files lists internal/templates/render_major_expenses_test.go only;
+`git diff master --numstat` for that path is 25/0 and confined to the three named
+tests. No file in .swarm/critical.globs is touched (BL5 is entirely inside
+internal/templates test code). The other modified paths in the shared worktree —
+internal/handlers/dashboard/handlers.go, web/static/css/{styles,tailwind}.css,
+web/static/js/insights.js, web/templates/components/whatif/{roth-conversion,
+spending-phases}.html, web/templates/layouts/base.html,
+web/templates/pages/{major-expenses,transfers}.html, plus untracked `data` —
+are BL1–BL4 territory per BL-RUN-SPEC BL.1 and are ATTRIBUTED, not charged to
+BL5. No project file was edited by this checker; all mutations were confined to
+the .git-less scratch copy.
