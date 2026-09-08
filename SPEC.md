@@ -1938,6 +1938,211 @@ reverting BL1's template in a scratch copy makes the guarded tests FAIL;
   own painted background; Tab, never `.focus()`; force `target-size` in
   axe; give each checker its own port and scratch dir.
 
+# Run BK — remaining accessibility backlog (2026-09-08)
+
+Two-task run closing what run BL left. Approved by the user in chat
+2026-09-08 ("Go ahead") after the measured triage.
+
+## BK.0 Facts (measured on live :8080 = master 5a75ca1)
+
+| Item | Defect |
+|---|---|
+| sitewide `input:focus, select:focus` (styles.css ~131) | literal `#6366f1` ring: 2.30:1 against the dark input fill (`dark:bg-gray-700` = stone-700 `#44403c`); 4.47:1 on white in light |
+| /major-expenses bulk-pin `#major-expenses-bulk-pin-apply` and `.major-expenses-bulk-pin-clear` (~514–519) | `px-2 py-0.5 text-xs`, 21.3 px tall when visible (after ticking a `.major-expenses-pin-check`) |
+| /major-expenses `.major-expense-row-toggle` (~235; 47 on live data) | button = its 14.9 px icon, no padding |
+| /major-expenses `<th scope="col" class="w-6"></th>` (~202) | axe `empty-table-header` |
+| Dashboard donut "34.3%" | VERIFIED CLEAN: the one inside label is white on `rgb(31,119,180)` at 4.82:1; outside labels sit on the card at ≈9:1. No task. |
+
+Out of scope (deliberate, unchanged): Explorer footer; dead Insights
+partials; nav at 110 % zoom.
+
+## BK.1 Territory
+
+- Worktree `/home/darrell/bin/ai/budget2/.claude/worktrees/backlog-a11y-2`,
+  branch `feat/backlog-a11y-2` off master 176383f (PR #100 landed after the BL deploy; :8080 still runs 5a75ca1) (`data` symlink,
+  `tmp/tailwindcss-3.4.17`).
+- BK1 (lead): `web/static/css/styles.css` only.
+- BK2 (worker): `web/templates/pages/major-expenses.html` and
+  `internal/templates/render_major_expenses_test.go` only.
+- The lead runs the final `make css` + `make css-verify`.
+
+## BK.2 Worker constraints
+
+Same as BL.2 (never run the binary; `scripts/whatif-verify.sh start/stop`;
+ports BK2 8201, checkers 8211 (BK1 a11y), 8212 (BK2 tests), 8213 (BK2 a11y)
+— ONE port and ONE scratch subdirectory per agent, never shared; Playwright
+path as before; dark mode via a real `#theme-toggle` click; axe via
+addScriptTag with `target-size` FORCED through `runOnly` — it is off in the
+default rule set; manifests under
+`/home/darrell/work/agents2/.claude/worktrees/retired-couple-ui-layout-397a9a/.swarm/manifests/`).
+
+## BK.3 Tasks
+
+| ID | Task | Files | Tier | Checks | Why |
+|----|------|-------|------|--------|-----|
+| BK1 | Focus ring on inputs/selects/textareas uses the accent token | `styles.css` | 1 | a11y | One rule, sitewide, strong oracle (measured ring contrast). Lead-direct. |
+| BK2 | Major Expenses: bulk-pin buttons and row toggles to ≥ 24 px; spacer header labelled; render guards | `pages/major-expenses.html`, `render_major_expenses_test.go` | 2 | tests,a11y | 47 controls + JS hooks; handler/render tests are the regression oracle, axe the a11y oracle. |
+
+### BK1 — Focus ring (Tier 1, checks: a11y; lead)
+
+`input:focus, select:focus` → `input:focus, select:focus, textarea:focus`
+with `box-shadow: 0 0 0 2px rgb(var(--accent))` (indigo-600 light,
+indigo-300 dark). No `!important`; nothing else.
+
+Acceptance: with REAL keyboard focus (Tab, not `.focus()`), the ring on a
+text input, a date input and a select measures ≥ 3:1 against the input's
+own fill AND the card behind it, both themes (expect light ≈6.7:1 on
+white, dark ≈4.7:1 on stone-700); the What-If number inputs and the
+Dashboard date inputs behave the same; no other focus style changed
+(`git diff` is that one rule); axe clean on /dashboard, /whatif,
+/major-expenses at 1280 both themes; `make css-verify`.
+
+### BK2 — Major Expenses small controls (Tier 2, checks: tests,a11y)
+
+1. `#major-expenses-bulk-pin-apply` and `.major-expenses-bulk-pin-clear`:
+   `px-2 py-0.5 … text-xs` → `px-3 py-1.5 … text-body-sm` (keep colours,
+   ids, `hidden`/`disabled` handling, aria-label, text).
+2. Every `.major-expense-row-toggle` button: add
+   `inline-flex h-6 w-6 items-center justify-center rounded` (24 px box
+   at the 16 px base, ~25.5 px at the 17 px root); the SVG icon, its
+   `aria-*`, `data-*` and the class the JS selects are unchanged.
+3. The chevron column header `<th scope="col" class="w-6"></th>` gains
+   `<span class="sr-only">Details</span>`.
+4. `render_major_expenses_test.go`: extend the existing BL5 guards to
+   assert the Apply button's new classes, the row-toggle class string, and
+   the `Details` sr-only header; assert `px-2 py-0.5` no longer occurs
+   next to `text-xs` on the page (note line ~306 has `px-2 py-0.5` on a
+   `<p>`, not a control — do not touch it, and do not assert on it).
+
+Acceptance: `go test ./internal/handlers/majorexpenses/... ./internal/templates/...`
+green; at 1280 and 390, both themes, with a `.major-expenses-pin-check`
+ticked so Apply/Clear are visible and every `<details>` open: axe with
+`target-size` forced → zero `target-size`, zero `empty-table-header`;
+Apply, Clear and every row toggle ≥ 24 × 24 CSS px; a row toggle still
+expands/collapses its row by mouse click and by keyboard (Enter/Space),
+`aria-expanded` (if present) toggling; the sortable and bulk-pin JS
+unchanged (`git diff` touches only the two files); the reverted template
+makes the new guards FAIL; `make css` / `make css-verify`.
+
+## BK.4 Rulings
+
+(recorded as they happen; each catch names its mechanism)
+
+- **BK-2026-09-08a** (observation — mechanism: WORKER on BK2): at exactly a
+  1280 px viewport, Chromium's scrollbar gutter can leave the desktop nav
+  (`hidden xl:flex`, xl = 1280) just under the breakpoint, so the desktop
+  `#theme-toggle` is not visible to an actionability-checked Playwright
+  click. Test harnesses should use 1300 px (or the mobile toggle at 390);
+  real users at 1280 with an overlay scrollbar are unaffected. Backlog
+  candidate: none — behaviour is correct, only the probe width matters.
+- **BK-2026-09-08b** (observations — mechanism: PRIMARY CHECKER
+  checker-tests on BK2, PASS): (1) brief accuracy — master produced NO axe
+  `target-size` hit for these controls (the SC 2.5.8 spacing exception
+  applies), only `empty-table-header`; the defect is shown by measurement
+  (14.9 → 25.5 px, 21 → 34 px), not by an axe delta. (2) `swarm/t7-
+  coverage.sh` exits 1 identically on branch and master — pre-existing,
+  not in `make check`. (3) the new guards' messages still say "BL5 guard"
+  under BK2 comments — cosmetic.
+- **BK-2026-09-08c** (catch — mechanism: PRIMARY CHECKER checker-a11y on
+  BK2, PASS with a real pre-existing finding): `.major-expense-row-toggle`
+  (a `<button>` with no explicit focus class) shows the browser default
+  ring at 1.48:1 in dark mode — the same defect class BL3 fixed for scroll
+  regions, now on buttons; byte-identical on master. Promoted to BK3.
+
+### BK3 — Fallback focus indicator for unstyled controls (Tier 1, checks: a11y; lead)
+
+`styles.css` appends
+`:where(button, [role="button"], a[href], summary, [tabindex="0"]):where(:not([class*="focus-visible:ring"], [class*="focus:ring"])):focus-visible { outline: 2px solid rgb(var(--accent)); outline-offset: 2px; }`
+plus, for controls inside the accent header,
+`nav :where(button, a[href]):where(:not(…same…)):focus-visible { outline-color: rgb(255 255 255); }`
+(attempt 2, ruling BK-2026-09-08d). `:where()` keeps specificity at zero
+(the `nav` prefix adds 0,0,1) so every element's own Tailwind utilities
+(0,1,0) still win; the `:not()` excludes anything that already carries a
+ring utility, so no control gets two indicators. No `!important`.
+
+Acceptance (real keyboard Tab, both themes, verify server): the Major
+Expenses row toggle, the Restore/Discard buttons, a nav link, the mobile
+menu toggle, a `<summary>` (Period details) and a `[tabindex="0"]` scroll
+region show a 2 px accent ring ≥ 3:1 against their background; a control
+WITH explicit utilities (`#import-csv-btn`: `focus:outline-none
+focus-visible:ring-2 focus-visible:ring-accent`; the What-If tabs; the
+Insights tabs) renders exactly as on master (no double indicator — outline
+stays the transparent Tailwind one); mouse click on a button shows no ring
+(`:focus-visible`); axe clean on /dashboard, /major-expenses, /whatif,
+/insights at 1300 and 390 both themes; `make css-verify`.
+
+- **BK-2026-09-08d** (catch — mechanism: PRIMARY CHECKER checker-a11y on
+  BK3 attempt 1, FAIL CONCEDED; against the LEAD's own change): (1) in
+  light mode `--accent` and `--accent-strong` are the same indigo-600, so
+  the accent ring on a nav link or the menu toggle was pixel-identical to
+  the header (1.00:1) where the browser default had been visible; (2) tiles
+  with `focus-visible:ring-2` but no `focus:outline-none` got the outline
+  on top of their ring. Both invisible to axe; found by a real-Tab pixel
+  walk. Ruling: header controls get a white ring via a `nav`-scoped
+  `:where` rule; the fallback excludes `[class*="focus-visible:ring"]` and
+  `[class*="focus:ring"]`. Attempt 2. Lesson (third time this week): a
+  sitewide rule must be walked on every surface it can land on, including
+  the accent header, before it is called done.
+- **BK-2026-09-08e** (contract rewrite — mechanism: PRIMARY CHECKER
+  checker-a11y on BK3 attempt 2, FAIL CONCEDED; two consecutive FAILs to
+  the same class = lead/spec defect per the hard-stop rule): the header
+  override fixed the nav, but every OTHER accent-filled control outside
+  `<nav>` (`#whatif-new-scenario-toggle`, `#add-chain-step-btn`, the
+  projection Nominal toggle, the active date-range preset, three more
+  `bg-accent-strong` buttons) still got a 1.00:1 accent ring in light mode.
+  A single ring colour cannot contrast with both neutral cards and accent
+  fills. Contract rewritten: ONE rule, the concentric two-tone ring —
+  `box-shadow: 0 0 0 2px rgb(255 255 255)` (white inner, flush) plus
+  `outline: 2px solid rgb(var(--accent)); outline-offset: 2px` (accent
+  outer); the `nav` override is removed. Acceptance for attempt 3 (the
+  LAST allowed): for every BK3-ringed control on /dashboard, /whatif,
+  /major-expenses, /insights, /transfers, /accounts in both themes, the
+  BETTER of (white inner ring vs the colour immediately outside the
+  element) and (accent outer ring vs the colour it sits on) is ≥ 3:1; no
+  control with a ring utility changes; mouse click shows no ring; inputs
+  unchanged. If attempt 3 fails, BK3 halts and is reported.
+- **BK-2026-09-08f** (HARD STOP — mechanism: PRIMARY CHECKER checker-a11y
+  on BK3 attempt 3, FAIL): the two-tone ring fixed the contrast defect on
+  every surface (full Tab sweep, six pages, both themes, minimum 5.76:1;
+  every attempt-2 offender now visible). The FAIL is narrower: the What-If
+  and Insights tabs and the What-If collapse toggles carry a BESPOKE
+  outline rule (`[data-wf-tab]:focus-visible` etc., no Tailwind ring
+  utility), so the `:not()` exclusion misses them and they gain the white
+  inner band on top of their own accent outline — a "controls unchanged"
+  deviation, not a contrast regression (imperceptible in light, a visibly
+  wider ring in dark). Three failed attempts halt the task per the
+  constitution; the lead does not spend a fourth on its own authority.
+  Options for the user: (a) one more attempt adding the bespoke-outline
+  selectors to the `:not()` list (a one-line change, well understood);
+  (b) accept the wider ring on those tabs as the new look; (c) drop BK3,
+  ship BK1+BK2. Lesson: an exclusion list built from Tailwind class
+  patterns cannot see project-level focus rules — enumerate the
+  stylesheet's own `:focus-visible` selectors before writing a fallback.
+- **BK-2026-09-08g** (USER ruling, reopen — 2026-09-08, "2"): the user
+  chose option (b): the wider two-tone ring on the What-If tabs, Insights
+  tabs and What-If collapse toggles is accepted as the new look. Per the
+  reopened-scope precedent (2026-08-29c/d), this later, specific ruling
+  governs acceptance: the "controls unchanged vs master" clause now
+  applies only to controls with a Tailwind ring utility; bespoke-outline
+  controls MAY gain the white inner band provided the combined ring
+  measures ≥ 3:1 against its surroundings in both themes and renders as
+  one coherent indicator. Attempt 4 is a re-verification of the attempt-3
+  code (no change) under this acceptance; attempt-3 evidence for the
+  sweep, axe and hygiene may be reused where the tree is unchanged.
+- **Run BK closed 2026-09-08**: `gate.sh done` exit 0; `gate.sh stats`
+  verbatim: `first-attempt clean: 15/19 (no-evidence rows: 0)` across
+  LT+RF+BL+BK. `make check` green; agents2 smoketest ALL PASS. Shipped as
+  budget2 commit 141e6ea on `feat/backlog-a11y-2`, PR #101 merged as
+  master a71e8b9 and deployed to :8080 the same afternoon (pid 3878904,
+  health v1.4.0-1111-ga71e8b9). Catches by mechanism: PRIMARY CHECKER FAIL ×3 (BK3
+  attempts 1–3, all against the lead's own CSS, all invisible to axe),
+  PRIMARY CHECKER observations ×3 (rulings a–c; c became BK3), USER
+  ruling ×1 (g, reopen). The four-attempt BK3 arc is the run's real
+  output: a sitewide focus rule is a design decision, not a one-liner —
+  enumerate every surface (neutral card, dark card, accent fill, header)
+  and every existing focus rule (utilities AND bespoke selectors) before
+  writing it, and use a two-tone ring so no single background can hide it.
+
 # Run SV — "Review these transactions" sorted by value (2026-09-08)
 
 Run prefix: **SV**. Target repo: `/home/darrell/bin/ai/budget2`, branch

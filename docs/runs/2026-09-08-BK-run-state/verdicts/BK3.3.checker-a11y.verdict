@@ -1,0 +1,338 @@
+VERDICT: FAIL
+CHECKER: checker-a11y
+FAMILY: anthropic
+TASK: BK3
+ATTEMPT: 3
+---
+Scope (`/usr/bin/git diff master -- web/static/css/styles.css` in
+/home/darrell/bin/ai/budget2/.claude/worktrees/backlog-a11y-2, branch
+feat/backlog-a11y-2 off 176383f): BK1's `input:focus, select:focus,
+textarea:focus` box-shadow rule (foreign, accepted separately, re-verified
+at point 5 only) plus BK3 attempt-3's replacement block (ruling
+BK-2026-09-08e): a concentric two-tone `:where(button, [role="button"],
+a[href], summary, [tabindex="0"]):where(:not([class*="focus-visible:ring"],
+[class*="focus:ring"])):focus-visible { outline: 2px solid rgb(var(--accent));
+outline-offset: 2px; box-shadow: 0 0 0 2px rgb(255 255 255); }` — the
+per-attempt-2 nav-scoped white-outline override is GONE, replaced by this one
+rule. Foreign/attribute-only, never FAILed here: BK2's major-expenses.html +
+render_major_expenses_test.go (accepted separately). `git status --short`
+confirms only these three files touched in the worktree; no unrelated drift.
+
+Harness (real render + real built CSS, not hand-built HTML): worktree server
+on :8216 (`scripts/whatif-verify.sh start 8216`, backlog-a11y-2 worktree);
+master baseline on :8226 via a `.git`-stripped `cp -a` of
+/home/darrell/bin/ai/budget2 (HEAD 176383f confirmed via
+`git -C /home/darrell/bin/ai/budget2 rev-parse HEAD`) into
+/tmp/bk3-master-copy3/repo, same start script. Both torn down with `stop`
+at the end (confirmed via `curl :8216/api/health` / `:8226/api/health` both
+now refuse connection). Live :8080 was never touched by this audit (only
+the isolated verify-copy ports were used) — `curl :8080/api/health` failed
+both before I looked and after teardown; that server was already down when I
+started (no budget2 process other than the unrelated `budget2-demo` one was
+running at the start of this session) and is unrelated to anything in this
+run; flagging for the lead as an OBSERVATION, not something this audit
+caused. Playwright (chromium-1243, --no-sandbox) scripts written fresh in
+scratch `node/` (lib.js, sweep1.js, measure.js, run_measure.js, analyze3.py,
+axecheck2.js, point4_5.js, textarea_check.js, wfcollapse.js, rothcheck.js,
+findroth2.js) drive real navigation, real keyboard `Tab`, dark via a real
+`#theme-toggle`/`#theme-toggle-mobile` click + `page.reload()`.
+
+Real-Tab / real-focus methodology: for the full-page sweep (point 1a), a
+bounded real `page.keyboard.press('Tab')` loop from `document.body`,
+recording every distinct focused element's computed outline/box-shadow (date
+`<input>` sub-fields report the same element+rect on consecutive Tabs — that
+repeat is expected, not a wrap-around, so the loop only stops on landing back
+on `<body>`). For the per-control pixel measurements (point 1b/2), one real
+`page.keyboard.press('Tab')` first (establishes Chromium's keyboard
+`:focus-visible` modality for the whole page, confirmed valid technique by
+BK3.2's `testmodality.js`), then `el.focus()` per named target — this
+matches how a real Tab-produced ring renders, verified because the FIRST
+(genuinely real-Tab) elements in the same run render pixel-identically to
+the `el.focus()`-driven ones. `major-expenses`: ticked
+`#major-expenses-pin-check-header-unmatched` (reveals Apply/Clear) and
+opened every `<details>` (`.open = true`); `dashboard`/`major-expenses`
+active-preset cases: real `.click()` on a preset button first (dashboard's
+preset "active" state is JS-driven inline `style.backgroundColor`, traced by
+reading `dashboard.js:368-376` — not executed as a black box: I confirmed
+the trace by observing the resulting computed `backgroundColor` after a real
+click matches `rgb(79, 70, 229)`, i.e. `bg-accent-strong`'s own value). An
+element taller than the viewport (`/transfers` scroll region) needed an
+explicit `el.scrollIntoView({block:'start'})` after focus so its top-left
+corner, not some scrolled-off point, anchors the screenshot crop.
+
+Pixel methodology (`analyze3.py`): screenshot a 16px-padded crop around the
+focused element, then scan OUTWARD from the border edge in up to 4
+directions (top/left/bottom/right), sampling ~1px in (inner/white-ring band)
+and ~3px in (outer/accent-ring band), and finding the background reference
+by scanning outward until two consecutive samples agree (a stability
+plateau) — this replaced two cruder first passes that both produced false
+readings I caught and fixed before trusting any number: (1) a fixed left-edge
+offset bled into a horizontally-adjacent sibling button's own border color
+for Restore/Discard; (2) a fixed top-edge offset on `/dashboard`'s "Period
+details" summary bled into an amber stale-data banner text line only ~3px
+above it (screenshots `debug-crop.png`/`debug-crop2.png` show the banner is
+almost flush against the summary — visually confirmed the ring itself IS
+clearly visible there, my sampling point was simply wrong). The final
+script also rejects a direction that "stabilizes" only because it's clamped
+at a crop/viewport boundary (a real bug I hit on the scroll region once its
+top-left was pinned to y=0) by preferring directions where inner or outer
+differs from the background. Contrast = WCAG relative-luminance ratio,
+computed in Python from the sampled RGB triples, not eyeballed.
+
+=== Point 1: full Tab sweep, every unstyled-ring control, both themes ===
+
+`node sweep1.js` — bounded real-Tab walk on all 6 pages × 2 widths (1300,
+390) × 2 themes (dark via real toggle+reload) = 24 runs, 683 total recorded
+focus stops. Filtering for BK3's exact signature (`outline: solid 2px` +
+`box-shadow: rgb(255,255,255) 0 0 0 2px`) found 65 unique selectors that
+receive BK3's fallback ring somewhere across the 6 pages (full list in
+`sweep1.json`) — includes every attempt-2-named offender:
+`#whatif-new-scenario-toggle`, `#add-chain-step-btn`, the projection
+Nominal toggle (`[data-display-dollars="nominal"]`), the active
+`.date-range-btn` preset (major-expenses) and the dashboard active preset
+(JS inline-style, same `rgb(79,70,229)` fill), nav links, `#theme-toggle`,
+`#mobile-nav-toggle`, `.major-expense-row-toggle`, Restore/Discard, the
+"Period details" `<summary>`, and the `/transfers` scroll region — plus
+every other `bg-accent-strong` action button reachable without extra clicks
+(`income-sources-list.html`/`expense-sources-list.html` "Add" buttons,
+major-expenses "Add" submit).
+
+`node run_measure.js` + `python3 analyze3.py` pixel-measured every one of
+those named targets (72 records: 6 scenarios × 2 widths × 2 themes,
+`measure-worktree.analyzed3.json`) — filtering to `computed.active===true`
+(excludes the desktop-hidden mobile toggle / mobile-hidden nav-link
+combinations, which are trivially N/A, not failures) gives 56 real,
+applicable readings. **Minimum measured max-of-(inner-vs-bg,
+outer-vs-bg) across ALL of them: 5.76:1**, at `light 1300/390 whatif
+wf-tab-overview`, `light 390 major-expenses date-range-btn-active`, and
+`light 1300/390 insights-june insights-tab-trends` (outer accent-vs-card
+ring, `rgb(79,70,229)` vs `rgb(245,245,244)`). Every other reading is
+≥6.29:1 (light) or ≥7.61:1 (dark); many are 15–17:1. **No reading is below
+3:1 anywhere I measured.** Full table in this verdict's evidence dir
+(`report-worktree.txt`) and reproduced for the previously-failing controls:
+
+  light  #whatif-new-scenario-toggle    inner=1.00 outer=6.29  MAX=6.29
+  dark   #whatif-new-scenario-toggle    inner=15.17 outer=7.61 MAX=15.17
+  light  #add-chain-step-btn            inner=1.00 outer=6.29  MAX=6.29
+  dark   #add-chain-step-btn            inner=15.17 outer=7.61 MAX=15.17
+  light  projection Nominal toggle      inner=1.00 outer=6.29  MAX=6.29
+  dark   projection Nominal toggle      inner=15.17 outer=7.61 MAX=15.17
+  light  .date-range-btn active (ME)    inner=1.09 outer=5.76  MAX=5.76
+  dark   .date-range-btn active (ME)    inner=10.27 outer=5.15 MAX=10.27
+  light  dashboard active preset        inner=1.09/1.00 outer=5.76/6.29 MAX≥5.76
+  dark   dashboard active preset        MAX=10.27/15.17
+  light  nav link / theme-toggle (1300) inner=6.29 outer=1.00  MAX=6.29
+  dark   nav link / theme-toggle (1300) inner=15.9-17.5 outer=8.0-8.8 MAX≥15.9
+  light  mobile-nav-toggle (390)        inner=6.29 outer=1.00  MAX=6.29
+  dark   mobile-nav-toggle (390)        inner=17.1-17.3 outer=8.6-8.7 MAX≥17.1
+  light  row-toggle / restore / discard inner=1.00 outer=6.29  MAX=6.29
+  dark   row-toggle / restore / discard inner=15.17 outer=7.61 MAX=15.17
+  light  "Period details" summary       inner=1.00 outer=6.29  MAX=6.29
+  (visually confirmed via 2x-scaled crop: debug-crop2.png)
+  light/dark /transfers scroll region   MAX=6.29 / 15.17 (best-of-4-directions,
+  see methodology; matches/exceeds master's own 6.29/7.61 for the same
+  pre-existing BL3 rule, see Point 2)
+
+This closes BOTH prior FAILs: attempt-1's nav 1.00:1 (`navlink`/
+`mobile-nav-toggle` now 6.29–17.5:1) and attempt-2's accent-on-accent
+buttons outside `<nav>` (`whatif-new-scenario-toggle`,
+`add-chain-step-btn`, projection Nominal, active date-range preset — all
+now 5.76–15.2:1 via the white inner ring, visually confirmed clearly
+visible in `big3-worktree-light-1300-whatif-whatif-new-scenario-toggle.png`
+and `...projection-nominal-toggle.png`, a crisp white ring flush against
+the indigo fill). **Point 1: PASS.**
+
+=== Point 2: ring-utility / pre-existing-rule controls unchanged vs master — FAIL ===
+
+Command: direct computed-style diff, worktree vs master, both themes, real
+Tab (`measure.js` computed-style capture + a Python dict diff over
+`outlineStyle/outlineColor/outlineWidth/outlineOffset/boxShadow`).
+
+- `#import-csv-btn` (`focus:outline-none focus-visible:ring-2
+  focus-visible:ring-accent`): **SAME** in both themes — outline suppressed,
+  box-shadow ring unchanged. PASS.
+- `[data-kpi-detail="income"]` (`focus-visible:ring-2 focus-visible:ring-accent
+  rounded`, no `focus:outline-none`): **SAME** in both themes — worktree
+  outline stays browser-default (`auto/1px/rgb(16,16,16)/0px`, the
+  pre-existing dark-mode-low-contrast `1.09:1` outline reading is
+  BYTE-IDENTICAL to master too, so it's a pre-existing master trait, not a
+  BK3 regression — OBSERVATION only). PASS.
+- **`#wf-tab-overview` (a What-If tab) — FAIL, not identical.** Master:
+  `outlineStyle: solid, outlineColor: rgb(79,70,229), boxShadow: none`
+  (from the pre-existing `[data-wf-tab]:focus-visible` rule,
+  `styles.css:231-236`, predates this task). Worktree: outline unchanged
+  (same rule wins on specificity) but `boxShadow: rgb(255,255,255) 0px 0px
+  0px 2px` — BK3's white ring is NOW ALSO applied, because this button has
+  NO `focus-visible:ring`/`focus:ring` class for `:not()` to match (it's
+  selected by the attribute `[data-wf-tab]`, not a utility class) — same
+  true for `#insights-tab-trends` (`[data-ins-tab]`). Visually confirmed
+  real (not a screenshot artifact): `big-master-dark-1300-whatif-wf-tab-
+  overview.png` shows a single thin accent ring; `big-worktree-dark-1300-
+  whatif-wf-tab-overview.png` shows a visibly wider two-band ring (white
+  flush + accent offset). Light mode: the added white ring is imperceptible
+  against the white page (`big-worktree-light...png` vs `big-master-
+  light...png` look the same) — this is a dark-mode-visible-only deviation.
+  It is NOT a contrast regression (still single-hue accent outline,
+  ≥15:1 in dark mode, arguably MORE visible with the extra ring) but it is
+  a literal, confirmed violation of this task's own stated acceptance text
+  ("computed outline AND box-shadow identical to master") for 2 of the 4
+  explicitly-named point-2 controls.
+- Same root cause, NOT one of the 4 named controls but confirmed via the
+  same method for completeness: `#wf-collapse-money-toggle`
+  (`[data-wf-collapse-toggle]:focus-visible`, `wfcollapse.js`) — master
+  `boxShadow: none`, worktree `boxShadow: rgb(255,255,255) 0 0 0 2px`, same
+  pattern. Also the "Find recommendations" Roth button
+  (`whatif/roth-recommendations.html`, uses Tailwind's `focus:outline
+  focus:outline-2 focus:outline-offset-2 focus:outline-accent` utility, a
+  DIFFERENT utility family `:not()` also doesn't recognize) — `rothcheck.js`
+  confirms the same box-shadow addition; this one sits on `bg-accent-strong`
+  fill, so unlike wf-tab/insights-tab this addition is a genuine BONUS FIX
+  (master's own pre-existing `focus:outline-accent` on this button has the
+  SAME `--accent`-equals-`--accent-strong` invisibility bug attempt 1/2
+  found elsewhere — pre-existing, out of scope, not caused by BK3, noted as
+  OBSERVATION). This button is on the Strategies tab's always-open sidebar
+  collapse section, not the tab panels, so it IS reachable on the default
+  `/whatif` load (confirmed via DOM ancestor-chain probe `findroth2.js`);
+  the roth-conversion/roth-recommendations buttons that live INSIDE the
+  hidden Strategies **tab panel** (as opposed to the sidebar) are out of
+  scope for "/whatif (default tab)" and were not tested — OBSERVATION for
+  future coverage.
+
+**Point 2: FAIL** — the `:where():not([class*="focus-visible:ring"],
+[class*="focus:ring"])` exclusion list only recognizes Tailwind RING
+utility classes; it does not recognize (a) pre-existing bespoke
+attribute-selector focus rules already in the stylesheet
+(`[data-wf-tab]`, `[data-ins-tab]`, `[data-wf-collapse-toggle]`,
+`[role="region"][tabindex="0"]`, `[data-display-dollars]`,
+`[data-projection-compare-toggle]` — all added by an earlier task, BL3),
+nor (b) Tailwind's OUTLINE utility family (`focus:outline*`, as opposed to
+`focus:ring*`). For the accent-strong-filled members of that set
+(projection toggle, roth button, scroll region) the box-shadow ADDITION is
+harmless-to-beneficial (matches Point 1's fix). For the two explicitly-named,
+already-fine, NOT-accent-strong-filled members (`#wf-tab-overview`,
+`#insights-tab-trends`) it is a confirmed, reproducible, dark-mode-visible
+deviation from "identical to master" — real, not a screenshot artifact,
+literally named in this task's own acceptance text as something that must
+NOT happen.
+
+=== Point 3: `shadow-*`-utility-but-no-ring elements — N/A, none live ===
+
+`grep -rlnE 'class="[^"]*\bshadow(-[a-z0-9]+)?\b[^"]*"' web/templates/ |
+xargs grep -nE '<(button|a)...'` on the six pages' full template tree found
+exactly one hit outside ring-utility controls:
+`components/alerts.html:58` (`<a href="/duplicates" class="... shadow ...">`).
+`grep -rn '"alerts"' web/templates/ internal/` shows this `{{define
+"alerts"}}` template has NO caller anywhere in the codebase — a dead
+template, not rendered on any live page. **No live instance of this pattern
+exists on the six audited pages; nothing to check.** OBSERVATION for the
+backlog, not a BK3 concern.
+
+=== Point 4: `:focus-visible` semantics — PASS ===
+
+`node point4_5.js`: real `page.click('.major-expense-row-toggle')` →
+`{outlineStyle:"none", boxShadow:"none"}` (no ring on mouse click). Real
+`Tab` then `Shift+Tab` back → `{outlineStyle:"solid",
+outlineColor:"rgb(79, 70, 229)", boxShadow:"rgb(255, 255, 255) 0px 0px 0px
+2px"}` (both layers restored on keyboard focus). **PASS.**
+
+=== Point 5: inputs/selects/textareas unaffected — PASS ===
+
+`node point4_5.js` + `node textarea_check.js`. Filter `<input>` real click:
+`outlineStyle:"none"`, `boxShadow:"rgb(79, 70, 229) 0px 0px 0px 2px"` — BK1's
+rule only. `#acct-new-patterns` `<textarea>` (behind the /accounts "Add an
+account" `hidden`-attribute panel, real click on
+`[data-toggle-target="accounts-new-form-panel"]` first to reveal it, per
+`accounts.js`'s delegated toggle handler): real click →
+`outlineStyle:"none"`, `boxShadow:"rgb(79, 70, 229) 0px 0px 0px 2px"` — BK1
+extended to `textarea:focus` this attempt and it's confirmed working, BK3
+does not add an outline to any of the three (not in its selector list).
+**PASS.**
+
+=== Point 6: axe + hygiene — PASS ===
+
+`node axecheck2.js` — axe-core (`@axe-core/cli`'s bundled `axe.min.js`,
+injected via `addScriptTag` against the real served page + real built
+stylesheet) on all 6 pages × {1300, 390} × {light, dark} = 24 runs, WCAG
+2.x/2.2 AA tag set, every `<details>` opened first. **0 violations on all
+24 runs.**
+
+- `grep -c '!important' web/static/css/styles.css` → `0`. PASS.
+- `make css-verify` → "tailwind.css is up to date". PASS.
+- `go build ./...` → exit 0, no output. PASS.
+
+=== FAILURES ===
+
+1. **This task's own acceptance text, point 2 ("Ring-utility controls
+   unchanged vs master... computed outline AND box-shadow identical to
+   master") — web/static/css/styles.css (BK3 attempt-3's block) as applied
+   to `#wf-tab-overview` (What-If, `web/templates/pages/whatif.html:183`)
+   and `#insights-tab-trends` (Insights, `web/templates/pages/
+   insights.html:163`), dark theme, both widths.** Both buttons are
+   selected by the pre-existing `[data-wf-tab]:focus-visible` /
+   `[data-ins-tab]:focus-visible` rule (`styles.css:231-236`, predates this
+   task, unchanged) which already gives them a correctly-visible accent
+   outline on master — no fix was needed here. Because these buttons carry
+   no `focus-visible:ring`/`focus:ring` utility class, BK3's `:not()`
+   exclusion (which only recognizes Tailwind ring-utility class substrings)
+   does not skip them, so they ALSO now receive BK3's white `box-shadow: 0
+   0 0 2px white`, layering a second visible ring band that master does not
+   have. Confirmed via direct computed-style diff (master `boxShadow: none`
+   vs worktree `boxShadow: rgb(255, 255, 255) 0px 0px 0px 2px`, both
+   themes, real Tab) AND visually (`big-master-dark-1300-whatif-wf-tab-
+   overview.png` — single thin ring; `big-worktree-dark-1300-whatif-wf-tab-
+   overview.png` — visibly wider two-band ring). Not a contrast/WCAG
+   violation (ring stays single-hue accent, ≥15:1, arguably MORE visible)
+   and imperceptible in light mode (white-on-white), but it is a real,
+   reproducible deviation from this task's own explicit "controls with a
+   ring utility unchanged vs master" promise for 2 of the 4 named example
+   controls — the same CLASS of finding (double indicator via an incomplete
+   `:not()` exclusion list) that FAILED attempt 1 (its Finding 2, on
+   `[data-kpi-detail]`), now recurring against a DIFFERENT gap in the same
+   exclusion mechanism (attribute-selector rules and the `focus:outline*`
+   utility family, rather than a missing ring-utility check). The same root
+   cause also touches `#wf-collapse-money-toggle` (and by the same
+   selector, `#wf-collapse-assumptions-toggle` /
+   `#wf-collapse-strategies-toggle`) — not one of the 4 explicitly-named
+   controls, included here because it shares the identical mechanism and
+   the lead should fix all of them together, not just the two named ones.
+
+=== OBSERVATIONS (non-blocking) ===
+
+- `[data-kpi-detail="income"]`'s dark-mode outline (`1.09:1`, near-black
+  `rgb(16,16,16)` browser-default `auto` outline on a `rgb(28,25,23)` dark
+  card) is LOW contrast, but it is byte-identical to master (confirmed via
+  the same computed-style diff) — a pre-existing defect, not introduced or
+  worsened by BK3, out of scope for this task.
+- The "Find recommendations" Roth button (`whatif/roth-recommendations.html`,
+  reachable via the always-open Strategies sidebar collapse section on the
+  default `/whatif` load) sits on `bg-accent-strong` fill with a
+  pre-existing `focus:outline-accent` utility that has the SAME
+  `--accent`-equals-`--accent-strong` invisibility defect attempts 1/2
+  found elsewhere on master — pre-existing, out of scope; BK3's box-shadow
+  addition here is a side-effect BONUS FIX, not a regression.
+- The roth-conversion/roth-recommendations buttons living inside the
+  hidden Strategies **tab panel** (as opposed to the always-visible sidebar
+  collapse section) were not tested — out of scope for "/whatif (default
+  tab)" per this audit's explicit page list; flagging for whichever future
+  task audits the Strategies tab, since they share the same `focus:outline*`
+  gap.
+- `components/alerts.html`'s dead/unreferenced `{{define "alerts"}}`
+  template (the only `shadow`-utility-without-ring hit in the whole
+  template tree) is worth a cleanup ticket independent of this task.
+- Live `:8080` was not reachable at the start OR end of this audit; this
+  audit never touched port 8080, the real `data/` dir, or the real backup
+  dir (only the isolated `scripts/whatif-verify.sh` copies on 8216/8226,
+  both cleanly torn down) — flagged for the lead's awareness, not caused by
+  or attributable to this checker run.
+- Suggested fix direction (not prescribing — lead's call): extend the
+  `:not()` exclusion to also cover the pre-existing attribute-selector
+  rules that should stay untouched (`[data-wf-tab]`, `[data-ins-tab]`,
+  `[data-wf-collapse-toggle]`) while LEAVING the ones that still need the
+  fix (`[role="region"][tabindex="0"]`, `[data-display-dollars]`,
+  `[data-projection-compare-toggle]`) matched by BK3's rule, since those
+  three benefit from the same accent-on-accent-strong fix Point 1 verified.
+
+Environment cleanup: both verify servers stopped (`scripts/whatif-verify.sh
+stop 8216` / `stop 8226`, confirmed via failed health-check afterward);
+`/tmp/bk3-master-copy3` scratch copy removed; live `:8080` was never
+touched by this audit (see OBSERVATIONS).
