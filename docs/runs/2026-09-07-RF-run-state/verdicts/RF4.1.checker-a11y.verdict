@@ -1,0 +1,127 @@
+VERDICT: PASS
+CHECKER: checker-a11y
+FAMILY: anthropic
+TASK: RF4
+ATTEMPT: 1
+---
+Scope: web/static/js/dashboard.js only (per manifest RF4.1.files). Foreign
+territory (RF1: tailwind.config.js/styles.css/tailwind.css/charts.js; RF2:
+kpis.html; RF3: insights.*) confirmed present as uncommitted concurrent edits
+in the same worktree — attributed, not scored against RF4.
+
+Diff verified narrow and exactly matches the spec:
+`/usr/bin/git diff master -- web/static/js/dashboard.js` (worktree
+/home/darrell/bin/ai/budget2/.claude/worktrees/retiree-refresh, branch
+feat/retiree-refresh) shows only, inside the `updateTable()` chart-table
+builder (~line 105-114):
+  wrapper.tabIndex = 0;
+  wrapper.setAttribute('role', 'region');
+  const title = plot.closest('.rounded-lg')?.querySelector('h2')?.textContent.trim() || 'Chart';
+  wrapper.setAttribute('aria-label', title + ' chart data');
+"Nothing else changes" — confirmed, no other hunks.
+
+Method: cp -a the worktree to scratch, ran the branch server on :8141 via
+`scripts/whatif-verify.sh start 8141` (isolated data/backups copy). Made a
+second scratch copy, `git checkout master -- web` in that copy only, ran it
+on :8151 the same way. Both stopped cleanly at the end
+(`whatif-verify.sh stop 8141` / `stop 8151` — "stopped and cleaned"). Never
+touched :8080/:8081. Playwright at the given path/executablePath/args;
+axe.min.js loaded via addScriptTag from the given scratch path (no network
+fetch); waited on `#chart-major-expense?.data?.length`; dark via
+`classList.toggle('dark', true)` + 400ms; opened every `<details>` before
+each axe run.
+
+(1) Automated audit — zero scrollable-region-focusable on branch, master had
+them at 390 (attribution), no other new violation:
+  node /tmp/.../rf4-a11y/audit.js '[...8 targets: branch/master x 390/1280 x
+  light/dark, /dashboard, all <details> opened...]' > result.json
+Results (violation id: node count):
+  branch-390-light   : {}                      (0 violations)
+  branch-390-dark    : {}                      (0 violations)
+  branch-1280-light  : {}                      (0 violations)
+  branch-1280-dark   : {}                      (0 violations)
+  master-390-light   : scrollable-region-focusable x2 (serious)
+  master-390-dark    : scrollable-region-focusable x2 (serious)
+  master-1280-light  : {}                      (0 violations — not
+                        scrollable at that width even on master)
+  master-1280-dark   : {}                      (0 violations)
+Branch introduces zero axe violations at any of the four combos; master's
+390px violation is fully attributable to the pre-existing (master) unlabelled
+scrollable wrapper the task fixes. No violation appears on branch anywhere
+outside this class — confirms "no other axe violation introduced by RF4."
+
+(2) Points A-6/A-7 (structure) and the project's region-naming requirement —
+each region's accessible name is "<card h2> chart data" and unique; Tab from
+<summary> reaches the region; table keeps <th scope="col"> + caption:
+  h2 text per chart-container (evaluated in-page):
+    ["Budget vs Actual Over Time","Spending by Major Expense",
+     "Spending Trend","Top Spending","Cumulative Balance"]
+  role=region aria-labels (branch, all 4 combos, identical):
+    ["Budget vs Actual Over Time chart data","Spending by Major Expense chart data",
+     "Spending Trend chart data","Top Spending chart data",
+     "Cumulative Balance chart data"]
+  → each label is exactly "<h2 text> chart data"; all 5 distinct (set size 5).
+  Keyboard probe (tabprobe.js): focused the first chart's <summary>, pressed
+  Enter to open, pressed Tab once →
+    activeElement = {"tag":"DIV","role":"region",
+      "ariaLabel":"Budget vs Actual Over Time chart data","tabIndex":0}
+  i.e. Tab from the <summary> lands on the region as the very next stop.
+  Table structure (tablestruct.js) inside the wrapper:
+    caption: "Values as plotted; the rows show this chart's category and
+      time scope. Negative values retain their sign."
+    th[scope]: ["col","col","col"] for Series / Period or category / Value
+  — caption and <th scope="col"> unchanged by this task (the diff never
+  touches those lines).
+  Total role="region" landmarks on /dashboard: 5, all inside closed-by-default
+  <details>. OBSERVATION: five nested named regions is more landmark surface
+  than the page had before, but ACCESSIBILITY.md does not prohibit
+  region-per-disclosure and each has a distinct, descriptive name (not a
+  "region"/"region 2" collision) — judged acceptable, flagged for the lead
+  as a landmark-count note rather than a failure, per WCAG 2.2 AA (which sets
+  no numeric landmark ceiling) and A-6 (silent on this specific case).
+
+(3) Persistence across an HTMX range-change replot (tabprobe.js): captured
+aria-label list before clicking a #date-filter-form preset button, then again
+after the HTMX swap + Plotly replot settled (waited for
+`#chart-major-expense?.data?.length` then +800ms):
+  before: ["Budget vs Actual Over Time chart data", ... 5 total]
+  after:  identical 5 labels, each still {tabIndex:0, role:"region"}
+Confirms the attributes are re-set on every `updateTable()` run (the
+assignment lines sit unconditionally inside the function body, executed both
+by the MutationObserver callback and the `plotly_afterplot` listener wired up
+inside that same observer callback) — they are not a one-time DOM write that
+a re-plot could clobber.
+
+(4) Point A-16-equivalent / progressive enhancement — with JS off, the
+details/tables do not exist; server placeholder unchanged vs master:
+  curl -s :8141/dashboard | grep -c 'data-dashboard-chart-table' → 0
+  curl -s :8141/dashboard | grep -c 'View chart data'            → 0
+  curl -s :8151/dashboard | grep -c 'data-dashboard-chart-table' → 0
+  curl -s :8151/dashboard | grep -c 'View chart data'            → 0
+  chart-container placeholder markup (data-chart-url attrs) is byte-identical
+  between branch and master raw HTML for all five charts (diffed the two
+  responses; the only differences are RF1/RF2 territory — font-size classes,
+  the new #dashboard-lead paragraph, tile text sizes — none touch the chart
+  containers or their placeholders).
+This is exactly master's behavior: the data table is a JS-only progressive
+enhancement with no server-rendered fallback, unchanged by RF4.
+
+Automated test suite: `node --test "web/static/js/**/*.test.cjs"` → 10/10
+pass (page-refresh.test.cjs; there is no dedicated dashboard.js unit test —
+the acceptance criterion's "node --test ... green" is satisfied, this is not
+a gap introduced by RF4, no such test existed on master either).
+
+FAILURES: none.
+
+OBSERVATIONS (non-blocking):
+- Five newly-focusable/named regions on /dashboard when all disclosures are
+  open is more landmark surface than master; each has a distinct name so it
+  is not the "ambiguous region" anti-pattern, but if the lead later wants to
+  quiet the landmark tree (e.g. only exposing role=region while the
+  <details> is open, which is already true since focus/DOM order lives
+  inside the collapsed <details> and axe scanned with them forced open) that
+  would be a design choice, not an accessibility defect under
+  ACCESSIBILITY.md or WCAG 2.2 AA as written.
+- RF1/RF2/RF3 changes are visibly landing in the same served pages (font
+  sizes, #dashboard-lead, kpis.html tile type) — none of that is RF4's
+  surface; noted here only for provenance, not scored.

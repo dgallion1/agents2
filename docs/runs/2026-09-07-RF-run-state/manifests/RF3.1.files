@@ -1,0 +1,4 @@
+web/templates/pages/insights.html
+web/templates/components/insights-investigation.html
+web/static/js/insights.js
+internal/templates/render_insights_rf3_test.go

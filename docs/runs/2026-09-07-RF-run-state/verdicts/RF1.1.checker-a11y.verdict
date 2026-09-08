@@ -1,0 +1,186 @@
+VERDICT: PASS
+CHECKER: checker-a11y
+FAMILY: anthropic
+TASK: RF1
+ATTEMPT: 1
+---
+SCOPE: tailwind.config.js, web/static/css/styles.css, web/static/js/charts.js,
+web/templates/layouts/base.html (desktop nav only), web/templates/components/
+shared/range-picker.html (stacked-group wrap only) — per manifest RF1.1.files.
+web/static/css/tailwind.css is the shared rebuild artifact (not independently
+audited; make css-verify confirms it matches source). Everything else changing
+live in the worktree (kpis.html, insights.html, insights-investigation.html,
+insights.js, dashboard.js, plus test files) is RF2/RF3/RF4 foreign territory —
+observed but not scored against RF1.
+
+METHOD: cp -a of the worktree to scratch for a branch build; a SEPARATE clean
+master baseline built via `git -C /home/darrell/bin/ai/budget2 archive master |
+tar -x` (no shared .git — see note below). Both trees served via
+scripts/whatif-verify.sh (branch :8142, master baseline :8148, both stopped at
+end; live :8080 confirmed untouched throughout and after). Playwright/axe per
+the task's pinned paths; theme switches went through the REAL #theme-toggle
+button (dispatches `themechange`, which charts.js/insights.js listen for) —
+not a bare classList.toggle, which left Plotly SVG text/grid stuck at
+initial-render colors on a first pass and produced false contrast failures.
+
+PROCEDURAL NOTE (self-reported near-miss, no defect resulted): my first
+master-baseline attempt was `cp -a` + `git checkout master -- web
+tailwind.config.js` inside the copy. Worktree `.git` files resolve to the
+SAME shared admin dir (.git/worktrees/retiree-refresh) regardless of which
+directory copy invokes git, so that checkout touched the shared index. It
+was a no-op in effect only because `feat/retiree-refresh` HEAD == `master`
+exactly (344cb30, zero commits on the branch) — confirmed via `git
+rev-parse master` / `git rev-parse feat/retiree-refresh` both 344cb30 and
+`git diff --cached` in the real worktree empty before and after. Switched
+to `git archive` (reads objects only, no working-dir/index link) for the
+rest of the audit and did not repeat the checkout pattern.
+
+1. AXE (wcag2a/2aa/21aa/22aa), 1440/390, light/dark, all <details> opened,
+   10 pages + 5 Insights tabs (dashboard, explorer, insights default, insights
+   June range x5 tabs, major-expenses, whatif, accounts, transfers,
+   filemanager, duplicates):
+   node axe-scan.js http://localhost:8142 branch-axe.json
+   node axe-scan.js http://localhost:8148 master-axe.json
+   Branch violations: major-expenses@390 target-size (6, both themes),
+   transfers@390 scrollable-region-focusable (1, both themes).
+   Master violations: SAME two, PLUS dashboard@390 scrollable-region-focusable
+   (2, both themes) which branch does NOT have (RF4's dashboard.js fix,
+   foreign territory, an improvement not a regression).
+   RF1 introduces zero new axe violations anywhere. major-expenses target-size
+   and transfers scrollable-region-focusable match RF-RUN-SPEC's explicit
+   "deferred, pre-existing, out of RF territory" list.
+
+2. Manual contrast probe (point 7/12), not just axe — every visible text node
+   walked (client-side treewalker computing effective background including
+   linear-gradient headers and SVG `fill`, sr-only 1x1 boxes excluded) on
+   /dashboard, /insights (June), /whatif (default tab), /explorer, /accounts,
+   both themes, 1440:
+   node contrast-scan.js http://localhost:8142 branch-contrast3.json
+   node contrast-scan.js http://localhost:8148 master-contrast3.json
+   Branch failures found: nav group labels "Money/Plan/Setup" (white/60 on
+   accent-strong gradient, 3.29:1), active nav-link white-on-bg-white/20
+   overlay (4.19:1), a Plotly annotation ("34.3%" white-on-white, dashboard
+   light), a chart "Target $11351" dashed-line label (gray-500 literal,
+   3.14:1 dark), and roth-conversion.html's "$" span missing a dark: variant
+   (text-gray-600 with no twin, 1.99:1 dark).
+   Every one of these five items reproduces on the MASTER baseline at an
+   equivalent ratio (3.29/4.19/1.00/3.04/1.94 respectively — the small deltas
+   are the 6.25% type-scale/stone-shade shift, not new defects). None of the
+   five touches an RF1-owned selector: the nav gradient/opacity/bg-white-20
+   are untouched by RF1 (only gap/padding/px changed), the chart's
+   "Target $" label color and roth-conversion.html are not in RF1's diff.
+   PRE-EXISTING on all five — OBSERVATIONS for the backlog, not RF1 FAILs.
+   /insights (June), /explorer, /accounts: 0 failures in dark on both
+   branch and master.
+
+3. Focus-ring contrast (point 9): recomputed indigo-500 #6366f1 vs stone-800
+   #292524 = 3.40:1, vs stone-900 #1c1917 = 3.92:1 (python sRGB relative-
+   luminance calc) — matches the worker's charts.js comment exactly, both
+   clear 3:1. What-If/Insights tab focus outline uses `outline: 2px solid
+   rgb(var(--accent))` (styles.css:231-237) — --accent is explicitly outside
+   RF1's diff (verified via git diff master -- styles.css: only --neutral/
+   scrollbar/.qa-tab-active/.num/reduced-motion changed), so this outline's
+   contrast is unaffected by RF1 in either theme.
+
+4. Reduced motion (point 15), Playwright reducedMotion:'reduce' vs
+   'no-preference' on http://localhost:8142:
+   node reduced-motion.js  → .transition-all/.transition-colors: 0s reduced,
+     0.2s normal (dashboard); .major-expenses-pin-check: 0s reduced, 0.08s
+     normal (major-expenses).
+   node reduced-motion2.js → .transition-transform: 0s reduced, 0.15s normal
+     (whatif).
+   .transition-opacity/.transition-shadow are present in template source
+   (grep -oh 'transition-[a-z]*' -r web/templates web/static/js confirms the
+   worker's selector list is complete and matches styles.css's media-query
+   selector list exactly) but not reachable via a plain GET in the time
+   available; same flat CSS rule, same media query, no per-selector special
+   casing — mechanism verified sufficient by the three selectors actually
+   exercised. animate-spin correctly excluded (essential state, not
+   decoration) — confirmed absent from the reduced-motion block.
+
+5. Overflow/reflow, 390 and 1280:
+   node overflow-scan.js (branch :8142, master :8148) →
+   documentElement scrollWidth==clientWidth on both branch and master, both
+   viewports, for dashboard/insights/explorer/accounts/transfers/filemanager/
+   duplicates/major-expenses (major-expenses has no document-level overflow
+   at either width; its deferred defect is target-size, not reflow).
+   /whatif (deferred, pre-existing overflow): master 476px scrollWidth @390,
+   branch 498px. Tolerance = master*1.0625+8 = 513.75; 498 < 513.75 — PASS.
+   Desktop nav @1280: branch uniqueTops=[17,15] (17=brand logo, 15 shared by
+   ALL 8 real nav links — single shared top, matching the constitution's
+   "share one top"); heights=[34,38x8], lineHeights=[34,21.25x8] → every nav
+   link's offsetHeight (38) < 2x its line-height (42.5) = one line each;
+   navRight==containerRight==viewportWidth=1280, no overflow. Master shows
+   the identical structural invariant scaled down (uniqueTops=[16,14],
+   heights=[32,36x8]) — RF1 preserved the pattern, just at the new type
+   scale. `git diff master -- web/templates/layouts/base.html` shows zero
+   changes to the mobile menu (mobile-nav id, aria-expanded toggle, group
+   labels byte-identical) — confirmed by the diff containing only the
+   desktop `hidden xl:flex` block.
+
+6. Charts (point 11 unaffected; point 12 colours), /dashboard both themes:
+   node chart-colors.js → tick fill light #44403c / dark #e7e5e4, grid
+   stroke light #e7e5e4 / dark #44403c — exact RF1 spec values, live after a
+   real themechange (button click, not classList hack).
+   node chart-hover2.js (Plotly.Fx.hover on Spending Trend, dark) →
+   hoverBg fill rgb(41,37,36)=#292524, hoverBorder stroke rgb(87,83,78)=
+   #57534e, hoverText fill rgb(245,245,244)=#f5f5f4 — exact RF1 spec values.
+
+7. `.num` (point 7 proportional-but-aligned claim):
+   /whatif: .num computed font-family == body's font-family (proportional,
+   not monospace); font-variant-numeric: tabular-nums (11 elements sampled).
+   /insights (June) #category-trends-table: Range-measured pre-decimal
+   substring width for "$1,695.30" and "$1,615.21" (same digit pattern) —
+   IDENTICAL 46.484375px pre-decimal / 67.46875px full-string width despite
+   different digit values, proving per-digit uniform advance width
+   (tabular-nums working, not just declared).
+
+8. Type scale (point 8, U6 floors):
+   getComputedStyle(html).fontSize == "17px" on both pages.
+   Smallest HTML (non-SVG) text: /dashboard 12.75px (text-label, floor 12px);
+   /insights 14.875px (text-sm nav link, floor 14px sentence-class). Both
+   clear their floors — a root-em bump can only grow rem-based sizes, and
+   RF1 touched no literal px font-size values.
+   Palette (acceptance 3): body light rgb(245,245,244), card light white,
+   body dark rgb(28,25,23), card dark rgb(41,37,36) — exact match.
+
+SUPPORTING (not this checker's primary lane, run for completeness):
+`grep -c '!important' styles.css` = 0. `make css && make css-verify` → "up
+to date". `go build ./...` clean. `go vet ./...` clean. `node --test
+"web/static/js/**/*.test.cjs"` → 10/10 pass. RF1's transition-utility grep
+(`grep -oh 'transition-[a-z]*' -r web/templates web/static/js | sort -u`)
+matches styles.css's reduced-motion selector list exactly (transition-all/
+colors/opacity/shadow/transform; the extra "transition-years" hit is a
+false-positive substring match inside an unrelated input id, not a Tailwind
+utility).
+
+OBSERVATIONS (backlog, not RF1 FAILs — all pre-existing on master, confirmed
+by equivalent-ratio reproduction on the master baseline):
+- Nav group-label spans ("Money"/"Plan"/"Setup", text-label uppercase
+  text-white/60) and the active-tab white-on-bg-white/20 overlay sit at
+  ~3.3:1/4.2:1 against the header gradient in ALL themes/pages — pre-existing,
+  outside RF1's file list (only gap/padding/px-3->px-2 touched in that nav).
+- web/templates/components/whatif/roth-conversion.html:31 `<span
+  class="text-gray-600 sm:text-sm">$</span>` has no `dark:text-gray-400`
+  twin (its sibling templates bigticket-card.html/onetime-card.html/
+  social-security.html all pair text-gray-600 with dark:text-gray-400) —
+  1.99:1 in dark mode on branch, 1.94:1 on master. Pre-existing, outside
+  RF1's territory (roth-conversion.html not in RF1's file list); worth a
+  follow-up task to add the missing dark: variant.
+- charts.js dashed "Target $N" line-label color appears to use a literal
+  gray-500 hex rather than the stone-remapped scale (3.04:1 master / 3.14:1
+  branch dark, both below 4.5:1 for its 11px size) — pre-existing, and not
+  one of RF1's three named recolor targets (getThemeColors, the two
+  hover-row focus-ring comments, the dashed reference-line color) — the
+  literal is elsewhere in charts.js outside this task's specified edits.
+- The "34.3%" white-on-white Plotly annotation in dashboard@light is very
+  likely a chart-internal rendering/z-order artifact (the harness's
+  best-effort SVG background walk can miss a colored bar/segment drawn
+  behind the label); reproduces identically on master, so out of RF1 scope
+  either way — flagging for the chart-owning task, not a probe of RF1.
+
+No FAILURES attributable to RF1's owned files. All required checks (axe
+parity, manual contrast probe in both themes, focus-ring math, reduced-
+motion mechanics, overflow/reflow tolerance, nav geometry, mobile-menu
+byte-identity, chart re-theme incl. live hover colors, .num tabular proof,
+type-floor sampling) came back clean or matched master's own baseline.

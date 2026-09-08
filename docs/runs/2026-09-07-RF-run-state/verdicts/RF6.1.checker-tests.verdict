@@ -1,0 +1,108 @@
+VERDICT: PASS
+CHECKER: checker-tests
+FAMILY: anthropic
+TASK: RF6
+ATTEMPT: 1
+---
+All work done in a `cp -a` copy of the shared worktree at
+/tmp/claude-1000/.../scratchpad/rf6 (source: /home/darrell/bin/ai/budget2/.claude/worktrees/retiree-refresh,
+branch feat/retiree-refresh, HEAD 344cb30). The shared worktree was never
+written: sha256 of web/templates/components/kpis.html in the shared tree ==
+sha256 of my copy-time backup (3ce74d13e6503efde324c5ea25b9bee37f1042f3d0e33e2a76a5c5f1d72aa534,
+both files). Verify server on :8151 only, started and stopped via
+scripts/whatif-verify.sh; the built binary was never run directly. Live :8080
+still healthy after the run: curl http://localhost:8080/api/health ->
+{"commit":"v1.4.0-1101-g344cb30","status":"ok"} http=200.
+
+=== CRITERION 1 — kpis.html delta vs master is exactly the removed word ===
+CMD: /usr/bin/git diff master -- web/templates/components/kpis.html   (shared tree, read-only)
+     -> one file changed; the diff carries RF2's accepted A/B/C changes plus
+        the sentence relocation.
+CMD (char-level, python3 difflib on the single 'Monthly equivalents' line of
+     `git show master:web/templates/components/kpis.html` vs the branch file):
+  MASTER: '<p class="text-sm text-gray-600 dark:text-gray-400">Monthly equivalents below use the selected range ({{printf "%.1f" .Metrics.MonthsInRange}} average calendar months); healthcare is prorated from its coverage start.</p>'
+  BRANCH: '<p class="text-sm text-gray-600 dark:text-gray-400">Monthly equivalents use the selected range ({{printf "%.1f" .Metrics.MonthsInRange}} average calendar months); healthcare is prorated from its coverage start.</p>'
+  opcodes: delete ' below' -> ''      (the ONLY opcode; classes, the
+  {{printf "%.1f" .Metrics.MonthsInRange}} interpolation and the healthcare
+  clause are byte-identical)
+CMD (nothing else beyond RF2): built an RF2-only reconstruction = branch file
+  with "below" re-inserted, normalized every Tailwind text-size token
+  (text-sm|base|lg|xl|2xl|3xl|4xl -> TS) in BOTH files, then unified-diffed
+  master vs reconstruction. The complete residual diff is:
+    + {{if .Metrics.TransactionCount}} / <p id="dashboard-lead" ...>...</p> / {{end}}   (RF2-A lead)
+    - <h3 class="font-medium ...>  +<h3 class="TS font-medium ...>  x2            (RF2-B h3 sizing)
+    + <details class="mt-2"><summary ...>About these numbers</summary> ... </details>
+      wrapping the methodology <p> (moved, text identical modulo "below") and the
+      PlanExcluded <p> (moved, byte-identical)                                    (RF2-C fold)
+  i.e. every non-RF6 hunk is enumerated in RF-RUN-SPEC.md RF2 A/B/C. NOTE: no
+  byte-hash of the RF2-accepted file was recorded in RF2.1.*.verdict, so the
+  RF2 baseline is established structurally (against RF2's own spec text), not
+  by hash comparison.  -> MET
+
+=== CRITERION 2 — no stale wording anywhere; scoped tests green ===
+CMD: /usr/bin/grep -rn 'equivalents below' --include=*.go --include=*.html --include=*.cjs --exclude-dir=tmp --exclude-dir=.swarm --exclude-dir=data .
+     -> rc=1, 0 lines.  Positive control on the same command with
+        'equivalents use' -> 1 line (the template), so the grep is live.
+CMD: /usr/bin/grep -rIn 'equivalents below' --exclude-dir=.git --exclude-dir=tmp --exclude-dir=.swarm --exclude-dir=data --exclude-dir=node_modules .
+     -> 0 (repo-wide, ALL file types, not just the three extensions).
+CMD: /usr/bin/grep -rIl 'Monthly equivalents' (same exclusions)
+     -> ./web/templates/components/kpis.html ONLY — the sentence has exactly
+        one surface, so there is no split-wording risk.
+CMD: go build ./...  -> rc=0, no output
+CMD: go vet ./...    -> rc=0, no output
+CMD: go test -count=1 ./internal/templates/... ./internal/handlers/dashboard/... ./cmd/server/...
+     ok budget2/internal/templates 2.044s
+     ok budget2/internal/handlers/dashboard 1.892s
+     ok budget2/cmd/server 6.676s          rc=0
+CMD: go test -count=1 ./... | grep -v '^ok'  -> printed NOTHING (every package
+     ok, no FAIL, no build failure) despite the concurrent RF1/RF3/RF4/RF5
+     edits riding along in the copy.  -> MET
+
+=== CRITERION 3 — rendered output ===
+Server: scripts/whatif-verify.sh start 8151 (isolated data copy; :8080/:8081 untouched).
+CMD: curl "http://localhost:8151/dashboard/kpis?start=2026-01-01&end=2026-08-27"
+     -> http=200, 8629 bytes.
+     count 'Monthly equivalents use the selected range' = 1
+     count 'equivalents below'                          = 0
+     count 'About these numbers'                        = 1
+Placement asserted by DOM PARSE (python html.parser tracking <details> nesting),
+not by string proximity:
+     occurrences of sentence: 1; ancestor tags [... section, section, details, p];
+     details depth 1; enclosing <summary> text = 'About these numbers'
+Same assertions on the FULL page GET /dashboard?start=…&end=… (http=200, 35919
+bytes): sentence 1x, inside <details> whose <summary> is 'About these numbers',
+'equivalents below' 0x. Rendered figure in the sentence: "(7.9 average calendar
+months)" — the {{printf "%.1f"}} interpolation still resolves.
+NON-VACUITY (mutation): re-inserted "below" into the template in the scratch
+copy, rebuilt and restarted :8151, re-ran the same curl ->
+  'Monthly equivalents use the selected range' count: 0
+  'equivalents below' count: 1
+so the render probe genuinely discriminates. File restored afterwards
+(byte-identical to the pre-mutation backup: True).  -> MET
+
+=== CRITERION 4 — css-verify / build ===
+CMD: make css-verify -> "Rebuilding... Done in 616ms." / "tailwind.css is up to
+     date" / rc=0 on the FIRST attempt (no retry needed).
+CMD: go build ./... -> rc=0 (also recorded under criterion 2).  -> MET
+
+=== SCOPE ===
+CMD: /usr/bin/git diff master --name-only (shared tree) + untracked. Every path
+is claimed by an RF manifest: kpis.html (RF6.1 + RF2.1); tailwind.config.js,
+styles.css, tailwind.css, charts.js, base.html, shared/range-picker.html
+(RF1.2 — foreign, attributed, not judged); pages/insights.html,
+insights-investigation.html, insights.js, render_insights_rf3_test.go (RF3/RF5 —
+foreign); dashboard.js (RF4 — foreign); render_dashboard_lead_rf2_test.go,
+handlers_http_test.go, cross_money_di5_test.go (RF2.1 — accepted). No
+unattributed path. Nothing in .swarm/critical.globs (storage, dataloader,
+retirement engine, transfers, accounts, mcpsvc/confirm, backup handlers) is
+touched. My only write to a real tree is this verdict file.
+
+=== OBSERVATIONS (not defects; RF6 is Tier 1 and its spec states no test pins
+    the wording) ===
+O1. The wording is unguarded by any automated test. Proof: with "below"
+    re-inserted (the mutant above), `go test -count=1 ./internal/templates/...
+    ./internal/handlers/dashboard/... ./cmd/server/...` still returned rc=0 and
+    three `ok` lines. The only evidence that the sentence is correct is the
+    render probe in criterion 3, which dies with this verdict file. If the lead
+    wants the change to outlive the run, a test-only follow-up (V3 pattern)
+    asserting the rendered string would be the promotion.

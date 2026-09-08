@@ -1,0 +1,195 @@
+VERDICT: PASS
+CHECKER: checker-tests
+FAMILY: anthropic
+TASK: RF2
+ATTEMPT: 1
+---
+All work done in cp -a copies under
+/tmp/claude-1000/-home-darrell-work-agents2--claude-worktrees-retired-couple-ui-layout-397a9a/969cc6fd-8b9f-4e52-b279-8869905c9eb2/scratchpad/
+(rf2work, rf2_masterkpis, rf2_mutA-D, rf2_probe, rf2fresh). The shared worktree
+was never written: sha256 of all four manifest files identical before/after
+(SAME x4). Verify server on :8147 only, stopped and cleaned; :8080 confirmed
+still healthy after the run.
+
+=== 1. build / vet / tests (bare, -count=1) ===
+cd rf2work && go build ./...            -> rc=0, no output
+cd rf2work && go vet ./...              -> rc=0, no output
+go test -count=1 ./internal/templates/... ./internal/handlers/dashboard/... ./cmd/server/...
+  ok budget2/internal/templates 1.429s
+  ok budget2/internal/handlers/dashboard 1.292s
+  ok budget2/cmd/server 5.803s          rc=0
+go test -count=1 ./...                  -> rc=0; `go test -count=1 ./... | grep -v '^ok'`
+  printed NOTHING (every package ok; no FAIL, no build failure).
+Re-run on a FRESH snapshot of the shared tree taken after concurrent RF1/RF3
+churn (rf2fresh): build+vet rc=0, same three packages ok, rc=0.
+
+=== 2. New test covers acceptance 2 (i)-(iv) and dies on master's template ===
+internal/templates/render_dashboard_lead_rf2_test.go, subtest -> acceptance clause:
+  (i)   "over plan, income did not cover spending" (L124-172): fixture
+        CombinedCumulativeDelta 1234.565 / income 44123.21 / spending 70166.53;
+        asserts lead == exactly
+        `Spending is <span class="num">$1,234.57</span> over plan for this period. Recorded income did not cover spending by <span class="num">$26,043.32</span>.`
+        AND the plan tile renders the same $1,234.57 AND the Cash-flow tile the
+        same $26,043.32 (sign-normalized) -> the "each money string equals the
+        tile string" clause.
+  (ii)  "under plan, income exceeded spending" (L174-200): "under plan" +
+        "exceeded spending by", both figures cross-checked against the tiles.
+  (iii) "no target, fractional-cent inputs resolve to matched" (L202-229):
+        income 10.001 / spending 9.999 (ruling RF-2026-09-07b(3) fixture),
+        lead == `No budget is set for this period. Recorded income matched spending.`,
+        tile `$0.00`, tile Explanation "Recorded income matches spending".
+  (iv)  "no transactions: no lead at all" (L231-246): TransactionCount 0 ->
+        no `id="dashboard-lead"`, and the pre-existing zero-transaction
+        message still present.
+  plus TestDashboardLeadIsFirstChildOfOverviewSection (L252-276): #dashboard-lead
+        is the first element inside aria-label="Selected-period overview".
+Fixtures are built through dashboard.BuildBudgetVerdict (which calls
+metrics.ReportingCashFlow) -- no hand-rolled floats.
+MUTATION (master template): rf2_masterkpis = rf2work with
+`git show master:web/templates/components/kpis.html` written over the branch file.
+  go test -count=1 -run TestDashboardLead ./internal/templates/...
+  --- FAIL: TestDashboardLead/over_plan,_income_did_not_cover_spending
+  --- FAIL: TestDashboardLead/under_plan,_income_exceeded_spending
+  --- FAIL: TestDashboardLead/no_target,_fractional-cent_inputs_resolve_to_matched
+  --- FAIL: TestDashboardLeadIsFirstChildOfOverviewSection            rc=1
+Subtest (iv) passes on master (it is a negative assertion), so it was killed
+separately: MUT A (rf2_mutA) replaced `{{if .Metrics.TransactionCount}}` with
+`{{if true}}` around the lead ->
+  --- FAIL: TestDashboardLead/no_transactions:_no_lead_at_all      (rc=1)
+So all five assertions are non-vacuous.
+Branch, verbose: all 4 subtests + the placement test --- PASS, ok 0.027s.
+
+=== 3. The two edited tests ===
+(a) internal/handlers/dashboard/handlers_http_test.go
+    `/usr/bin/git diff master -- internal/handlers/dashboard/handlers_http_test.go`
+    is a single hunk at TestDashboardKPIs_TargetProvenance_AbsentWhenNoPhaseConfig:
+    the regex `<p class="text-sm [^"]*">\s*Target <span class="num">` becomes
+    `<p class="text-base [^"]*">...` (one class token) plus comment rewording and
+    the error-message phrase "byte-identical to master, " dropped. No assertion
+    added, removed, or otherwise altered.
+    Load-bearing: same test against master's kpis.html (text-sm) ->
+      --- FAIL: TestDashboardKPIs_TargetProvenance_AbsentWhenNoPhaseConfig
+    against the branch -> ok. The behavior it actually guards is still live:
+    MUT D (rf2_mutD) wrapped Target in a `<span>` ->
+      --- FAIL: ..._AbsentWhenNoPhaseConfig and --- FAIL: ..._AnnotatesWhenPhaseActive.
+(b) cmd/server/cross_money_di5_test.go
+    Original assertions ALL intact (grep of t.Fatal/t.Error, master vs branch,
+    same messages in the same order): t.Fatal(err) x3 (setup), t.Fatal(w.Code),
+    `%s %s %v want %s` (the income/spending/balance capture loop over surfaces
+    /dashboard, /dashboard/kpis, /insights, HX), "non-neutral displayed zero",
+    t.Fatal(err) x2, `tool %v %v`, t.Fatal(err), t.Fatal(err),
+    `MCP/UI disagree top=%d %s`, `missing/borrowed month %s`, "negative zero",
+    `residual sum %d want %d` -- 15 of 15 present.
+    Changes: (1) income capture anchor `Recorded income` -> `Recorded income</h2>`;
+    (2) NEW lead-vs-Cash-flow-tile block (L104-132).
+    Anchor change is necessary AND correct: MUT C (rf2_mutC) reverted the anchor
+    to the bare label ->
+      cross_money_di5_test.go:91: /dashboard Recorded income [Recorded income exceeded spending by <span class="num">$10.00 $10.00] want $10.01
+      (also split_credits $10.02 want $10.01, tie $2.66 want $2.67)  rc=1
+    i.e. without the anchor the lead's figure is captured instead of the tile's;
+    with it the tile's correct income is captured and the test passes.
+    New assertion is non-vacuous: MUT B (rf2_mutB) changed the lead's balance
+    money to `{{formatMoney $flow.Income}}` ->
+      cross_money_di5_test.go:124: /dashboard: lead balance figure $10.01 does not equal Cash-flow tile figure $10.00 (sign-normalized) ...
+      (split_charges, split_credits, tie all FAIL)  rc=1
+    It also has a "matched spending" arm requiring the tile to read $0.00 and a
+    default arm that fails if the lead matches no expected phrase.
+
+=== 4. Sentence-2 producer: one rounded source, no re-subtraction ===
+grep over web/templates + web/static/js for any cash-flow classification shows
+exactly two sites, both in kpis.html and both keyed on the SAME `$flow.Balance`:
+  L6  lead:  {{if lt $flow.Balance 0.0}}...did not cover...{{else if gt $flow.Balance 0.0}}...exceeded...{{else}}...matched spending.{{end}}
+  L25 tile:  <p class="num text-4xl ... {{if lt $flow.Balance 0.0}}text-negative{{else}}...}}">{{formatMoney $flow.Balance}}</p>
+The Explanation string comes from the same struct
+(internal/services/metrics/reporting.go ReportingCashFlow: Income/Spending
+rounded by ReportingMoney first, Balance = ReportingMoney(Income-Spending),
+switch on Balance <0 / >0 / else). No raw float and no re-subtraction anywhere
+in the template.
+Probe render (rf2_probe/internal/templates/zz_probe_checker_test.go, scratch only):
+  FIXTURE inc=10.001 exp=9.999
+    producer Balance=0 Explanation="Recorded income matches spending"
+    LEAD  = "No budget is set for this period. Recorded income matched spending."
+    TILE figure = "$0.00"  tile explanation = "Recorded income matches spending"
+  FIXTURE inc=10.006 exp=10.004
+    producer Balance=0.01 Explanation="Recorded income above spending"
+    LEAD  = "No budget is set for this period. Recorded income exceeded spending by <span class=\"num\">$0.01</span>."
+    TILE figure = "$0.01"  tile explanation = "Recorded income above spending"
+Both fixtures: lead and tile agree, exactly as ruling RF-2026-09-07b(3) requires.
+
+=== 5. HTMX partial on the verify server (:8147, built from the branch copy) ===
+scripts/whatif-verify.sh start 8147 -> READY (isolated data copy).
+curl -fsS 'http://localhost:8147/dashboard/kpis?start=2026-01-01&end=2026-08-27'
+  first element after the overview <section ...> tag:
+    '<p id="dashboard-lead" class="text-xl leading-snug text-gray-900 dark:text-gray-100">Spending is <span class="num">$18,9...'
+  LEAD = 'Spending is <span class="num">$18,965.19</span> under plan for this period. Recorded income did not cover spending by <span class="num">$26,043.32</span>.'
+  Money reconciliation on the SAME response (extracted, compared):
+    sentence-1 $18,965.19 == plan-tile span $18,965.19            -> True
+    sentence-2 $26,043.32 vs Cash-flow tile -$26,043.32 (sign-norm) -> True
+    (Income tile $44,123.21, Net spending $70,166.53 unchanged.)
+  Caveat: "does not measure portfolio withdrawals" PRESENT with open-<details>
+    depth 0 at its offset -> still visible outside any disclosure.
+  "About these numbers" <details> in the same response contains verbatim:
+    'Monthly equivalents below use the selected range (7.9 average calendar months); healthcare is prorated from its coverage start.'
+  PlanExcluded: no live range produced PlanExcludedCount>0 (tried 2025, 2024-2026,
+    2026 ranges: 0 hits), so it was exercised by direct template render with
+    PlanExcludedCount 3 / PlanExcludedTotal 4321.5 ->
+      <details class="mt-2"><summary ...>About these numbers</summary>
+        <p ...>Monthly equivalents below use the selected range (7.9 average calendar months); healthcare is prorated from its coverage start.</p>
+        <p ...>$4,321.50 modeled elsewhere (3 transactions). Included in net spending; excluded from the living budget to avoid counting costs twice.</p>
+      </details>
+      open-<details> depth at PlanExcluded sentence = 1; at the cash-flow caveat = 0.
+    Byte-comparison of both sentences rendered from master's template vs the
+    branch's, same fixture: IDENTICAL strings (verbatim move confirmed).
+  Nothing-else-lost check on the same fixture (tag-stripped text sets,
+  master render vs branch render): LOST = {} (empty); ADDED = the lead sentence,
+  "About these numbers", ".". Attribute set (id/href/aria-label/data-kpi-detail):
+  LOST = []; ADDED = ['id="dashboard-lead"'].
+  Full page (Playwright): section's firstElementChild.id == "dashboard-lead" at
+  both 1280 and 390; the "About these numbers" <summary> takes focus and Enter
+  toggles it (detailsOpenBefore=false -> detailsOpenAfterEnter=true).
+
+=== 6. CSS and overflow ===
+cd rf2work && make css-verify -> "tailwind.css is up to date", rc=0 (first try).
+The shared tree's tailwind.css changed under me mid-run (concurrent RF1/RF3
+rebuild), so it was re-verified on a fresh snapshot: cd rf2fresh && make css-verify
+-> "tailwind.css is up to date", rc=0; kpis.html identical to the copy I tested.
+Generated asset is not inert: `.text-4xl{`, `.leading-snug{`, `.text-xl{`,
+`.text-2xl{`, `.text-base{` each present once in web/static/css/tailwind.css, and
+computed styles on the rendered dashboard are root 17px, #dashboard-lead 21.25px,
+tile figure 38.25px (text-4xl), tile <h2> 17px (text-base).
+Overflow (Playwright, chromium-1243, --no-sandbox, http://localhost:8147/dashboard):
+  1280: every #dashboard-overview .num scrollWidth == clientWidth (263/263 x3);
+        each tile 297/297; documentElement 1280/1280 -> no overflow.
+  390 : .num 320/320 x3; tiles 354/354; documentElement 390/390 -> no overflow.
+  Widest available data (2020-01-01..2026-12-31, figures $128,916.64 /
+  -$41,721.76 / $746,342.97) at 390: .num 320/320, tiles 354/354, doc 390/390.
+  HARNESS GAP disclosed: the plan tile's figure is an INLINE <span class="num">,
+  for which scrollWidth/clientWidth are both 0; overflow there was asserted at the
+  containing tile and documentElement level instead.
+
+=== SCOPE ===
+`git diff master --name-only` + untracked in the shared worktree: the four RF2
+manifest files (kpis.html, render_dashboard_lead_rf2_test.go,
+handlers_http_test.go, cross_money_di5_test.go) plus foreign territory only --
+RF1 (tailwind.config.js, styles.css, charts.js, layouts/base.html,
+shared/range-picker.html), RF3 (pages/insights.html, insights-investigation.html,
+insights.js, render_insights_rf3_test.go), RF4 (dashboard.js), and the shared
+generated web/static/css/tailwind.css. Nothing in .swarm/critical.globs is
+touched (storage, dataloader, retirement/engine, transfers, accounts.go,
+mcpsvc/confirm, handlers/backup all clean). No RF2 file edits outside the manifest.
+
+=== OBSERVATIONS (not FAILs; for the lead's backlog) ===
+O1. RF2-B reads "tile figures text-2xl -> text-4xl", but the "Spending versus
+    plan" tile's over/under/On-budget figures stay text-2xl (only its
+    "Not set"/"No observed spending" went text-lg -> text-2xl, as the brief's
+    parenthetical says). Result: three tiles at text-4xl, the fourth uniformly at
+    text-2xl. Internally consistent and pinned by the new test (L152, L192), but
+    the brief admits both readings -- a design call for the lead, not a defect.
+O2. The moved methodology sentence still reads "Monthly equivalents BELOW use the
+    selected range ..." while it now sits AFTER the two-column grid inside the
+    details. The brief mandated a verbatim move, so the worker was right not to
+    reword; the word "below" is now inaccurate.
+O3. Acceptance-2 clause (iii) expects the tile Explanation "Recorded income
+    matches spending" (present tense) while the lead says "matched spending"
+    (past tense). Both are spec-mandated and the test asserts both; noting the
+    tense mismatch as a copy observation.

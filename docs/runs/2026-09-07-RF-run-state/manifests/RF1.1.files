@@ -1,0 +1,6 @@
+tailwind.config.js
+web/static/css/styles.css
+web/static/css/tailwind.css
+web/static/js/charts.js
+web/templates/layouts/base.html
+web/templates/components/shared/range-picker.html

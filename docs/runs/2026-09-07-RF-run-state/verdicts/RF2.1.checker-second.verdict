@@ -1,0 +1,97 @@
+VERDICT: PASS
+CHECKER: checker-second
+FAMILY: adversarial
+TASK: RF2
+ATTEMPT: 1
+---
+Scope confirmed: manifest RF2.1.files == git diff master --name-only for the
+4 owned paths exactly (kpis.html, render_dashboard_lead_rf2_test.go,
+handlers_http_test.go, cross_money_di5_test.go). No undeclared edits.
+
+1. Contradiction hunt (same producer for lead + tiles):
+   - Read internal/handlers/dashboard/verdict.go: IsOver/IsUnder are
+     PRECOMPUTED booleans (Delta>onBudgetEps / Delta<-onBudgetEps) consumed
+     unchanged by both the lead and the 4th tile's if/else-if chain — no
+     re-derivation, so split classification is structurally impossible.
+   - HasTarget=false path returns BEFORE IsOver/IsUnder are ever set (early
+     `if !m.HasCombinedTarget { return v }`), so "HasTarget false with
+     IsOver true" cannot occur — confirmed by code, not assumed.
+   - -0 hazard: formatMoney (render.go:432) normalizes `v==0` to `+0`
+     before the sign check (pre-existing CB7 belt) — protects both the
+     lead's abs() branch and the tile's raw $flow.Balance branch
+     identically, so "matched" (Balance==0) can never render "-$0.00" on
+     either surface.
+   - Rendered a live "did not cover" case (2026-07-01..2026-08-27 on the
+     verify-server data copy, port 8148): lead said "$4,955.75 under plan
+     ... did not cover spending by $11,359.69"; Budget tile independently
+     showed "$4,955.75 under"; Cash-flow tile showed "-$11,359.69" —
+     figures agree exactly, sign-normalized.
+   - Fixture-math for the "matched" case: verified 10.001/9.999 ->
+     ReportingCashFlow rounds Income/Spending to cents FIRST then
+     subtracts, giving Balance exactly 0 (go test confirms "$0.00" /
+     "Recorded income matches spending"); this is ruling RF-2026-09-07b's
+     documented correction of the original spec fixture math (10.006/
+     10.004 would NOT match) — the worker's test uses the corrected pair.
+
+2. Formatter: `grep -n 'printf\|toLocale\|Intl\|%.2f' web/templates/components/kpis.html`
+   shows exactly one hit, the PRE-EXISTING `{{printf "%.1f" .Metrics.MonthsInRange}}`
+   (a month count, not money, unrelated to the lead). No dual formatter
+   introduced.
+
+3. Data flow: curl'd /dashboard (full) and /dashboard/kpis (HX-Request:true)
+   for the same range on the verify server — #dashboard-lead is
+   byte-identical between the two surfaces. Adding `&comparison=previous`
+   to the kpis partial left the lead byte-identical (comparison period
+   never leaks into the lead).
+
+4. Caveat fold — computed the FULL text-token multiset diff (branch vs
+   master) for kpis.html with a script that strips tags and diffs word
+   Counters: REMOVED set is empty; ADDED set is exactly the new lead
+   sentence's literal words plus "About these numbers" — no caveat text
+   was lost, matching the RF.0 "every sentence... survives" rule and RF2-C.
+
+5. Tests — mutation-killed on a scratch `cp -a` copy (worktree untouched):
+   - Lead's "did not cover" branch swapped to print $flow.Income instead
+     of abs($flow.Balance) -> internal/templates TestDashboardLead FAILS
+     (caught). The DI5 cross-money oracle did NOT catch this specific
+     mutation because none of its 4 fixtures produce a negative balance
+     (netC values 1000/1002/266/0, all >=0) — but this is not a hole: the
+     RF2-owned unit test is the one that must cover the negative branch,
+     and it does, and its assertion is exact-string plus a cross-tile
+     span comparison.
+   - Same mutation on the "exceeded" branch (Income instead of Balance) IS
+     caught by BOTH the unit test (exact wantLead mismatch) AND all 3
+     DI5SecondCrossMoney positive-balance fixtures (split_charges,
+     split_credits, tie) via the new lead-vs-tile reconciliation block —
+     confirms ruling RF-2026-09-07b item 2 was implemented, not just
+     described.
+   - Dropping `abs` on the IsUnder branch (observable, since Delta<0 there)
+     -> TestDashboardLead fails ("-$500.00" vs "$500.00"). Dropping abs on
+     the IsOver branch is a no-op fixture-wise (Delta is already positive
+     there by construction) — expected, not a gap.
+   - Weakening the anchor (renaming "Recorded income</h2>" so the anchor
+     can't match) -> DI5SecondCrossMoney fails loudly on all 4 subtests,
+     confirming the new anchor cannot silently false-pass.
+   - `go test -count=1 ./...` on the real worktree is fully green (no
+     other pre-existing test broke from the text-sm->text-base bumps);
+     `git diff master --stat -- internal/handlers/dashboard/` touches only
+     the one TargetProvenance test (matches ruling RF-2026-09-07b item 1,
+     class updated to text-base); no DI3 fixture in that file was touched.
+
+6. `go build ./...`, `go vet ./...` clean; `go test -count=1
+   ./internal/templates/... ./internal/handlers/dashboard/...
+   ./cmd/server/...` green (also full `./...`); `make css` && `make
+   css-verify` -> "tailwind.css is up to date" (RF2 doesn't own
+   tailwind.css per RF.1, ran only for own verification per RF.2).
+
+7. Rendered a11y-adjacent probe (Playwright, verify-server data): text-4xl
+   `.num` figures at 1280 and 390 do not overflow their tile
+   (`scrollWidth <= clientWidth` on both the span and its tile) for
+   $7,418.68 / $18,778.37 / -$11,359.69 — RF2 acceptance item 4's overflow
+   clause holds for the figures actually produced by live data.
+   `dashboard-verdict-bar.html` (explicitly "not owned" per RF2 letter B)
+   has zero diff vs master.
+
+No defects found within RF2's territory. Foreign changes from RF1/RF3/RF4
+visible in the same worktree (root font-size, stone palette, insights.js,
+dashboard.js chart wrapper) are out of scope and not evaluated here.
