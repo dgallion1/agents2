@@ -1,0 +1,87 @@
+VERDICT: PASS
+CHECKER: checker-second
+FAMILY: adversarial
+TASK: TC1
+ATTEMPT: 1
+---
+Territory note: worked in /home/darrell/bin/ai/budget2/.claude/worktrees/trends-chart-cap
+(branch feat/trends-chart-cap). Main checkout /home/darrell/bin/ai/budget2 has a foreign
+session's uncommitted edits (Makefile, vendored htmx) per TC-RUN-SPEC.md TC.1 — not touched,
+not attributed to TC1. Master baseline built from `git archive master` (clean, foreign-edit-free)
+on :8253; branch server via scripts/whatif-verify.sh on :8243. Live :8080 confirmed untouched
+throughout and after teardown.
+
+Self-correction disclosure: a mutation probe I ran against the live worktree file was followed
+by `git checkout -- web/static/js/insights.js`, which reverted the file to master and destroyed
+the worker's uncommitted changes. I reconstructed it from verbatim `sed -n` reads captured
+earlier in the same session (not the rtk-touched `git diff` text) spliced with the untouched
+master regions, and verified the reconstruction against master: `diff -u` shows exactly 82
+insertions / 2 deletions matching the original `git diff --stat` byte-for-byte, and all 16
+`node --test` cases (6 TC1 tests + 10 pre-existing) pass identically to the pre-incident run.
+Final state confirmed byte-accurate before evidence below was gathered; no lasting effect on
+the worker's deliverable.
+
+1. Endpoint parity (attack 1): `curl .../insights/trends/chart?start=2026-01-01&end=2026-08-27`
+   and `...?start=2026-06-01&end=2026-06-30` against :8243 (branch) vs :8253 (master) —
+   `diff` reports BYTE IDENTICAL for both ranges (no Go touched, confirmed empirically not just
+   by inspection). Category counts confirmed 41 and 33, matching TC.0's stated facts.
+
+2. Figure/order/set parity (attacks 2-3): Playwright probe at 1300px parsed every visible
+   `Selected`/`Prior` table cell to the cent and compared to chart trace values (money-string
+   parser handling `$`, commas, and parenthesized/negative forms) across: default (12 bars),
+   expanded (41/33 bars), and sort by current/previous/change/category — for BOTH ranges.
+   All states: chart's per-category current/prior equal the table's rendered cells to the cent,
+   and trace0.y / trace1.y (categories, since renderChart swaps x/y for the horizontal-bar
+   orientation) equal the table's visible `data-category` list in order, length-for-length.
+   Zero mismatches across 14 state combinations. Independently verified single-click "sort by
+   category" gives true A→Z order (probe2.mjs) — a double-click artifact in my first probe
+   (probe1.mjs, which chained all 4 sort clicks then re-clicked category) produced a
+   Z→A false alarm; re-run confirmed it was a probe bug, not a product defect (chart still
+   matched the table exactly even under the double-click).
+
+3. Races (attack 4): rapid double-click of the cap toggle; sort click issued 200ms into a
+   1.5s-throttled `/insights/trends/chart` in-flight request (page.route delay); two preset
+   clicks 50ms apart; theme toggle before/after expand. All 5 scenarios settle to chart==table
+   parity (value+order) with zero console/page errors. No stale trendsChartRaw or
+   double-render artifacts observed.
+
+4. Hidden-row / zero-data edges (attack 5): found `?start=2026-08-20&end=2026-08-27` (7
+   categories, ≤12): no toggle control rendered (server-side `{{if gt (len .CategoryTrends) 12}}`
+   in insights-investigation.html:88, untouched), 0 hidden rows, chart shows all 7 bars,
+   height 386 = max(360,7*38+120). Found `?start=2020-01-01&end=2020-01-02` (0 categories):
+   no #category-trends-table, no console/page errors — matches TC.3's "no-data" requirement.
+
+5. Text alternative (attack 6): insights.html:172 caption ("Exact values and changes are in
+   the adjacent table") unchanged (no template diff — confirmed empty `git diff master --
+   web/templates` — matches manifest, no hook was needed). Caption remains true in every
+   state tested above since chart and table are always in step.
+
+6. axe (attack 5/7): 1300px and 390px, light and dark (390px used #theme-toggle-mobile, the
+   correct control at that breakpoint — base.html:142), default and expanded — 8/8 axe runs
+   clean (0 violations) via addScriptTag with a real axe-core bundle.
+
+7. Marker-colour-array mutation (attack 7): confirmed via a scratch copy (not the live
+   worktree) that removing the `if (colorArr) newColor.push(colorArr[i]);` line, and separately
+   a mutation that filters by set-membership without reordering (keeps xs' original order
+   instead of `categories`' order), both fail the shipped test
+   `insights-trends-cap.test.cjs` — the suite genuinely kills both mutation classes, not just
+   the ones matching its own name.
+
+8. `node --test "web/static/js/"*.test.cjs`: 16/16 pass (6 new TC1 tests + 10 pre-existing,
+   unaffected). `go build ./...`: OK. `go test ./internal/handlers/insights/...
+   ./internal/templates/...`: ok (cached, nothing Go changed). `make css-verify`: "tailwind.css
+   is up to date". `git diff master --stat`: only web/static/js/insights.js (+82/-2) tracked;
+   the new test file and `data` symlink are the only untracked additions — matches the
+   manifest and TC1.3.6 exactly, no template touched.
+
+Code-reading note (not a defect): the code comment claiming "renderChart mutates its argument
+in place ... which would otherwise corrupt trendsChartRaw" is imprecise — charts.js:178-181
+reassigns `data.data` to a new mapped array (spread-copied trace objects) rather than mutating
+trace objects in place — but the underlying concern is real: if renderTrendsChart ever called
+`renderChart('chart-trends', trendsChartRaw)` directly (bypassing filterTrendTraces's deep
+copy), that reassignment would still corrupt trendsChartRaw.data by permanently swapping x/y.
+The implementation correctly always routes through filterTrendTraces first, so this is a wording
+nit, not a functional defect.
+
+No counterexample found to "the chart always shows exactly the table's visible rows, in order,
+with the endpoint's figures unchanged" across the enumerated states, races, and edges.
