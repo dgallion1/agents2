@@ -1,0 +1,2 @@
+# task_id	tier	checks	status	attempt	worker	reason
+SV1	2	tests	accepted	1	lead	gate-check-exit0; tests PASS at attempt 1 (lead-direct, lean exception)

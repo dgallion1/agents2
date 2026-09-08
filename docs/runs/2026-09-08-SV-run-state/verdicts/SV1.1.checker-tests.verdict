@@ -1,0 +1,81 @@
+VERDICT: PASS
+CHECKER: checker-tests
+FAMILY: anthropic
+TASK: SV1
+ATTEMPT: 1
+---
+All work verified in a `cp -a` copy of /home/darrell/bin/ai/budget2/.claude/worktrees/findings-sort at
+/tmp/claude-1000/.../scratchpad/sv1/tree (+ three mutant copies). The real tree was never edited.
+Diff/equality judgements taken via `rtk proxy` or the Read tool.
+
+C1 — buildFindings orders by |Amount| descending, sign ignored. PASS.
+  Command: go test ./internal/handlers/insights/ -run TestSV1 -count=1 -v
+  Output: "--- PASS: TestSV1FindingsSortedByAbsAmountDesc (0.01s)".
+  The test (investigation_sv1_test.go:47) asserts the exact sequence
+  want = [h-big(-500) h-tie-b(-75) h-tie-new(-75) h-tie-old(-75) h-mid(-50) h-refund(+20) h-small(-5)],
+  i.e. the +$20 refund sits between the -$50 and the -$5 row, exactly as the criterion states.
+  Implementation (investigation.go:134-136) compares math.Abs before the pre-existing keys.
+
+C2 — Equal absolute amounts fall back to date-newest, hash-asc, type-asc; DI4 still passes. PASS.
+  Command: go test ./internal/handlers/insights/ -run 'TestSV1|TestDI4FindingsCompleteStableAndAnchored' -count=1 -v
+  Output: "--- PASS: TestDI4FindingsCompleteStableAndAnchored (0.02s)".
+  DI4 is real evidence for the fallback, not a bystander: its fixture makes all eleven m6 findings
+  equal at -20, so the entire ordering is decided by the fallback keys, and DI4 asserts the order is
+  identical when the input slice is reversed (investigation_di4_test.go:200-208 "unstable finding order").
+  The g0-m6 anomaly/price-creep pair exercises the type-asc key. SV1's three -75 rows assert the
+  date-then-hash fallback directly (h-tie-b before h-tie-new on the shared 2026-08-12 date).
+
+C3 — Preview/Remaining follow the same order; asserted on the RENDERED data-finding-hash sequence. PASS.
+  Command: go test ./internal/handlers/insights/ -run TestSV1PreviewAndRemainingFollowAmountOrder -count=1 -v
+  Output: "--- PASS: TestSV1PreviewAndRemainingFollowAmountOrder (0.01s)".
+  The test builds 11 real price-creep groups with distinct latest amounts (-20 .. -220), asserts
+  len(Findings)=11 / Preview=5 / Remaining=6, then renders "insights-content" and extracts
+  data-finding-hash="..." with a regexp, requiring the rendered sequence to equal
+  [g10-m6 ... g0-m6] and requiring the <details id="all-findings"> block to exist.
+  PROOF the rendered assertion is load-bearing (mutant3): editing ONLY the template so the Remaining
+  <ul> renders before the preview <ul> (slices untouched, so the slice assertions still pass) makes the
+  test fail at investigation_sv1_test.go:105 "rendered order: [g5-m6 g4-m6 ... ]".
+
+C4 — Intro sentence wording, asserted on rendered output. PASS.
+  Template web/templates/pages/insights.html:64 renders
+  "{{len .Findings}} findings in the selected period, largest amount first. A transaction can have more than one finding type."
+  investigation_sv1_test.go:112 asserts the rendered html contains
+  "11 findings in the selected period, largest amount first. A transaction can have more than one finding type."
+  PROOF (mutant2): reverting the sentence to master's "findings in the selected period." makes the test
+  fail with "investigation_sv1_test.go:113: intro sentence does not state the order".
+
+C5 — New tests fail against the old comparator; DI4 passes either way. PASS.
+  Mutation (mutant1): deleted the exact three-line math.Abs block from the sort.Slice comparator.
+  Command: go test ./internal/handlers/insights/ -run 'TestSV1|TestDI4FindingsCompleteStableAndAnchored' -count=1 -v
+  Output:
+    --- PASS: TestDI4FindingsCompleteStableAndAnchored (0.02s)
+    --- FAIL: TestSV1FindingsSortedByAbsAmountDesc  "order at 0: want h-big got h-refund (full: [h-refund h-small h-tie-b h-tie-new h-mid h-tie-old h-big])"
+    --- FAIL: TestSV1PreviewAndRemainingFollowAmountOrder  "order: [g0-m6 g1-m6 g10-m6 g2-m6 ...]"
+  Both SV1 tests fail on ordering; DI4 is unaffected, as the criterion requires.
+
+C6 — make check passes. PASS.
+  Command: make check (in the scratch copy), EXIT=0, final line "✓ all checks passed".
+  Stages observed in the log: `go vet ./...`, `staticcheck ./...`, `govulncheck ./...`
+  ("Your code is affected by 0 vulnerabilities."), css-verify ("tailwind.css is up to date",
+  tailwind binary downloaded to tmp/ as expected), and `go test ./...` ("ok budget2/internal/handlers/insights 2.433s").
+  Cache defeated: `grep -c '(cached)'` over the log = 0, so every package result in that run is fresh;
+  the insights package was additionally run explicitly with -count=1 (C1/C2/C3 above).
+
+SCOPE — clean.
+  `rtk proxy git diff master --name-status` → only internal/handlers/insights/investigation.go and
+  web/templates/pages/insights.html modified; `rtk proxy git status --porcelain` adds exactly one
+  untracked file, internal/handlers/insights/investigation_sv1_test.go. That is the manifest, nothing more.
+  `rtk proxy git diff master --name-only --` over every critical glob (internal/services/storage,
+  internal/services/dataloader, internal/services/retirement/engine, internal/services/transfers,
+  internal/services/accounts/accounts.go, internal/services/mcpsvc/confirm, internal/handlers/backup)
+  returns empty: untouched.
+  Consumer enumeration (split-classification guard): `grep -rn "buildFindings\|\.Findings\b"` over
+  *.go/*.html/*.js finds the ordered list consumed only by web/templates/pages/insights.html
+  (lines 43, 64, 65, 69, 77) and by investigation.go's Preview/Remaining split. The .Findings in
+  web/templates/components/whatif/completeness.html belongs to a different (retirement completeness)
+  struct and is not fed by buildFindings. No second surface renders this ordering.
+
+OBSERVATIONS (not failures)
+  - The Makefile `test` target runs `go test ./...` without -count=1 (only the accounts package gets
+    -count=1, Makefile:194-196). It happened to run uncached here (0 "(cached)" lines), but `make check`
+    alone does not guarantee that; pre-existing on master, outside SV1's scope.
