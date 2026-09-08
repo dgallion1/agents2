@@ -1,0 +1,280 @@
+VERDICT: FAIL
+CHECKER: checker-a11y
+FAMILY: anthropic
+TASK: BK3
+ATTEMPT: 2
+---
+Scope (`/usr/bin/git diff master -- web/static/css/styles.css` in
+/home/darrell/bin/ai/budget2/.claude/worktrees/backlog-a11y-2, branch
+feat/backlog-a11y-2 off 176383f): three hunks — BK1's `input:focus,
+select:focus, textarea:focus` box-shadow rule (foreign, accepted separately,
+not re-audited beyond point 5); BK3 attempt-1's `:where(button,
+[role="button"], a[href], summary, [tabindex="0"]):where(:not([class*=
+"focus-visible:ring"], [class*="focus:ring"])):focus-visible { outline: 2px
+solid rgb(var(--accent)); outline-offset: 2px; }`; and BK3 attempt-2's new
+addition, `nav :where(button, a[href]):where(:not(...)):focus-visible {
+outline-color: rgb(255 255 255); }`. Foreign/attribute-only, never FAILed
+here: BK2's major-expenses.html + render_major_expenses_test.go (accepted).
+
+Harness (real render + real built CSS): worktree server on :8215
+(`scripts/whatif-verify.sh start 8215` in the backlog-a11y-2 worktree);
+master baseline on :8225 via a `.git`-stripped `cp -a` of
+/home/darrell/bin/ai/budget2 (main checkout, HEAD 176383f, `data/` a real
+dir not a symlink there) into /tmp/bk3-master-copy/repo, same start script.
+Both torn down with `stop` at the end; live :8080 confirmed healthy
+afterward (`curl :8080/api/health` → `{"status":"ok"}`). Playwright
+(chromium-1243, --no-sandbox) scripts in scratch `node/` (lib.js, point1*.js,
+pixelcheck1.js, analyze1.py, point2.js, point3.js, sweep4.js, sweep4b.js,
+point4-accentbtn.js, point4-daterange.js, point5.js, axecheck.js) drive real
+navigation + REAL keyboard Tab, dark via a real `#theme-toggle` click +
+`page.reload()`.
+
+Real-Tab methodology: `document.body.focus()` then bounded real
+`page.keyboard.press('Tab')` loop (up to 300) asserting
+`document.activeElement` matches the target — chosen over "focus the
+preceding element" because `.major-expense-row-toggle` / restore / discard
+sit inside TWO nested closed `<details>` (`#major-expenses-definitions-panel`
+wrapping `#major-expenses-deleted-panel`, confirmed via ancestor-chain probe
+`debug3b.js` after an initial 300-tab walk landed on `<body>` at step 33 —
+both were opened via `el.open = true` before tabbing). One real Tab keydown
+also sets Chromium's `:focus-visible` keyboard modality for the rest of the
+page load, confirmed with `testmodality.js` (a later `el.focus()` on an
+unrelated button still renders the ring) — used only for the bulk sweep
+(point 4), never for the per-control pass/fail measurements in points 1-3,
+which use the bounded real-Tab loop throughout.
+
+=== Point 1: header controls — white ring ===
+
+Command: `node point1.js` (computed style) + `node pixelcheck1.js` +
+`python3 analyze1.py` (real screenshot pixel sampling, avoids the
+background-image gradient trap that produced attempt-1's false
+`getComputedStyle().backgroundColor` reading).
+
+- nav-link (`a[href^="/dashboard"]`, /dashboard, desktop 1300): worktree
+  outline solid 2px **rgb(255,255,255)**, offset 2px, both themes.
+  Pixel-measured: LIGHT 6.29:1 (white ring vs rgb(79,70,229) header),
+  DARK 15.94:1. Master's own double ring at the same spot: LIGHT white
+  6.29:1 + black 3.03:1, DARK white 15.94:1. Worktree's single white ring
+  matches master's best (white) component exactly in both themes — no
+  regression, and the invisible-ring defect from attempt 1 (1.00:1) is
+  gone. PASS.
+- `#theme-toggle` (desktop 1300): same white ring. LIGHT 6.29:1, DARK
+  17.49:1 (pixel-measured). Master: LIGHT white 6.29:1/black 3.03:1, DARK
+  white 17.49:1. PASS.
+- `#mobile-nav-toggle` (mobile 390): white ring. LIGHT 6.29:1, DARK
+  17.13:1. Master: LIGHT white 6.29:1/black 3.03:1, DARK white 17.13:1.
+  PASS.
+- mobile-menu link (`#mobile-nav a[href^="/dashboard"]`, opened via real
+  click on `#mobile-nav-toggle` then real Tab): white ring. LIGHT 6.29:1,
+  DARK 15.36:1 (full top-color-histogram dump, not just top-8, confirmed
+  a white-pixel count of 777 at this exact contrast — a top-8-only cut
+  had initially hidden it). Master: LIGHT white 6.29:1/black 3.03:1, DARK
+  white 15.36:1 (same). PASS.
+
+All four header controls: white ring, ≥3:1 in both themes, matching or
+exceeding master's default ring. **Point 1 PASSES** — attempt 2's nav-scoped
+white-ring rule (ruling BK-2026-09-08d) does fix the exact controls named
+in the attempt-1 FAIL.
+
+=== Point 2: previously-styled controls unchanged vs master ===
+
+Command: `node point2.js`, real bounded Tab walk (up to 200 tabs — /whatif
+and /insights needed more than the original 60-tab bound to reach the tab
+buttons; this only affects how many Tabs are pressed before the assertion,
+not the resulting `:focus-visible` styling).
+
+- `[data-kpi-detail="income"]` (/dashboard, `focus-visible:ring-2
+  focus-visible:ring-accent rounded`, still no `focus:outline-none`):
+  worktree computed outline now `auto/1px/rgb(16,16,16)/0px` — **identical
+  to master** in both themes (box-shadow accent ring unchanged:
+  rgb(79,70,229) light / rgb(165,180,252) dark). This confirms attempt-1
+  FAILURE 2 is fixed: the new `[class*="focus-visible:ring"]` exclusion in
+  BK3's `:not()` correctly skips this button now that its class list
+  literally contains the substring "focus-visible:ring". PASS.
+- `#import-csv-btn` (focus:outline-none + focus-visible:ring-2): identical
+  outline (solid/2px/transparent/offset2, i.e. suppressed) in both
+  worktree and master, both themes. PASS.
+- `[data-wf-tab="overview"]` (/whatif) and `[data-ins-tab="trends"]`
+  (/insights, June range): both have their own dedicated `.wf-tab:focus` /
+  equivalent outline rule (not from BK3). Computed outline identical
+  worktree vs master, both themes (light: rgb(79,70,229) 2px solid for
+  both tabs in both themes on master too — dark-mode `ins-tab` staying at
+  the light accent value rather than the dark accent token is a
+  **pre-existing** trait, byte-identical between worktree and master, out
+  of scope here). PASS.
+
+**Point 2 PASSES** — no double-indicator regression on any of the four
+named controls.
+
+=== Point 3: attempt-1 passes still hold ===
+
+Command: `node point3.js`. `.major-expense-row-toggle` and Restore/Discard
+required opening BOTH `#major-expenses-definitions-panel` (outer) and
+`#major-expenses-deleted-panel` (inner) — `.major-expense-row-toggle` sits
+inside the OUTER details too, which attempt-1's audit note didn't flag
+because that pass used a different (preceding-element) focus method that
+happened not to need it; this pass's bounded-Tab-walk needed both opened
+or the walk exhausted the page's tab order and landed back on `<body>`.
+
+Pixel-measured ring contrast (`analyze1.py` on cropped screenshots, ring
+color read directly against the card fill, not a page corner outside the
+card):
+- `.major-expense-row-toggle`: 6.29:1 light, 7.61:1 dark. PASS.
+- restore-btn: 6.29:1 light, 7.61:1 dark. PASS.
+- discard-btn: 6.29:1 light, 7.61:1 dark. PASS.
+- "Period details" summary (`components/shared/period-context.html`,
+  /dashboard): 6.29:1 light, 6.29:1 dark (BK3's ring on a white card in
+  both themes — dashboard cards stay white/light in this instance).
+  PASS.
+- `[tabindex="0"][role="region"]` scroll region (/transfers): 6.29:1
+  light, 7.61:1 dark. PASS.
+
+**Point 3 PASSES.**
+
+=== Point 4: other surfaces — FOUND A REGRESSION ===
+
+Footer (`layouts/base.html:214-218`): plain text, `&copy; {{now.Year}}`, no
+focusable element — nothing to check.
+
+Duplicates badge link: `#UnresolvedDuplicateCount` is 0 on the verify
+data copy (`curl :8215/dashboard | grep -c 'href="/duplicates"'` → 0) — the
+link doesn't render. OBSERVATION only, not testable this run.
+
+Accent-soft hover fills (`hover:bg-accent-soft` on the drop-zone and the
+CSV-import button): both carry their own `focus-visible:ring-2` utility
+and are excluded from BK3's fallback rule by design (confirmed in point 2)
+— no new surface here.
+
+**Full-page sweep** (`sweep4.js` then `sweep4b.js`): enumerated every
+focusable element via a real-Tab-modality bounded walk (see methodology
+note), on /dashboard, /whatif, /major-expenses, /insights (June range), at
+1300, both themes, opening every `<details>` first. `sweep4b.js` additionally
+walks each element's ancestor chain for the first non-transparent
+`background-color` AND flags `background-image` != `none` anywhere in the
+chain (so nav's real gradient — the source of attempt-1's false reading —
+is caught and excluded rather than trusted). Of 87-1753 focusable elements
+per page, computed-style-verified low-contrast (<3:1) hits with a
+**non-gradient**, directly-reported background:
+
+  light-/whatif   BUTTON #whatif-new-scenario-toggle  outline rgb(79,70,229) on bg rgb(79,70,229)  contrast=1.00
+  light-/whatif   BUTTON #add-chain-step-btn            outline rgb(79,70,229) on bg rgb(79,70,229)  contrast=1.00
+  light-/whatif   BUTTON .projection-display-toggle (Nominal) same                                   contrast=1.00
+  light-/whatif   BUTTON (4 more bg-accent-strong buttons: scenario-chain "Apply"/"Save" class, income/expense-card "Add" buttons) same  contrast=1.00
+  light-/major-expenses BUTTON .date-range-btn (active preset)  outline rgb(79,70,229) on bg rgb(79,70,229)  contrast=1.00
+  light-/major-expenses BUTTON (1 more bg-accent-strong button)                                       contrast=1.00
+
+None of these carry a `focus-visible:ring` / `focus:ring` class (confirmed
+by reading `web/templates/pages/whatif.html:26-27`,
+`components/whatif/scenario-chain-card.html:50-51`,
+`components/whatif/projection-chart.html:16-17`, and the
+`components/shared/range-picker.html` preset-button macro directly — plain
+`bg-accent-strong ... text-white transition-colors` with no focus
+utilities at all) — so BK3's fallback rule legitimately fires on them,
+painting `outline: 2px solid rgb(var(--accent))`. But `--accent` and
+`--accent-strong` are the same RGB triple in light mode (styles.css lines
+35/37, the exact root cause attempt-1 found in the nav), and
+`bg-accent-strong` IS these buttons' own fill — so the ring is
+**pixel/computed-style-identical to its background, invisible**, on every
+one of these controls, in light mode, confirmed both via the ancestor-walk
+(non-gradient, directly reported `backgroundColor: rgb(79,70,229)`) and via
+a dedicated real-Tab + computed-style + cropped-screenshot check on two of
+them:
+
+  `node point4-accentbtn.js` (#whatif-new-scenario-toggle):
+    worktree-light: outline rgb(79,70,229) vs backgroundColor rgb(79,70,229) → **1.00:1**
+    worktree-dark:  outline rgb(165,180,252) vs backgroundColor rgb(79,70,229) → 3.15:1 (fine)
+    master-light:   outline auto/rgb(16,16,16) vs same bg → 3.03:1 (visible, clears 3:1)
+    master-dark:    outline auto/rgb(16,16,16) vs same bg → 3.03:1 (visible)
+
+  `node point4-daterange.js` (active `.date-range-btn` preset,
+  /major-expenses): same pattern — worktree outline == background
+  (rgb(79,70,229)/rgb(79,70,229)), master outline auto/rgb(16,16,16) vs
+  same background (3.03:1).
+
+Per this task's own stated rule ("FAIL if any BK3-ringed control is below
+3:1 where master's ring was ≥3:1"): master's default ring was visible
+(3.03:1, clears 3:1) on every one of these buttons; BK3's replacement ring
+is 1.00:1, invisible. **This is the identical defect class attempt-1 found
+in the nav (--accent == --accent-strong in light mode), left unpatched on
+every accent-strong-filled control that lives OUTSIDE `<nav>`.** Attempt
+2's fix (`nav :where(button, a[href])...{ outline-color: white }`) is
+scoped to the `<nav>` type selector and does not reach these buttons.
+Dark mode is unaffected (accent-300 ring vs accent-strong bg clears 3:1
+everywhere sampled) — this is a light-mode-only regression, but it hits
+real, commonly-used controls: the What-If "+ New" scenario button, "Add
+Step" on the scenario chain, the projection chart's Nominal/Real toggle,
+and the active date-range preset on Major Expenses.
+
+**Point 4 FAILS.**
+
+=== Point 5: `:focus-visible` semantics / inputs untouched ===
+
+`node point5.js`: real mouse `page.click('.major-expense-row-toggle')` →
+`outlineStyle: none` (no ring on click). `Tab` away then `Shift+Tab` back
+→ `outlineStyle: solid, outlineColor: rgb(79,70,229)` (ring restored on
+keyboard focus). Filter `<input>` clicked → `outlineStyle: none`,
+`boxShadow: rgb(79,70,229) 0px 0px 0px 2px` — BK1's rule only, BK3 does
+not touch inputs. **PASS.**
+
+=== Point 6: axe + hygiene ===
+
+`node axecheck.js` — axe-core (from the globally-installed
+`@axe-core/cli`'s bundled `axe.min.js`, injected via `addScriptTag` against
+the real served page + real built stylesheet) run on /dashboard,
+/major-expenses, /whatif, /insights (June range) × {1300, 390} ×
+{light, dark} = 16 runs, WCAG 2.x/2.2 AA tag set. **0 violations on all 16
+runs** — expected per the constitution's own preamble: axe does not
+evaluate `:focus-visible` outline-vs-background contrast, which is exactly
+what point 4 caught manually.
+
+- `grep -c '!important' web/static/css/styles.css` → `0`. PASS.
+- `make css-verify` → "tailwind.css is up to date". PASS.
+- `go build ./...` → exit 0, no output. PASS.
+
+=== FAILURES ===
+
+1. **ACCESSIBILITY.md point 7 (UI component boundaries ≥3:1) / point 12
+   (dark-mode-parity clause implies light mode must independently clear
+   the same bar) + WCAG 2.2 SC 1.4.11 (non-text contrast) —
+   web/static/css/styles.css:300-303 (BK3 attempt-1's fallback rule,
+   unmodified by attempt 2) as applied to every `bg-accent-strong`-filled
+   button OUTSIDE `<nav>` that carries no focus utility class, light theme
+   only.** Confirmed regression vs master on two independently-checked
+   controls (`#whatif-new-scenario-toggle` /whatif, active `.date-range-btn`
+   preset /major-expenses) plus five more instances found by a full-page
+   focusable-element sweep (`#add-chain-step-btn`, the projection chart's
+   Nominal toggle, and three more `bg-accent-strong` action buttons on
+   /whatif and /major-expenses) — outline color computed as
+   pixel-identical to the button's own background (`rgb(79,70,229)` on
+   `rgb(79,70,229)`, ratio 1.00:1), where master's browser-default ring
+   (`outline: auto`, near-black `rgb(16,16,16)`) cleared 3:1 (3.03:1) at
+   every one of these exact locations. Root cause is the same one
+   attempt-1 identified (`--accent` and `--accent-strong` are the same RGB
+   triple in light mode, styles.css lines 35/37) — attempt 2's fix patches
+   only the `<nav>`-scoped instances of this defect and leaves every other
+   accent-strong-filled control still broken. This is not a new defect
+   class; it is the SAME class the task was dispatched to close, only
+   partially closed.
+
+=== OBSERVATIONS (non-blocking) ===
+
+- Duplicates badge link (`nav a[href="/duplicates"]`) could not be
+  exercised this run — 0 unresolved duplicates in the verify data copy, so
+  the link does not render. A future audit with seeded duplicate data
+  should re-check it; given it lives inside `<nav>`, point 1's fix should
+  already cover it, but this was not directly observed.
+- `[data-ins-tab="trends"]`'s dark-mode outline color staying at the light
+  accent token (`rgb(79,70,229)`) rather than the dark accent token
+  (`rgb(165,180,252)`) is pre-existing and byte-identical between worktree
+  and master (confirmed via point 2) — a backlog candidate, not a BK3
+  regression.
+- The fix for FAILURE 1 likely generalizes cleanly: either (a) extend
+  attempt 2's white-ring technique to any element whose own background
+  resolves to `--accent-strong` (not just `<nav>` descendants), e.g. a
+  `:where([class*="bg-accent-strong"])... { outline-color: white }`
+  companion rule, or (b) give the fallback ring a color that never equals
+  either `--accent` or `--accent-strong` in light mode (a light-side
+  reintroduction of the double-ring browser default, or a distinct
+  darker/lighter accent step). Not prescribing the fix — the lead's call.
+- Environment cleanup: both verify servers stopped (`scripts/whatif-verify.sh
+  stop 8215` / `stop 8225`); live :8080 confirmed healthy afterward.

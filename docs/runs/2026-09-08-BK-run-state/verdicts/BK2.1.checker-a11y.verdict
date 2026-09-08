@@ -1,0 +1,204 @@
+VERDICT: PASS
+CHECKER: checker-a11y
+FAMILY: anthropic
+TASK: BK2
+ATTEMPT: 1
+---
+SCOPE / DIFF ATTRIBUTION
+`cd /home/darrell/bin/ai/budget2/.claude/worktrees/backlog-a11y-2 && /usr/bin/git diff master -- web/templates/pages/major-expenses.html`
+shows exactly 3 hunks: (1) `<th scope="col" class="w-6">` gains
+`<span class="sr-only">Details</span>`; (2) `.major-expense-row-toggle`
+button gains `inline-flex h-6 w-6 items-center justify-center rounded`
+(all other classes/attrs, aria-expanded, aria-controls, aria-label, SVG
+unchanged); (3) `#major-expenses-bulk-pin-apply` / `.major-expenses-bulk-
+pin-clear` go from `px-2 py-0.5 … text-xs` to `px-3 py-1.5 … text-body-sm`
+(colours/ids/aria-label/disabled/hidden handling unchanged).
+`git diff master -- internal/templates/render_major_expenses_test.go` shows
+only the new guards for these three changes, plus the anti-regression
+assertion that `px-2 py-0.5` no longer sits next to the button classes
+(confirmed line 306's `<p>` untouched: `grep -n "px-2 py-0.5"
+web/templates/pages/major-expenses.html` → single hit, line 306, on a `<p>`).
+`git diff master -- web/static/css/styles.css` shows the BK1 focus-ring rule
+(foreign to BK2, already accepted) — attributed, not scored here.
+Go tests: `go test -count=1 ./internal/handlers/majorexpenses/...
+./internal/templates/...` → `ok` both packages.
+Tailwind build present: `grep -c "\.text-body-sm{\|\.h-6{"
+web/static/css/tailwind.css` → both present (also empirically confirmed:
+rendered toggle box measured 25.5×25.5 CSS px, Apply/Clear measured 34px
+tall — the classes are live in the served page, not just source).
+
+HARNESS
+Real render, real built CSS: BK2 build served isolated on :8213 via
+`scripts/whatif-verify.sh start/stop 8213` (own data copy, own backup dir);
+MASTER baseline (176383f) served the same way on :8223 from a `.git`-
+stripped `cp -a` of the main checkout (`rm -rf .git`, then `whatif-verify.sh
+start 8223`). Both torn down at the end (`whatif-verify.sh stop 8213`/`8223`
+— confirmed "stopped and cleaned" both ports). Playwright 1.63.0 against the
+pinned Chromium, `--no-sandbox`. Dark mode via a real `#theme-toggle` click
+at 1300px (desktop toggle confirmed visible/clicked, not the 390px mobile
+toggle at 1300 — avoids the documented breakpoint trap). Every `<details>`
+opened via `d.open = true` (both bucket-group and row-detail disclosures —
+this was required: without it, Playwright's real click on a row-toggle
+timed out with "element is not visible" because it sits inside a collapsed
+group `<details>`). `.major-expenses-pin-check` ticked to reveal Apply/
+Clear. axe-core 4.x via `addScriptTag` (local copy from the U12 scratch
+dir). Real keyboard `Tab`/`Enter`/`Space`, not `.focus()`/`.click()`
+synthetic events for the operability checks (a real `.focus()` was used only
+to capture computed focus-ring style/screenshots after establishing real
+keyboard reachability first).
+
+1. AXE — target-size / empty-table-header / no other violation
+`node audit.js` ran axe twice per page (WCAG-tag run, and a `runOnly: {type:
+'rule', values:['target-size','empty-table-header']}` forced run) across
+{BK2,MASTER} × {1300,390} × {light,dark}, all with every `<details>` open
+and the pin-check ticked:
+  BK2_1300_light: wcag=[] forced=[]
+  BK2_1300_dark:  wcag=[] forced=[]
+  BK2_390_light:  wcag=[] forced=[]
+  BK2_390_dark:   wcag=[] forced=[]
+  MASTER_1300_light: wcag=[] forced=['empty-table-header']
+  MASTER_1300_dark:  wcag=[] forced=['empty-table-header']
+  MASTER_390_light:  wcag=[] forced=['empty-table-header']
+  MASTER_390_dark:   wcag=[] forced=['empty-table-header']
+Zero target-size, zero empty-table-header on BK2 in all 4 combinations; the
+full WCAG-tag axe run adds zero violations on BK2 in any combination (no
+regression introduced). empty-table-header cleanly fixed vs MASTER (which
+hits it in all 4).
+OBSERVATION on the task brief's premise: MASTER did NOT actually get a
+`target-size` axe hit in this real render — I dumped axe's `passes` array
+for `target-size` on MASTER (`node audit3.js` / `audit4.js`) and every small
+control (14.875×14.875 row-toggle, 21.25px-tall Clear button) PASSES via
+axe's `target-offset` escape hatch (≥24px clearance to the nearest
+neighbour target satisfies WCAG 2.5.8's spacing exception even when the
+target itself is undersized) — e.g. `#major-expenses-bulk-pin-clear` passes
+target-size only via the `target-offset` `any` check, not the `target-size`
+check itself. So "master had both rule hits" in my brief was inaccurate for
+target-size specifically (accurate for empty-table-header). This doesn't
+change the verdict: BK2's controls now pass on genuine size (measured
+25.5×25.5 / 34px-tall, both ≥24px) rather than relying on the spacing
+exception — a strictly more robust result — and node measurements
+(`node inspect.js`) confirm the real pixel sizes:
+  MASTER: apply 50.6×21.25 (disabled), clear 47.97×21.25, toggle 14.875×14.875
+  BK2:    apply 64.69×34 (disabled), clear 61.59×34, toggle 25.5×25.5
+Apply enabled-state re-measured (`node apply_enabled.js`, real
+`selectOption` + `check()`, opacity:1, disabled:false): 64.69×34 sized
+identically to the disabled-state box.
+
+2. Points 3/9 — toggle accessible name, aria-expanded, Tab order, focus ring
+`node toggle_check.js` (real click, real `Enter`, real `Space`, on the live
+:8213 page, 1300 light/dark and 390 light):
+  accName (aria-label) = "Details for Amazon"; SVG carries aria-hidden="true"
+    (icon is decorative, name comes from the button's own aria-label — a
+    screen reader announces "Details for Amazon, button, collapsed/expanded").
+  beforeExpanded=false → click → afterExpanded=true → detailVisible=true
+    (aria-controls target genuinely toggled visible, not just the ARIA
+    attribute) → Enter → false → Space → true. Both keyboard activation
+    paths work identically to mouse click; aria-expanded genuinely tracks
+    state in all three cases; consistent across all three viewport/theme
+    combinations run.
+Tab order: `node tab_to_toggle.js` — real sequential Tab from
+`#major-expenses-search`, landed on a `.major-expense-row-toggle` (Amazon,
+aria-expanded="false") at step 70, immediately preceded by the checkbox
+list / pin buttons / bulk-pin toolbar in DOM order — i.e. reachable, and in
+document order (no tabindex was touched by the diff — `git diff` confirms
+zero tabindex/DOM-reorder changes, so relative order is unchanged by
+construction; the walk confirms reachability empirically).
+Focus ring (real Tab-reachable button, then `.focus()` used only to hold
+state for the screenshot): computed style is UA-default (`outline: rgb(16,
+16, 16) auto 1px`, unaffected by the BK1 `:focus-visible` rule list, which
+does not include `.major-expense-row-toggle`, and unaffected by the BK1
+`input/select/textarea:focus` box-shadow rule — buttons are out of both).
+Pixel-sampled from real Playwright screenshots (`node ring_shot.js` +
+PIL/WCAG-formula contrast):
+  BK2 light: ring rgb(16,16,16) vs bg rgb(255,255,255) → 19.03:1  PASS
+  BK2 dark:  ring rgb(68,64,60) vs bg rgb(41,37,36)     → 1.48:1  FAILS 3:1
+FAIL ATTRIBUTION (constitution point 9 / WCAG 1.4.11): dark-mode focus ring
+on `.major-expense-row-toggle` is real and measured, but PRE-EXISTING —
+`node ring_shot_master.js` against MASTER on :8223 (same real click/focus/
+screenshot method, same button, same theme) measures the IDENTICAL ring
+colour and background (`rgb(68,64,60)` vs `rgb(41,37,36)` → 1.48:1) on the
+14.875×14.875 master button. BK2's diff never touches any `:focus` or
+`:focus-visible` selector (confirmed above; the only focus-ring change in
+this worktree is BK1's `styles.css`, scoped to input/select/textarea, and
+is foreign/already-accepted per the task brief). This is scored per the
+constitution's diff-attribution rule as an OBSERVATION with provenance, not
+a BK2 FAIL — it is a pre-existing sitewide gap (button focus rings are not
+covered by BK1's accent-token fix) worth flagging for a future task.
+
+3. Point 2 — "Details" header sr-only, column count unchanged
+`node misc_check.js` (real render, both themes/viewports):
+  BK2 header <th> textContent = "Details"; a clone with `.sr-only` removed
+    has textContent = "" (i.e., zero visible text, full accessible name) —
+    confirmed again via `node axe_name_check.js`: {"text":"Details",
+    "visibleText":""}.
+  span computed style: position:absolute, width:1px, height:1px,
+    overflow:hidden, clip:rect(0px,0px,0px,0px) — genuinely visually hidden,
+    not display:none (so it stays in the accessibility tree).
+  Column counts identical BK2 vs MASTER: headerCellCount=168,
+    firstBodyRowCellCount=4, in every combination tested — the header
+    addition does not change the table's structural column count.
+
+4. Points 7/12 — Apply/Clear contrast at the new size, both themes
+Colours are unchanged by the diff (only padding/font-size classes
+changed); computed styles + WCAG contrast formula (relative luminance):
+  Apply, both themes: white rgb(255,255,255) on warning-strong
+    rgb(146,64,14) → 7.09:1 (enabled state re-verified separately at
+    opacity:1 — same 7.09:1; the toolbar's default disabled state doesn't
+    weaken this since disabled controls are exempt from 1.4.3/1.4.11 in any
+    case).
+  Clear light: gray-700 rgb(68,64,60) on gray-200 rgb(231,229,228) → 8.18:1
+  Clear dark:  gray-100 rgb(245,245,244) on gray-600 rgb(87,83,78) → 6.99:1
+All ≥ 4.5:1 (text is 14.875px/400-weight — not "large text" by WCAG's
+18.66px/14pt-bold threshold, so the strict 4.5:1 applies and is cleared
+with margin).
+
+5. Reflow at 390 / toggle column width
+`node misc_check.js`, 390×844, both themes:
+  docScrollW === docClientW (390===390); tableScrollW === tableClientW
+  (322===322) — no horizontal overflow from the enlarged toggles at either
+   viewport (1300: 1300/1300, 1212/1212 also equal).
+Column width: header `<th class="w-6">` is unchanged in the diff (no class
+edit — confirmed above). The RENDERED th width did grow (25.5px on MASTER
+→ 34px on BK2) because the table uses `table-layout: auto` and the column
+width is driven by its widest cell content, which is now the 25.5×25.5
+toggle button (was a bare 14.875px icon) — this is the intended, in-scope
+consequence of enlarging the toggle per the task, not an unrequested class
+change to the header; it does not cause overflow (see scrollWidth checks
+above) and is reported as an OBSERVATION, not a defect.
+
+6. Heading/landmark structure unchanged vs master
+`node misc_check.js`: h1Count=1, headings=[H1,H2,H2,H3], landmarks=
+{main:1,nav:1,header:1,footer:1} — identical for BK2 (all four combos) and
+MASTER. No structural regression.
+
+SERVERS
+Both isolated verify instances torn down: `scripts/whatif-verify.sh stop
+8213` → "stopped and cleaned :8213"; `stop 8223` (from the .git-stripped
+master copy) → "stopped and cleaned :8223". Neither touched the live :8080
+process or its real data/backup directories (both used isolated `cp -rL`
+data copies per whatif-verify.sh's own design).
+
+OBSERVATIONS (non-blocking, for the backlog)
+- Constitution point 9 / WCAG 1.4.11: `.major-expense-row-toggle` (and by
+  extension any other bare `<button>` on the page not in BK1's
+  `:focus-visible` selector list) has a 1.48:1 dark-mode focus ring —
+  invisible-in-practice. PRE-EXISTING (measured byte-identical on master),
+  out of BK2's scope, but a good BK3-class candidate: extend BK1's
+  `:focus-visible` selector list (or add a generic `button:focus-visible`
+  rule) to cover it.
+- The task brief's claim that MASTER hits axe `target-size` was not borne
+  out by a real axe run — MASTER passes via the `target-offset` spacing
+  exception. Worth correcting in future BK-series briefs; does not affect
+  this verdict since BK2's fix is still a genuine, measured size increase
+  past the 24px threshold on its own merits.
+- Rendered toggle-column `<th>` width grew from 25.5px to 34px as a
+  side-effect of `table-layout: auto` sizing to the larger button; no
+  overflow resulted, but if a future task tightens columns further this is
+  the layout mechanism to be aware of.
+
+VERDICT: PASS — the in-scope diff (major-expenses.html,
+render_major_expenses_test.go) meets all six audit points; axe is clean at
+1300/390 × light/dark including the forced target-size/empty-table-header
+rules; Go tests are green; the one real WCAG-relevant finding (dark focus
+ring on the toggle) is pre-existing and out of BK2's scope per the
+diff-attribution rule.

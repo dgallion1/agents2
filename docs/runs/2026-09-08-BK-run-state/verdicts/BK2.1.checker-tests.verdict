@@ -1,0 +1,195 @@
+VERDICT: PASS
+CHECKER: checker-tests
+FAMILY: anthropic
+TASK: BK2
+ATTEMPT: 1
+---
+Worked in a cp -a copy at
+/tmp/claude-1000/-home-darrell-work-agents2--claude-worktrees-retired-couple-ui-layout-397a9a/5f1798f7-0ebe-4e24-a3e8-2690e59504b6/scratchpad/bk2-tests/branch
+(.git stripped, data replaced). Diffs read with /usr/bin/git in the real
+worktree (read-only). Verify server on :8212 only; stopped at the end.
+Never ran the built binary directly.
+
+=== 1. Build / vet / scoped tests / diff scope ===
+
+$ cd <scratch>/branch && go build ./... ; go vet ./...
+  BUILD_EXIT=0 / VET_EXIT=0 (no output)
+
+$ go test -count=1 ./internal/handlers/majorexpenses/... ./internal/templates/...
+  ok  budget2/internal/handlers/majorexpenses  0.297s
+  ok  budget2/internal/templates              1.245s
+  EXIT=0
+
+Composite target (beyond the brief, run as the repo's own gate):
+$ make check      # vet static vuln css-verify test
+  ... ok for all 40 packages ... "✓ all checks passed"  MAKE_CHECK_EXIT=0
+
+Diff scope — /usr/bin/git diff master --stat -- .  in the worktree:
+  internal/templates/render_major_expenses_test.go | 20 ++++++++++++++++++++
+  web/static/css/styles.css                        |  8 ++++++--   <- BK1, FOREIGN
+  web/templates/pages/major-expenses.html          |  8 ++++----
+Only the two manifest files + BK1's styles.css. `git status --porcelain`
+shows exactly those three ` M` entries plus the pre-existing `?? data`
+symlink. No path in .swarm/critical.globs touched.
+The styles.css hunk is BK1's single `input:focus, select:focus,
+textarea:focus { box-shadow: 0 0 0 2px rgb(var(--accent)) }` rule —
+attributed to BK1 (accepted), not counted against BK2.
+
+Template hunks — exactly three, 4 changed lines total
+(/usr/bin/git diff master -U6 -- web/templates/pages/major-expenses.html):
+  H1 @@196 line 202: <th scope="col" class="w-6"> gains
+     <span class="sr-only">Details</span>
+  H2 @@229 line 235: class="major-expense-row-toggle text-gray-600 …"
+     -> class="major-expense-row-toggle inline-flex h-6 w-6 items-center
+        justify-center rounded text-gray-600 …"
+  H3 @@509 lines 515/518: Apply `px-2 py-0.5 … text-xs` -> `px-3 py-1.5 …
+     text-body-sm`; Clear likewise.
+Nothing beyond the three described edits. PROOF (stronger than reading the
+hunks): with every class="…" value normalised to class="X", the branch and
+master templates differ in exactly ONE line —
+  $ python3 (difflib, class-attrs normalised, branch vs master blob)
+  @@ -201,3 +201,3 @@
+  -            <th scope="col" class="X"></th>
+  +            <th scope="col" class="X"><span class="X">Details</span></th>
+  (no other non-class differences)
+i.e. every id, hx-*, data-*, aria-*, type and text node in all 818 lines is
+byte-identical to master; only class strings on those 4 lines changed. That
+covers the requested byte-compare of the Apply/Clear button tags (note: those
+buttons carry no hx-* at all — they are delegated JS by id, see
+web/static/js/major-expenses.js:497).
+The `<p class="text-gray-600 dark:text-gray-400 px-2 py-0.5">` at line 306 is
+NOT in the diff and still reads `px-2 py-0.5` (grep line 306). Untouched, and
+no test asserts on it.
+Template occurrences of `major-expense-row-toggle`: 1 (inside the range) ->
+47 rendered buttons on live data (curl grep -c = 47).
+
+=== 2. Mutation kill (scratch copy only, template restored after each) ===
+
+A) master's template + BK2's tests, `go test -count=1 ./internal/templates/...`:
+  --- FAIL: TestRenderMajorExpenses_WithEntriesAndExceptions
+      render_major_expenses_test.go:358: row-toggle button must carry
+        inline-flex h-6 w-6 items-center justify-center rounded
+      render_major_expenses_test.go:361: chevron column header must carry a
+        sr-only 'Details' label
+  --- FAIL: TestRenderMajorExpenses_CountChipAndClearButton
+      render_major_expenses_test.go:747: Apply button must carry
+        text-body-sm px-3 py-1.5
+      render_major_expenses_test.go:750: Clear button must carry
+        text-body-sm px-3 py-1.5
+      render_major_expenses_test.go:753: bulk-pin buttons must not retain the
+        old text-xs px-2 py-0.5 sizing
+  All five new guards fire. FAIL budget2/internal/templates.
+
+Single-edit mutations on BK2's template (each reverted before the next):
+B) revert ONLY the row-toggle classes ->
+   FAIL WithEntriesAndExceptions, line 358 only.
+C) remove ONLY the sr-only Details span ->
+   FAIL WithEntriesAndExceptions, line 361 only.
+D) revert ONLY Apply's classes ->
+   FAIL CountChipAndClearButton, lines 747 + 753.
+E) revert ONLY Clear's classes ->
+   FAIL CountChipAndClearButton, lines 750 + 753.
+Template byte-restored after each (diff -q => RESTORED); restored tree
+re-runs green (ok internal/templates 1.411s).
+I read the four added assertions: each is a strings.Contains on the FULL
+class string it names, plus one negative guard on the old sizing. They assert
+what their names claim, and each is killed by mutating exactly the thing it
+guards.
+
+=== 3. Behaviour on the verify server (:8212, branch build) ===
+Playwright/chromium --no-sandbox, 4 combos: 1300x900 and 390x844 x light/dark,
+theme set by clicking the real #theme-toggle / #theme-toggle-mobile
+(theme_actual matched theme_requested in all 4), all 7 <details> forced open,
+one .major-expenses-pin-check ticked. Root font measured 17px.
+Identical numbers in all four combos:
+  BEFORE_TICK  apply 0x0 (bar hidden), clear 0x0 hidden=true
+  AFTER_TICK   apply 64.69 x 34, clear 61.59 x 34, fontSize 14.875px,
+               padding 6.375px/12.75px   -> both >= 24 x 24
+  ROW_TOGGLES  count 47, visible 47, minW 25.5, minH 25.5, display inline-flex
+               -> all 47 >= 24 x 24
+  TOGGLE0 mouse: aria-expanded false/detailHidden true -> click -> true/false
+          -> click -> false/true
+  TOGGLE1 keyboard: focus lands on the toggle; Enter -> aria-expanded true,
+          detail shown; Space -> false, detail hidden
+  SORT: click th[data-sort-key="matched"] -> aria-sort "descending",
+        matched order [288,190,136...]; second click -> "ascending",
+        [0,0,0...]. Headers still sort.
+  CLEAR: {"before":1,"after":0} checked boxes.
+Apply enabled/disabled tracks the selection:
+  disabled=true with a box ticked but no target chosen;
+  after selecting an expense in #major-expenses-bulk-pin-target -> disabled=false
+  (64.69 x 34 unchanged);
+  after unticking everything -> disabled=true and #major-expenses-bulk-pin
+  regains `hidden`.
+Apply APPLIES, end to end (isolated /tmp data copy, not live data):
+  RESP 200 http://localhost:8212/major-expenses/pins/bulk
+  POST requests: ["POST .../major-expenses/pins/bulk"]
+  pin-checks before/after apply = 15 -> 14 ; page text contains "pinned"
+Layout: sr-only span is genuinely hidden (position absolute, 1px x 1px,
+clip rect(0,0,0,0), overflow hidden, text "Details"). Bulk-pin bar at 390px
+spans x=34..356 with Apply 211.7..276.4 and Clear 284.9..346.5 — inside the
+bar, and document.scrollWidth == innerWidth == 390 (no new h-overflow);
+same at 1300.
+
+=== 4. axe ===
+axe-core 4.x injected via addScriptTag, same 4 combos, details open,
+checkbox ticked.
+  BRANCH  runOnly {type:'rule', values:['target-size','empty-table-header']}
+          violations = []  in all 4 combos
+          passes = empty-table-header n=20, target-size n=141 (1300) / 134 (390)
+          incomplete = []
+  BRANCH  runOnly {type:'tag', values:[wcag2a,wcag2aa,wcag21a,wcag21aa,wcag22aa]}
+          violations = []  in all 4 combos
+  MASTER baseline (same probe against a master-only tree served on :8212 after
+  stopping the branch server — master template, master test file, master
+  styles.css):
+          forced violations = [{"id":"empty-table-header","n":1,
+            "targets":["tr > .w-6"], "msg":"Element does not have text that is
+            visible to screen readers"}] in all 4 combos
+          passes = empty-table-header n=19, target-size n=141/134
+          WCAG-tag violations = []
+  => empty-table-header: master 1 -> branch 0, and the header's pass count
+     rises 19 -> 20 (the fixed <th> now passes). Confirmed fixed.
+  => target-size: see OBSERVATION 1 — master reported ZERO axe target-size
+     violations too. The branch criterion ("zero target-size") holds, but the
+     master->branch delta for this rule is measured in CSS pixels, not in axe.
+
+=== 5. make css-verify ===
+$ cd <scratch>/branch && make css-verify
+  ./tmp/tailwindcss-3.4.17 -c tailwind.config.js -i web/static/css/tailwind.src.css
+    -o tmp/tailwind.check.css --minify ... Done in 625ms.
+  tailwind.css is up to date
+  EXIT=0   (first attempt, no retry needed; also re-run inside `make check`)
+tailwind.css itself is unmodified because every new token was already
+compiled: .text-body-sm{font-size:.875rem;line-height:1.25rem},
+.h-6{height:1.5rem}, .w-6{width:1.5rem}, .px-3{padding-left:.75rem;...},
+.py-1\.5{padding-bottom:.375rem;padding-top:.375rem}, plus inline-flex,
+items-center, justify-center, sr-only — each grep -c = 1 in
+web/static/css/tailwind.css. 1.5rem x 17px root = 25.5px, matching the
+measured toggle box.
+
+=== OBSERVATIONS (not FAILs) ===
+1. BRIEF/SPEC ACCURACY, not a BK2 defect: master does NOT produce an axe
+   `target-size` violation on /major-expenses even with the rule forced
+   through runOnly — master scores 141/141 (1300) and 134/134 (390) passes.
+   axe accepts the 14.88px toggles and the 21.25px Apply/Clear under the
+   WCAG 2.2 SC 2.5.8 spacing exception. The defect was real and is fixed, but
+   the evidence for it is the pixel measurement (toggle 14.88 -> 25.5;
+   Apply/Clear 21.25 -> 34 tall), not an axe delta. Only `empty-table-header`
+   shows a master->branch axe delta. The BK-RUN-SPEC BK.0 table is consistent
+   with this (it lists the toggle/button defects as measured px and only the
+   <th> as an axe finding); item 4 of my instructions ("confirm master had
+   both") is what does not hold.
+2. Pre-existing, identical on master: swarm/t7-coverage.sh exits 1 on BOTH
+   trees with byte-identical output (`cmp` => identical) — uncovered token
+   `2xl:inline` and 8 dynamic-safelist entries. Not a BK2 regression, and not
+   part of `make check`.
+3. The chevron <th> renders 34px wide on the branch (table auto-layout around
+   the now-25.5px toggle) vs a narrower column on master. Expected
+   consequence of the in-scope size change; no horizontal overflow at 390px
+   (scrollWidth == innerWidth == 390).
+4. Cosmetic: the new guards' failure messages are prefixed "BL5 guard:" while
+   their comments say "BK2 (2026-09-08)". Harmless mislabel in an error
+   string; no criterion touched.
+5. web/static/css/styles.css in the shared worktree is BK1's work (foreign to
+   BK2) — the single focus-ring rule shown above. Attributed, not judged here.

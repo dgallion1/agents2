@@ -1,0 +1,2 @@
+web/templates/pages/major-expenses.html
+internal/templates/render_major_expenses_test.go

@@ -1,0 +1,169 @@
+VERDICT: PASS
+CHECKER: checker-a11y
+FAMILY: anthropic
+TASK: BK3
+ATTEMPT: 4
+---
+Scope: re-verification of attempt 3's UNCHANGED code
+(/home/darrell/bin/ai/budget2/.claude/worktrees/backlog-a11y-2, branch
+feat/backlog-a11y-2 off 176383f) against ruling BK-2026-09-08g, which
+narrows the "controls unchanged vs master" clause to Tailwind-ring-utility
+controls only and accepts the two-tone ring on bespoke-outline controls
+(What-If tabs, Insights tabs, What-If collapse toggles) subject to (i)
+combined indicator ≥3:1 in both themes and (ii) coherent rendering (no gap,
+no clip, no cut-off). Everything else from attempt 3 stands per the ruling.
+
+=== Point 1: tree unchanged since attempt 3 ===
+
+`git status --short` in the worktree: only the same three files as attempt
+3 (`internal/templates/render_major_expenses_test.go`,
+`web/static/css/styles.css`, `web/templates/pages/major-expenses.html`;
+`data` untracked/irrelevant). `/usr/bin/git diff master --stat`: identical
+line counts to attempt 3's cited scope (`styles.css | 29 ++++++++++++++++--`,
+`render_major_expenses_test.go | 20 ++`, `major-expenses.html | 8 +++----`).
+`md5sum web/static/css/styles.css` = `5d6d3f0b6ef6028c8b245bd9d2ff0d19`
+(not recorded in attempt 3's verdict text, so confirmed instead by
+reproducing the full `git diff master -- web/static/css/styles.css` and
+comparing byte-for-byte against attempt 3's quoted block — the BK3 rule is
+verbatim: `:where(button, [role="button"], a[href], summary,
+[tabindex="0"]):where(:not([class*="focus-visible:ring"],
+[class*="focus:ring"])):focus-visible { outline: 2px solid
+rgb(var(--accent)); outline-offset: 2px; box-shadow: 0 0 0 2px rgb(255 255
+255); }`, plus BK1's unrelated `input:focus, select:focus, textarea:focus`
+box-shadow rule). **No code change since attempt 3 — confirmed.**
+
+=== Point 2: reopened controls, both themes, real focus, ≥3:1 + coherence ===
+
+Harness: worktree server on :8217 (`scripts/whatif-verify.sh start 8217`,
+throwaway data/backup copies; live :8080 confirmed unreachable before AND
+after this run — untouched). Playwright (chromium-1243, `--no-sandbox`,
+1300×900) scripts in scratch `node/` (`lib.js`, `measure4.js`). Dark mode
+via a real `#theme-toggle` click + `page.reload()`. Real-focus methodology
+reused attempt 3's validated technique: one genuine `page.keyboard.press
+('Tab')` first (establishes Chromium's real `:focus-visible` keyboard
+modality for the page), then `el.focus()` on the exact named target — this
+is the same technique attempt 3 (BK3.3 verdict) verified produces pixel-
+identical rendering to a genuine Tab landing.
+
+Targets: `#wf-tab-overview` and `#wf-tab-cashflow` (What-If tabs, one more
+than required), `#insights-tab-trends` (`/insights?start=2026-06-01&end=
+2026-06-30`), `#wf-collapse-money-toggle` (What-If collapse toggle) — all
+four confirmed via computed style to carry BOTH `outline: solid
+rgb(accent) 2px 2px` (theme-appropriate accent) AND `boxShadow: rgb(255,
+255, 255) 0px 0px 0px 2px` in both themes (`measure4.json`).
+
+Pixel methodology (`analyze4.py`, same relative-luminance WCAG contrast
+formula as attempt 3): 16-20px-padded crop screenshot per target, scan
+outward from each of 4 border edges (top/bottom/left/right), sampling
+1px out (inner/white band) and 4px out (outer/accent band), background
+found by scanning to a stability plateau (two consecutive equal samples).
+Reports per-direction inner-vs-bg, outer-vs-bg, and the max; overall_max is
+the max across all 4 directions.
+
+  light  wf-tab-overview        overall_max = 5.76   (outer accent-vs-card
+                                                        rgb(79,70,229) vs
+                                                        rgb(245,245,244))
+  light  wf-tab-cashflow         overall_max = 5.76
+  light  insights-tab-trends     overall_max = 5.76
+  light  wf-collapse-money-toggle overall_max = 6.29  (outer vs white card)
+  dark   wf-tab-overview         overall_max = 17.49  (inner white-vs-card)
+  dark   wf-tab-cashflow         overall_max = 17.49
+  dark   insights-tab-trends     overall_max = 17.49
+  dark   wf-collapse-money-toggle overall_max = 17.49
+
+**Minimum 5.76:1, all 8 readings ≥3:1 — requirement (i) met in both
+themes.** (One direction-specific artefact noted for the record: on
+`right` for the two What-If tabs in light mode, and `bottom`/`right` for
+`insights-tab-trends`, the inner/outer sample pair reads in the opposite
+order from the other 3 directions — sub-pixel/anti-aliasing rounding at a
+fractional box edge (e.g. `x: 447.5`), not a real gap; visually confirmed
+below. It does not change the max, which is what the ≥3:1 requirement
+turns on.)
+
+Coherence (ii), visually confirmed via 6x-nearest-upscaled crops
+(`*-6x.png` in the scratch dir):
+- `dark-wf-tab-overview-6x.png`, `dark-insights-tab-trends-6x.png`: a
+  crisp, continuous, concentric two-band ring — white band flush with the
+  button, accent band immediately outside it, on all 4 sides, no gap, no
+  double-line artefact.
+- `dark-wf-collapse-money-toggle-6x.png`, `light-wf-collapse-money-toggle-
+  6x.png`: same coherent ring on a 405px-wide element spanning most of the
+  card width — NOT clipped by the card/panel ancestor, corners intact.
+- `light-wf-tab-overview-6x.png`, `light-wf-tab-cashflow-6x.png`: the ring
+  is a continuous unbroken rectangle around the button; the white inner
+  band is visually indistinguishable from the near-white page/card
+  background (expected — attempt 3 already characterized this as
+  "imperceptible in light mode, white-on-white") but there is no gap
+  artefact and no clipping.
+- The visually thicker band at the BOTTOM of `wf-tab-overview` and
+  `insights-tab-trends` in both themes is NOT part of the focus ring: both
+  are their tablist's currently-ACTIVE tab, and `.wf-tab-active { border-
+  bottom-color: rgb(79 70 229); }` / `.dark .wf-tab-active { border-
+  bottom-color: rgb(129 140 248); }` (`web/static/css/styles.css:224-231`,
+  pre-existing, predates BK3, unchanged) puts a 2px accent bottom border on
+  the element's own border-box, which the ring is drawn from/around — this
+  is the active-tab underline merging visually with the ring's bottom
+  band, present on master too for the identical reason, not a BK3 defect.
+  `#wf-tab-cashflow` (not the active tab) shows the ring with no such
+  merge, confirming the bottom-band appearance is `.wf-tab-active`, not a
+  ring-rendering defect.
+- No ring was cut off by the tab strip's own `border-b` (the tablist
+  wrapper's `border-b border-gray-200`): the wrapper has no `overflow`
+  property and the tabs' outline (offset 2px, extending to 4px out) is
+  fully visible past the wrapper's bottom border in every screenshot.
+
+**Point 2: PASS under ruling g's amended acceptance** — both (i) and (ii)
+are met for all four reopened controls in both themes.
+
+=== Point 3: ring-utility controls unchanged vs master ===
+
+Code is byte-identical to attempt 3 (Point 1), so attempt 3's direct
+computed-style diff (worktree vs a `.git`-stripped master `cp -a` copy,
+real Tab, both themes) is reused rather than re-run: `#import-csv-btn`
+(`focus:outline-none focus-visible:ring-2 focus-visible:ring-accent`) and
+`[data-kpi-detail="income"]` (`focus-visible:ring-2 focus-visible:ring-
+accent`, no `focus:outline-none`) both measured SAME in both themes —
+PASS, cited from BK3.3 verdict, not re-run this attempt (no code change to
+re-verify against).
+
+=== Point 4: reused/re-cited attempt-3 items ===
+
+- Full-page sweep minimum 5.76:1 across 6 pages × 2 widths × 2 themes (24
+  runs, 56 applicable readings) — CITED from BK3.3 (`sweep1.js` /
+  `analyze3.py`), not re-run; code unchanged, ruling g does not reopen this
+  scope.
+- `:focus-visible` semantics (no ring on mouse click) and
+  input/select/textarea non-interference — CITED from BK3.3 Points 4-5, not
+  re-run; unaffected by ruling g.
+- axe: RE-RUN this attempt on `/whatif` and `/insights` (the two reopened
+  pages) × {light, dark} at 1300px, WCAG 2.x/2.2 AA tag set, real built
+  stylesheet — **0 violations, all 4 runs** (`axe4.js`). The other 4 pages
+  × widths from attempt 3's 24-run sweep are CITED (0 violations there too,
+  unchanged code).
+- `grep -c '!important' web/static/css/styles.css` → **0**. RE-RUN.
+- `make css-verify` → "tailwind.css is up to date". RE-RUN.
+- `go build ./...` → exit 0, no output. RE-RUN.
+
+Environment cleanup: `scripts/whatif-verify.sh stop 8217` confirmed
+(`/api/health` refuses connection afterward). Live `:8080` confirmed
+reachable before AND after this audit and was never touched by it (only
+the isolated :8217 verify-copy was used).
+
+=== FAILURES ===
+
+None.
+
+=== OBSERVATIONS (non-blocking) ===
+
+- The direction-specific inner/outer sample-order artefact noted in Point 2
+  (right edge on the two What-If tabs in light mode; bottom/right on
+  `insights-tab-trends`) is a measurement-script rounding quirk at
+  fractional box coordinates, not a rendering defect — confirmed by direct
+  visual inspection of the 6x crops. Flagging only so a future checker
+  doesn't mistake it for a gap without looking at the image.
+- All OBSERVATIONS from BK3.3's verdict (pre-existing `[data-kpi-detail=
+  "income"]` 1.09:1 outline byte-identical to master; the Roth
+  recommendations button's pre-existing `focus:outline-accent`
+  invisibility bug; the dead `components/alerts.html` template; the
+  untested Strategies-tab-panel Roth buttons) still apply unchanged and are
+  not re-litigated here.

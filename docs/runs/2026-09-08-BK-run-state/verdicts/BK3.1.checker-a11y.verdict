@@ -1,0 +1,220 @@
+VERDICT: FAIL
+CHECKER: checker-a11y
+FAMILY: anthropic
+TASK: BK3
+ATTEMPT: 1
+---
+Scope: styles.css BK3 block (appended `:where(button, [role="button"], a[href],
+summary, [tabindex="0"]):focus-visible { outline: 2px solid rgb(var(--accent));
+outline-offset: 2px; }`). `git diff master` on this file also contains BK1's
+input/select/textarea box-shadow rule (already accepted, not re-audited here
+except as context for point 4). Foreign/attribute-only, never FAILed here:
+BK2's major-expenses.html + render_major_expenses_test.go changes (accepted
+separately).
+
+Harness (per instructions, real render + real built CSS, not hand-built HTML):
+worktree server on :8214 (`scripts/whatif-verify.sh start 8214` in
+/home/darrell/bin/ai/budget2/.claude/worktrees/backlog-a11y-2, branch
+feat/backlog-a11y-2, base 176383f); master baseline on :8224 via a `.git`-
+stripped `cp -a` of /home/darrell/bin/ai/budget2 (HEAD 176383f) into scratch
+`master-copy/`, same start script. Both torn down with `stop` at the end of
+this audit. Playwright (chromium-1243, --no-sandbox) scripts in scratch
+`node/` (lib.js, point1.js, pixelcheck.js/analyze2.py, point2.js, point3.js,
+point4.js, axecheck.js) drive real navigation + REAL keyboard Tab (see
+methodology note below), never scripted CSS assumptions.
+
+Real-Tab methodology: reload page (fresh focus-visible modality) → optional
+`#theme-toggle` / `#theme-toggle-mobile` click + `page.reload()` for dark →
+PROGRAMMATICALLY focus (`el.focus()`, bypassing Playwright's mouse-click
+actionability, which false-negatives on elements laid out inside a CLOSED
+native `<details>` — Chromium keeps a real, nonzero `getBoundingClientRect()`
+for that content but silently refuses `.focus()` on it; a mouse-click
+approach hangs against `#major-expenses-add-form`'s always-closed accordion,
+a pre-existing, out-of-scope trait) the element immediately preceding target
+in tab order → one real `page.keyboard.press('Tab')` → assert
+`document.activeElement` matches target. Because Chromium's `:focus-visible`
+heuristic keys off the modality of the operation that produced the CURRENT
+focus (the Tab keydown), the resulting ring on the TARGET is indistinguishable
+from a user tabbing there by hand. `.major-expense-row-toggle` and the
+Restore/Discard buttons required opening `#major-expenses-definitions-panel`
+and `#major-expenses-deleted-panel` (both closed `<details>` by default) via
+`el.open = true` before the Tab walk.
+
+=== Point 1: unstyled controls now ringed — computed style + contrast ===
+
+Command: `node point1.js` (focus via real Tab, computed outline + naive
+ancestor-backgroundColor contrast), corroborated pixel-for-pixel by
+`node pixelcheck.js` + `python3 analyze2.py` (screenshots the focused
+control, samples the actual rendered outline pixel and background pixel).
+
+- major-expense-row-toggle (/major-expenses): outline solid 2px
+  rgb(79,70,229) light / rgb(165,180,252) dark, offset 2px. Card bg
+  white/gray-800. Pixel-measured ratio: 6.29:1 light, 7.61:1 dark. PASS.
+- restore-btn / discard-btn (/major-expenses, deleted panel open): same
+  ring, same card. Pixel-measured ratio: 6.29:1 light, 7.61:1 dark
+  (confirmed by dumping the raw pixel row — a same-crop stray pixel from
+  the adjacent button's own colored border was a detection-script
+  artifact, not a rendering defect; the accent ring itself is present and
+  correctly colored in every sample). PASS.
+- summary (Period details, /dashboard): 6.29:1 light, 7.61:1 dark. PASS.
+- transfers-scroll-region (div[tabindex=0][role=region], /transfers):
+  6.29:1 light, 7.61:1 dark. PASS.
+- **nav-link (a[href="/explorer..."], /dashboard, desktop 1300) — FAIL.**
+  `getComputedStyle().backgroundColor` walk falsely reports the PAGE
+  background because the nav bar's fill is a `background-image` gradient
+  (`bg-gradient-to-r from-accent-strong to-accent-strong
+  dark:from-gray-800 dark:to-gray-900`), not `background-color`. Real
+  pixel sample (`node navshot2.js` → screenshot → PIL) of the actual
+  rendered nav bar behind the ring:
+    - LIGHT: ring pixel = rgb(79,70,229), header pixel = rgb(79,70,229).
+      **Contrast ratio 1.00:1 — the ring is IDENTICAL to its background,
+      completely invisible.** Root cause: `--accent: 79 70 229` and
+      `--accent-strong: 79 70 229` are defined as the SAME value in light
+      mode (styles.css lines 35/37), and the nav's light-mode fill is
+      `accent-strong` while BK3's fallback ring uses `--accent`.
+    - DARK: ring rgb(165,180,252) vs header rgb(36,33,31) (gray-800/900
+      gradient, not accent-strong in dark mode) = 8.03:1. Fine.
+  **Master comparison (both ends measured, per the acceptance text's own
+  tie-break):** `node navshot2.js` against :8224 shows master's
+  browser-default `outline:auto` painting a genuine adaptive double ring
+  (white outer + black inner) at this exact location:
+    - LIGHT: white-vs-header 6.29:1, black-vs-header 3.03:1 — both clear
+      the 3:1 bar, clearly visible in the screenshot.
+    - DARK: white-vs-header 16.14:1.
+  Master's ring was strictly better here in light mode (6.29:1/3.03:1 vs
+  BK3's 1.00:1) — this is a REGRESSION, not a wash, so per the brief's own
+  rule ("that is a FAIL only if master's default ring was better there —
+  measure both") this is a **FAIL**.
+- **mobile-nav-toggle (#mobile-nav-toggle, /dashboard, mobile 390) — FAIL,
+  same root cause.** Same `<nav>` bar, same light-mode accent-strong fill.
+  Pixel row dump (`analyze2.py` / raw dump) at 390 viewport: LIGHT — 20+
+  consecutive pixels all rgb(79,70,229), no ring stripe detectable at all
+  (ratio ~1.00:1, effectively invisible); DARK — clean ring at
+  rgb(165,180,252) vs rgb(~30,27,25) header, high contrast, fine.
+
+Screenshots backing these two: scratch node/nav-worktree-light.png (ring
+invisible), node/nav-master-light.png (double ring visible),
+node/px-mobile-nav-toggle-light.png (no visible stripe).
+
+=== Point 2: styled controls unchanged vs master ===
+
+Command: `node point2.js` — focus each via real Tab on :8214 and :8224,
+diff the computed outline+box-shadow object.
+- #import-csv-btn (focus:outline-none + focus-visible:ring-2
+  focus-visible:ring-accent): SAME in both themes (outline suppressed,
+  box-shadow ring only) — PASS.
+- [data-wf-tab="overview"] (own outline rule): SAME both themes — PASS.
+- [data-ins-tab="trends"]: SAME both themes — PASS.
+- **[data-kpi-detail="income"] (KPI tile, `focus-visible:ring-2
+  focus-visible:ring-accent rounded` — NO `focus:outline-none`) — FAIL,
+  not identical.** Master: `outlineStyle: auto, outlineWidth: 1px,
+  outlineOffset: 0px, outlineColor: rgb(16,16,16)` (browser default) PLUS
+  the same accent box-shadow ring. Worktree: BK3's `:where()` rule now
+  also wins the outline slot here (this button never set `outline:none`,
+  so `:where()`'s author-stylesheet vs UA-stylesheet cascade priority
+  lets it override the UA default regardless of the 0-specificity design)
+  → `outlineStyle: solid, outlineWidth: 2px, outlineOffset: 2px,
+  outlineColor: rgb(79,70,229)` PLUS the unchanged box-shadow ring.
+  Screenshots (node/kpi-master.png vs node/kpi-worktree.png) show master's
+  thin, tight double-ring becomes a visibly thicker doubled accent ring on
+  the worktree (outer 2px-offset outline + inner box-shadow ring, same
+  hue). Not a contrast/color-only violation (still ≥6:1, single hue,
+  clearly visible) and not a hidden-focus defect, but it violates this
+  task's own explicit acceptance text ("computed outline ... identical to
+  master's ... no double indicator") — the `:where()` design's stated
+  guarantee ("only controls with no focus utility get the ring") does not
+  hold for controls that have a ring utility but no outline utility, which
+  is exactly this KPI-tile pattern (also present on the other
+  `data-kpi-detail` buttons, all sharing this class list per the dashboard
+  template).
+
+=== Point 3: :focus-visible semantics ===
+
+Command: `node point3.js`. Mouse `page.click('.major-expense-row-toggle')`
+→ `outlineStyle: none` (no ring). `Tab` then `Shift+Tab` back → `outlineStyle:
+solid, outlineWidth: 2px, outlineColor: rgb(79,70,229)`. Matches spec. PASS.
+
+=== Point 4: inputs unaffected ===
+
+Command: `node point4.js`. Focused filter `<input>`: `outlineStyle: none`,
+`boxShadow: rgb(79,70,229) 0px 0px 0px 2px` — BK1's rule only, BK3 does not
+add an outline to inputs (not in its selector list). PASS.
+
+=== Point 5: axe (WCAG tags) ===
+
+Command: `node axecheck.js` — 5 pages (/dashboard, /major-expenses,
+/whatif, /insights, /transfers) × 2 widths (1300, 390) × 2 themes = 20
+runs, `axe.run(document, {runOnly:{type:'tag', values:['wcag2a','wcag2aa',
+'wcag21a','wcag21aa','wcag22aa']}})` via addScriptTag with the project's
+real built styles.css already loaded server-side.
+Result: **0 violations on all 20 runs.** (Expected: axe-core's automated
+checks do not evaluate `:focus-visible` outline contrast against a
+gradient-background header — this is exactly the gap ACCESSIBILITY.md's
+preamble calls out: "Automated results are necessary but not sufficient."
+The manual walk in point 1 is what catches the light-mode invisible ring;
+axe cannot.)
+
+=== Point 6: hygiene ===
+
+- `grep -c '!important' web/static/css/styles.css` → `0`. PASS.
+- `make css-verify` → "tailwind.css is up to date". PASS.
+- `go build ./...` → exit 0, no output. PASS.
+
+=== FAILURES ===
+
+1. **ACCESSIBILITY.md A-5 / A-2 (visible focus ≥3:1 in both themes) + WCAG
+   2.2 SC 1.4.11 (non-text contrast) — web/static/css/styles.css:303-306
+   (appended BK3 rule) as applied to `nav a[href^="/explorer"]` and
+   `#mobile-nav-toggle` on /dashboard, light theme, desktop 1300 and
+   mobile 390.** The fallback ring is pixel-identical to the accent-strong
+   header background (rgb(79,70,229) on rgb(79,70,229), ratio 1.00:1) —
+   completely invisible to a sighted keyboard user. Confirmed by direct
+   pixel sampling of real screenshots, not inference. Master's prior
+   browser-default double ring (white 6.29:1 / black 3.03:1) was clearly
+   visible and met 3:1 at the same location — this is a REGRESSION BK3
+   introduced by using `--accent` for the ring while the light-theme nav
+   fills with `--accent-strong`, which styles.css defines as the exact
+   same RGB triple (79 70 229) in light mode (lines 35 and 37). Every
+   other element with no explicit focus utility (row toggle, restore/
+   discard, summary, scroll region — all on white/gray-800 cards, not the
+   accent header) is unaffected and passes ≥6:1 in both themes; this is
+   narrowly scoped to controls living inside the `<nav>` accent-strong
+   fill in light mode, but that includes real, commonly-tabbed controls
+   (every top-nav link, the mobile hamburger).
+
+2. **Task's own BK3 acceptance text ("computed outline ... identical to
+   master's ... no double indicator") — [data-kpi-detail] KPI-tile
+   buttons on /dashboard (and by the same class list, the other KPI
+   detail buttons).** These have `focus-visible:ring-2
+   focus-visible:ring-accent` but no `focus:outline-none`, so BK3's
+   zero-specificity `:where()` rule still wins the outline slot via
+   author-vs-UA cascade priority, changing outline from browser-default
+   (auto/1px/offset0) to BK3's (solid/2px accent/offset2) while leaving
+   the pre-existing box-shadow ring untouched — a visibly thicker doubled
+   accent ring not present on master. Not a hard WCAG violation on its own
+   (still high-contrast, single hue, not color-only), but it is a real,
+   confirmed deviation from the "styled controls unchanged" guarantee this
+   task was accepted against.
+
+=== OBSERVATIONS (non-blocking) ===
+
+- `#major-expenses-add-form` (the "Add expense" panel) sits inside a
+  closed `<details>` yet its descendants report a nonzero
+  `getBoundingClientRect()` while genuinely being unfocusable
+  (`.focus()` silently no-ops, falling back to `<body>`) — a real
+  Chromium `<details>` rendering quirk, not a BK3 or project defect; noted
+  only because it broke a naive rect-based focusable-element probe during
+  this audit and is worth knowing if a future checker writes a similar
+  harness.
+- BK1's box-shadow focus rule (accepted separately) rides along in this
+  diff; not re-litigated here beyond point 4's confirmation it still
+  applies correctly to inputs.
+- The KPI-tile finding (FAILURE 2) suggests the fix for FAILURE 1 should
+  also re-examine every `focus-visible:ring-*`-only control, not just the
+  accent-header ones, since `:where()`'s "zero specificity" framing only
+  protects controls that ALSO set `outline:none` — a narrower category
+  than "controls with explicit focus utilities" as stated in the BK3
+  block's design rationale.
+
+Environment cleanup: both verify servers stopped
+(`scripts/whatif-verify.sh stop 8214` / `stop 8224`); live :8080 untouched.
