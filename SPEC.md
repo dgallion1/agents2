@@ -1923,8 +1923,9 @@ stays the transparent Tailwind one); mouse click on a button shows no ring
 - **Run BK closed 2026-09-08**: `gate.sh done` exit 0; `gate.sh stats`
   verbatim: `first-attempt clean: 15/19 (no-evidence rows: 0)` across
   LT+RF+BL+BK. `make check` green; agents2 smoketest ALL PASS. Shipped as
-  budget2 commit 141e6ea on `feat/backlog-a11y-2`, PR opened; not merged,
-  not deployed. Catches by mechanism: PRIMARY CHECKER FAIL ×3 (BK3
+  budget2 commit 141e6ea on `feat/backlog-a11y-2`, PR #101 merged as
+  master a71e8b9 and deployed to :8080 the same afternoon (pid 3878904,
+  health v1.4.0-1111-ga71e8b9). Catches by mechanism: PRIMARY CHECKER FAIL ×3 (BK3
   attempts 1–3, all against the lead's own CSS, all invisible to axe),
   PRIMARY CHECKER observations ×3 (rulings a–c; c became BK3), USER
   ruling ×1 (g, reopen). The four-attempt BK3 arc is the run's real

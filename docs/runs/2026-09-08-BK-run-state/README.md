@@ -2,7 +2,8 @@
 
 Evidence snapshot of `.swarm/` (gitignored) for the three-task run described
 in SPEC.md "Run BK". Target repo: budget2, branch `feat/backlog-a11y-2`
-(commit 141e6ea off master 176383f).
+(commit 141e6ea off master 176383f), merged as a71e8b9 (PR #101) and
+deployed to :8080 on 2026-09-08.
 
 - `ledger.tsv` — the shared LT+RF+BL+BK ledger: BK1 (Tier 1, lead-direct,
   attempt 1), BK2 (Tier 2, attempt 1), BK3 (Tier 1, lead-direct: attempts
