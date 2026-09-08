@@ -1,0 +1,114 @@
+VERDICT: PASS
+CHECKER: checker-a11y
+FAMILY: anthropic
+TASK: BL4
+ATTEMPT: 2
+---
+Scope: /home/darrell/bin/ai/budget2/.claude/worktrees/backlog-a11y, branch
+feat/backlog-a11y off master 43ce76e. BL4 files per manifest: base.html,
+roth-conversion.html, insights.js, handlers.go, tailwind.css. Foreign
+in-flight edits attributed, not scored: major-expenses.html (BL1),
+spending-phases.html (BL2), transfers.html + styles.css focus-ring
+selector (BL3).
+
+1. `/usr/bin/git diff master -- web/templates/components/whatif/roth-conversion.html`
+   — exactly one line changed:
+     -  <span class="text-gray-600 sm:text-sm">$</span>
+     +  <span class="text-gray-600 dark:text-gray-300 sm:text-sm">$</span>
+   No other hunks in this file. `git diff master --stat` for BL4's five
+   files matches attempt 1's fingerprint exactly: handlers.go +7/-4,
+   tailwind.css +1/-1 (rebuilt output), insights.js +1/-1, roth-conversion.html
+   now +1/-1 (was the same span, only the class value differs from attempt
+   1's `dark:text-gray-400`), base.html +46/-46. Confirms this attempt
+   touched nothing but the contested span, per ruling BL-2026-09-08c.
+
+2. Real render, server on :8183 via scripts/whatif-verify.sh (never
+   :8080/:8081), Playwright (chromium-1243, --no-sandbox) on
+   http://localhost:8183/whatif, `#roth-annual-amount` visible without
+   opening any tab (Roth Conversion card renders inline on /whatif).
+   getComputedStyle read after a genuine `#theme-toggle` click + 500ms:
+     LIGHT: span color rgb(87,83,78) [text-gray-600], input bg
+       rgb(255,255,255). Contrast = 7.629:1 (≥4.5:1, PASS). Input's own
+       text rgb(0,0,0) vs same bg = 21.0:1 (reference/sanity check).
+     DARK: span color rgb(214,211,209) [dark:text-gray-300, confirmed in
+       computed className `text-gray-600 dark:text-gray-300 sm:text-sm`],
+       input bg rgb(68,64,60) [dark:bg-gray-700 / stone-700, unchanged
+       from attempt 1's measurement]. Contrast = 6.896:1 (≥4.5:1, PASS —
+       up from attempt 1's 4.07:1 FAIL). Input's own text
+       rgb(245,245,244) vs same bg = 9.416:1 (reference).
+   Independently cross-checked in Python (sRGB relative-luminance formula,
+   WCAG 2.x): light 7.629, dark 6.896 — identical to the browser-measured
+   values. Both themes clear 4.5:1 with margin (font-size 14.875px/400
+   weight confirmed again — not large text, so 4.5:1 is the correct
+   threshold, not 3:1). Attempt 1's own note that `dark:text-gray-300`
+   measures 10.18:1 "elsewhere on this page" was against a different,
+   darker surface (#292524-family card bg); against the actual input fill
+   (#44403c) it is 6.896:1 — still comfortably passing, and I measured the
+   real DOM rather than reusing the other-surface figure.
+
+3. Re-confirmed the four attempt-1 PASS items on this tree, numbers only
+   (getComputedStyle / live SVG text / real insightChartMarkers() calls,
+   real theme-toggle clicks, real hamburger-menu open at 390 using the
+   correct `#theme-toggle-mobile` control that exists only under xl:hidden):
+   - Nav group labels (#nav-group-money), 1536 & 1280, both themes:
+     rgba(255,255,255,0.8) over nav's own linear-gradient (light flat
+     rgb(79,70,229); dark rgb(41,37,36)→rgb(28,25,23)). Blended contrast:
+     light 4.624:1, dark 10.19–11.46:1. All ≥4.5:1.
+   - Active nav link (`aria-current="page"`), 1536, 1280, and mobile menu
+     at 390 (opened via `#mobile-nav-toggle` after toggling theme with the
+     correct mobile control), both themes: bg rgba(255,255,255,0.15) over
+     the same nav gradient, text rgb(255,255,255). Overlay-vs-bg contrast:
+     light 4.647:1, dark 9.38–11.04:1. Active link visible and
+     `aria-current="page"` present in the mobile menu in both themes
+     (mobile390 LIGHT/DARK both report anyVisible:true, text "Dashboard").
+     All ≥4.5:1.
+   - Target annotation, /dashboard?start=2026-01-01&end=2026-08-27, live
+     Plotly SVG `<text>` fill: light rgb(68,64,60) vs card rgb(255,255,255)
+     = 10.27:1; dark rgb(231,229,228) vs card rgb(41,37,36) = 12.08:1.
+     Text unchanged: "Target $11351" both themes. Both ≥4.5:1.
+   - insights.js `insightChartMarkers()` called live on /insights: light
+     '#78716c', dark '#a8a29e' — byte-identical to attempt 1. Contrast vs
+     card bg: light 4.80:1, dark 6.01:1 (both exceed the 3:1 non-text
+     floor and 4.5:1).
+   All four numbers match attempt 1's reported ratios (small sub-0.1
+   deltas from gradient-endpoint sampling, not a regression). No change in
+   behavior for any of these four items in this attempt, as expected —
+   they were not touched by this diff.
+
+4. axe-core 4.13.0 (global npx install,
+   /home/darrell/.npm/_npx/e003b6b07d062486/node_modules/axe-core/axe.min.js,
+   injected via addScriptTag), wcag2a/2aa/21aa/22aa, on /whatif /dashboard
+   /insights at 390 and 1280, light and dark (real `#theme-toggle` or
+   `#theme-toggle-mobile` click + 500ms), every `<details>` forced open
+   before each scan: 0 violations on all 12 page/viewport/theme
+   combinations. (Axe's short-text-content heuristic still exempts the
+   lone "$" glyph from color-contrast — consistent with attempt 1's note
+   that this class of defect is manual-check-only; the manual measurement
+   in point 2 is the operative evidence for this task.)
+
+5. `go build ./...` — clean, no output.
+   `go test ./internal/handlers/dashboard/... ./internal/handlers/whatif/...`
+   — both `ok` (dashboard 1.303s, whatif 14.720s).
+   `make css-verify` — "tailwind.css is up to date" on first try, no retry
+   needed.
+
+Server lifecycle: started via `scripts/whatif-verify.sh start 8183`
+(throwaway data/backups copy under /tmp/budget2-whatif-verify-8183),
+stopped via `scripts/whatif-verify.sh stop 8183` after measurement,
+confirmed `status 8183` reports "not running". Live :8080 confirmed still
+up and unaffected (`/api/health` returns v1.4.0-1105-g43ce76e ok)
+throughout and after this audit.
+
+FAILURES: none.
+
+OBSERVATIONS (non-blocking, carried from attempt 1, unchanged by this
+attempt's scope):
+- Mobile-menu group-label <p> elements (mobile-nav-group-money/plan/setup)
+  remain `text-white/60`, byte-identical to master — out of scope for BL4
+  (spec text scoped this task to the desktop group-label spans only), same
+  latent light-mode contrast risk noted previously, backlog candidate.
+- Point 2's non-text overlay-boundary contrast (~1.35–1.9:1ish) remains
+  below the 3:1 non-text floor in the letter-of-the-law sense but is
+  redundantly indicated by `aria-current`; unchanged in character from
+  master, not a regression, not re-litigated here since BL4 attempt 2
+  touched only the Roth `$` span.

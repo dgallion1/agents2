@@ -1,0 +1,124 @@
+VERDICT: FAIL
+CHECKER: checker-a11y
+FAMILY: anthropic
+TASK: BL3
+ATTEMPT: 1
+---
+Scope: BL3, Tier 1 (checks: a11y), lead-authored. Worktree
+/home/darrell/bin/ai/budget2/.claude/worktrees/backlog-a11y, branch
+feat/backlog-a11y off master 43ce76e. Foreign in-progress edits present in
+the same tree (BL1 major-expenses.html, BL2 spending-phases.html, BL4
+base.html/roth-conversion.html/insights.js) — not touched by this verdict,
+attributed to their own tasks per the run brief.
+
+(1) Diff is exactly the three attributes, nothing else.
+`/usr/bin/git diff master -- web/templates/pages/transfers.html`:
+  -        <div class="mt-3 overflow-x-auto">
+  +        <div class="mt-3 overflow-x-auto" tabindex="0" role="region" aria-label="Paired and external transfers">
+One hunk, one line changed, no other file touched by BL3 (git status shows
+the other modified files belong to BL1/BL2/BL4 per the foreign-edit list).
+PASS.
+
+(2) Server: `scripts/whatif-verify.sh start 8181` (README-safe port, not
+:8080/:8081). axe-core (addScriptTag from the given a11y-u12 node_modules
+path) run on /transfers at 390x844 and 1280x900, light and dark (real
+`#theme-toggle` / `#theme-toggle-mobile` click, not classList toggle), all
+`<details>` forced open first:
+  390/light:  violations: []
+  390/dark:   violations: []
+  1280/light: violations: []
+  1280/dark:  violations: []
+Zero `scrollable-region-focusable` in all four combinations (master's one
+390 hit, per the task brief, is gone) and no new violation of any kind.
+PASS on this point.
+
+(3) Keyboard reach / accessible name / caption: PASS. Focus ring: FAIL in
+dark mode.
+  - Tab reachability: real `page.keyboard.press('Tab')` loop from body
+    reached `div[role=region][aria-label="Paired and external transfers"]`
+    in 4 (390/light), 2 (390/dark), 11 (1280/light), 1 (1280/dark) presses;
+    `activeElement` matched role=region and aria-label exactly in all four.
+  - sr-only caption: `<caption class="sr-only">Paired and external
+    transfers</caption>` (line 128) is unchanged and still present — the
+    region's aria-label duplicates it, which the contract explicitly
+    permits ("fine — note it"). OBSERVATION only.
+  - Focus ring visibility: measured by screenshotting the region's
+    bounding box (+20px pad) before and after a REAL keyboard Tab reached
+    it (not a synthetic `.focus()` call — that contaminates Chromium's
+    `:focus-visible` input-modality heuristic after a prior mouse click on
+    the theme toggle and gives a false negative; verified via
+    `el.matches(':focus-visible')` = true in both themes for the keyboard
+    path used here), then diffing pixels with Pillow.
+    Light (1280): 2016 px differ; outline color measured `rgb(16,16,16)`
+    against a `rgb(255,255,255)` page background → contrast ≈ 19:1. Clearly
+    visible (confirmed visually in the screenshot: a dark ring appears
+    around the region).
+    Dark (1280): 2416 px differ (ring IS painted — this is real, not the
+    zero-diff artifact from the contaminated-modality test I discarded),
+    but the outline color measured is the SAME literal `rgb(16,16,16)`
+    (Chromium's `outline: auto` resolves to a fixed near-black, not a true
+    per-pixel invert, in this headless build) against the region's dark
+    background/border pixels (`rgb(41,37,36)` / `rgb(68,64,60)`, the
+    dark-theme stone-800/gray-700 tones already in use on this page).
+    Contrast ratio computed (WCAG relative-luminance formula):
+      rgb(16,16,16) vs rgb(41,37,36)  → ≈ 1.25:1
+      rgb(16,16,16) vs rgb(68,64,60)  → ≈ 1.85:1
+    Both far below the 3:1 floor for UI-component/state boundaries. The
+    ring is technically painted but is not a visible focus indicator to a
+    normal-vision user in dark mode — this is exactly the "control visible
+    in one theme, invisible in the other" case the audit brief calls out
+    as a FAIL, not an OBSERVATION.
+
+FAILURES:
+1. Constitution point 9 ("focus indicator is visible") + point 7 (UI
+   component boundaries ≥3:1) + point 12 ("dark mode has full parity: all
+   contrast requirements (7) hold in both themes") + WCAG 2.2 AA 1.4.11
+   Non-Text Contrast (focus indicators are UI-component state markers
+   under 1.4.11's own Understanding doc).
+   File: web/templates/pages/transfers.html:126 (the new
+   `tabindex="0" role="region"` div).
+   Observed: the region relies on the browser's unstyled default
+   `outline: auto` focus ring. In light mode this renders at ~19:1
+   contrast (fine); in dark mode the SAME literal outline color renders at
+   ~1.25–1.85:1 against the region's dark-theme background/border — not a
+   visible focus indicator. axe-core does not catch this because its
+   color-contrast rule targets text, not non-text UI-state contrast, which
+   is exactly the manual-check gap this audit is required to walk.
+   Attribution: the failing markup itself (`tabindex="0" role="region"` on
+   this div) is new content introduced by BL3, not byte-identical to
+   master — `git diff master` above shows it is the only change in this
+   file. The unstyled-outline PATTERN it uses is a pre-existing convention
+   (master already has an identical `tabindex="0" role="region"` wrapper
+   with no custom focus style at web/templates/pages/major-expenses.html:667,
+   confirmed via `git show master:web/templates/pages/major-expenses.html
+   | grep -n tabindex`), so this is a known defect class being replicated
+   into new content, not one BL3 invented from scratch — per the run's own
+   attribution rule this still FAILs the task (only byte-identical
+   unchanged markup is an OBSERVATION; replication into new content is
+   not), but the fix belongs to the same styles.css convention the project
+   already uses elsewhere for exactly this reason
+   (`[data-wf-tab]:focus-visible { outline: 2px solid rgb(var(--accent));
+   outline-offset: 2px; }`, styles.css:231-238) — add the new region
+   selector to that block (or an equivalent) rather than leaving it on the
+   native default.
+
+(4) `go test ./internal/handlers/transfers/... ./internal/templates/...`:
+  ok  	budget2/internal/handlers/transfers	0.250s
+  ok  	budget2/internal/templates	1.384s
+PASS.
+
+OBSERVATIONS (non-blocking, for the backlog):
+- The sr-only `<caption>` and the new `aria-label` say the same words;
+  contract explicitly allows this duplication.
+- The identical unstyled-outline pattern likely also under-contrasts in
+  dark mode at web/templates/pages/major-expenses.html:667 (master,
+  pre-existing, out of BL3's scope) — worth a follow-up to fix all
+  `tabindex="0" role="region"` scroll wrappers site-wide in one pass
+  (BL1 is adding more instances of the exact same pattern this run).
+- axe-core's zero-violation result on this page (point 2) stands on its
+  own merits and is not contradicted by the FAIL above — axe simply does
+  not check non-text focus-indicator contrast.
+
+Server lifecycle: `scripts/whatif-verify.sh start 8181` /
+`scripts/whatif-verify.sh stop 8181` (isolated data/backup copy under
+/tmp/budget2-whatif-verify-8181, cleanly torn down; live :8080 untouched).

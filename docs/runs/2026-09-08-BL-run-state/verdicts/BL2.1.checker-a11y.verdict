@@ -1,0 +1,121 @@
+VERDICT: PASS
+CHECKER: checker-a11y
+FAMILY: anthropic
+TASK: BL2
+ATTEMPT: 1
+---
+Scope: web/templates/components/whatif/spending-phases.html only (manifest
+BL2.1.files). Worktree /home/darrell/bin/ai/budget2/.claude/worktrees/backlog-a11y
+branch feat/backlog-a11y off master 43ce76e. Foreign uncommitted edits in the
+same tree (major-expenses.html=BL1, transfers.html+styles.css selector=BL3,
+base.html/roth-conversion.html/insights.js/dashboard handlers.go/tailwind.css
+=BL4) attributed, not scored here.
+
+(1) Diff is exactly the three class edits
+`/usr/bin/git diff master -- web/templates/components/whatif/spending-phases.html`
+shows only:
+  line 61  `flex items-center gap-3` -> `flex flex-wrap items-center gap-3`
+  line 70  `flex-1 flex items-center gap-2` -> `flex-1 min-w-0 flex flex-wrap items-center gap-2`
+  line 76  range `class="flex-1 h-2 ..."` -> `class="flex-1 min-w-[8rem] h-2 ..."`
+No id/name/data-quick-adjust-*/oninput/label-width changes. Matches BL.3
+"BL2" block verbatim.
+
+(2) Real render, both themes, 390 and both wider widths — servers
+Built + launched via `scripts/whatif-verify.sh start 8172` (this worktree,
+real built CSS+JS) and, for a master baseline, the sibling clean worktree
+`/home/darrell/bin/ai/budget2` (verified `git status --short` empty, HEAD
+43ce76e) via `scripts/whatif-verify.sh start 8192`. Both torn down cleanly
+at the end (`stop 8172` / `stop 8192` -> "stopped and cleaned").
+
+Playwright (specified path/executablePath/args, `#theme-toggle` /
+`#theme-toggle-mobile` real click, all `<details>` opened) probed
+scrollWidth/clientWidth/innerWidth and every `main` descendant's
+`getBoundingClientRect().right` at 390 (mobile toggle), 1280 and 1536
+(desktop toggle), light+dark, on :8172:
+
+  new_w390_light/dark : scrollWidth=390=clientWidth=innerWidth, 0 overflowing elements in <main>
+  new_w1280_light/dark: scrollWidth=1280=clientWidth=innerWidth, 0 overflowing
+  new_w1536_light/dark: scrollWidth=1536=clientWidth=innerWidth, 0 overflowing
+
+axe (`addScriptTag` with the pinned axe.min.js, wcag2a+wcag2aa+wcag22aa,
+default tab order, details pre-opened) on /whatif at 8172:
+  w390_light: violations=[]   w390_dark: violations=[]
+  w1280_light: violations=[]  w1280_dark: violations=[]
+
+(3) 1280/1536 phase-card containment + range width, vs master
+For every `input[type=range][id^=phase-]`, walked to its ancestor
+`.p-3.rounded-lg` phase card and took the max `right` of every descendant
+inside that card, compared to the card's own `right`:
+
+  new   w390  : all 3 ranges overflowsCard=false (max child right <= card right)
+  new   w1280 : all 3 ranges overflowsCard=false
+  new   w1536 : all 3 ranges overflowsCard=false
+  master w390 : page scrollWidth=498 (matches BL.0's measured defect), 6
+                overflowing elements in <main>, all 3 phase cards
+                overflowsCard=true (max child right up to 498 vs card
+                right 352)
+  master w1280: phase-1/phase-2 overflowsCard=true, culprit
+                `.phase-dollar-label`/row div, max right 498 vs card right
+                394 (~104px spill)
+  master w1536: phase-1/phase-2 overflowsCard=true, max right 498 vs card
+                right 479 (~19px spill)
+
+This reproduces ruling BL-2026-09-08a's measured master spillage (~104-106
+px at 1280) and confirms the wrap fix eliminates it at every width tested
+while master still spills. Improvement confirmed, not just "no regression."
+
+Range width: computed root font-size is 17px (`getComputedStyle(html).
+fontSize` = "17px"), so `min-w-[8rem]` computes to 136px
+(`getComputedStyle(range).minWidth` = "136px" on all three ranges).
+Observed rendered widths: 390px width 172-180px; 1280px width 157-214px;
+1536px width 191-206px — all >= 136px in every case tested.
+
+(4) Points 4/9 — labels, keyboard, focus ring, reading order
+Label association: `label[for="phase-N-multiplier"]` present for all three
+ranges (text "Spending"); `label[for="phase-N-start-age"]` present for the
+two age inputs (text "Age").
+Keyboard: `document.getElementById('phase-1-multiplier').focus()` +
+`page.keyboard.press('ArrowRight')` moved value 0.80 -> 0.85 and both
+`data-quick-adjust-display` spans updated in the same tick: pct "80%" ->
+"85%", dollar "$8,160/mo" -> "$8,670/mo" (JS hooks untouched, contract
+point 9 keyboard-operability confirmed on the wrapped markup).
+Focus ring: computed style on focus is `box-shadow: rgb(99,102,241) 0 0 0
+2px` (outline suppressed) in BOTH light and dark on the new render —
+identical box-shadow value measured on MASTER's dark render too (same
+card bg rgb(68,64,60)), i.e. this ring style is byte-identical to master,
+not touched by BL2's diff. Contrast: ring vs light-mode white bg ~4.47:1
+(passes point 7's >=3:1 non-text threshold); ring vs the dark card bg
+~2.30:1 (fails point 7/9/12's >=3:1, WCAG 1.4.11) in BOTH the new render
+and master. PRE-EXISTING, not introduced or newly replicated by BL2 (the
+diff never touches this box-shadow rule) — reported as an OBSERVATION per
+the attribution rule, not a FAIL.
+Wrapped reading order at 390: DOM/visual top-to-bottom order for the
+phase-1 row is LABEL "Spending" (top) -> INPUT range -> SPAN "85%" ->
+SPAN "$8,670/mo" (same line as the pct span) — label before slider before
+percent before dollar, matching the amended acceptance's required order.
+
+(5) Age input rows
+`phase-1-start-age` / `phase-2-start-age`: both have `label[for=...]`
+("Age"), and at both 390 and 1280 `getBoundingClientRect().right` = 146px,
+well inside the viewport at every width tested (no overflow).
+
+(6) Heading/landmark structure of /whatif vs master
+`document.querySelectorAll('h1,h2,h3,h4,h5,h6')` tag sequence and landmark
+counts (main/nav/header/footer) captured on :8172 and :8192: both render
+exactly 1 `<h1>`, 45 total headings in an IDENTICAL h1/h2/h3 sequence (no
+skipped levels, same pattern both sides), and exactly 1 each of
+main/nav/header/footer. No structural change from this task.
+
+OBSERVATIONS (non-blocking):
+- Range-input focus ring (box-shadow indigo #6366f1) measures ~2.3:1
+  against the dark phase-card background, below the 3:1 non-text-contrast
+  bar (points 7/9/12, WCAG 1.4.11) — but this style is byte-identical
+  between the new render and a clean master 43ce76e checkout, so it is a
+  PRE-EXISTING sitewide defect (same class as BL-2026-09-08b's finding on
+  BL3's new scroll-region focus ring, but here on the pre-existing global
+  range-input focus style, not anything BL2 added) — candidate for a
+  future BL-style contrast task, not a BL2 FAIL.
+- Foreign uncommitted edits present in the same worktree during this audit
+  (major-expenses.html, transfers.html, styles.css, base.html,
+  roth-conversion.html, insights.js, dashboard handlers.go, tailwind.css)
+  per BL1/BL3/BL4 as declared by the dispatcher; not scored against BL2.

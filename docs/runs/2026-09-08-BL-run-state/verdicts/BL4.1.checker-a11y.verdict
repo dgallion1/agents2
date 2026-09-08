@@ -1,0 +1,147 @@
+VERDICT: FAIL
+CHECKER: checker-a11y
+FAMILY: anthropic
+TASK: BL4
+ATTEMPT: 1
+---
+Scope: /home/darrell/bin/ai/budget2/.claude/worktrees/backlog-a11y, branch
+feat/backlog-a11y off master 43ce76e. BL4 files per manifest: base.html,
+roth-conversion.html, insights.js, handlers.go, rebuilt tailwind.css.
+Foreign in-flight edits present and attributed, not scored: major-expenses.html
+(BL1), spending-phases.html (BL2), transfers.html (BL3).
+
+Method: `go build ./...` / `go test ./internal/handlers/dashboard/...
+./internal/templates/...` / `make css-verify` all green on the real tree.
+Server started on :8182 via scripts/whatif-verify.sh (never :8080/:8081),
+stopped after measurement. Playwright (chromium-1243, --no-sandbox) drove
+real pages; dark mode via a genuine `#theme-toggle` click + 600-700ms wait
+(themechange fires). axe-core 4.13 (global @axe-core/cli install) injected
+via addScriptTag, wcag2a/2aa/21aa/22aa, on /dashboard /insights /whatif at
+390/1280, both themes, every <details> forced open.
+
+1. Nav group labels (base.html, desktop, 1536px; ACCESSIBILITY.md A-3/A-2,
+   WCAG 1.4.3): computed color rgba(255,255,255,0.8) confirmed via
+   getComputedStyle on #nav-group-money in both themes; header
+   backgroundImage confirmed linear-gradient(indigo-600, indigo-600) light
+   and linear-gradient(#292524, #1c1917) dark (exact bg values, not
+   assumed). Blended contrast: light 4.63:1, dark ~10.2–11.5:1 (gradient
+   ends). Both ≥4.5:1. PASS. (Prior text-white/60 measured 3.29:1 in
+   light — a real prior FAIL this task fixes.)
+
+2. Active nav link bg-white/15 + white text (base.html, desktop 1280/1536
+   and mobile menu at 390, both themes; A-3/A-2, WCAG 1.4.3): computed
+   backgroundColor rgba(255,255,255,0.15), color rgb(255,255,255) on the
+   `aria-current="page"` link at every viewport/theme combination measured
+   (1536, 1280, and inside the opened mobile menu at 390 — real click on
+   the hamburger, confirmed a visible aria-current link with the same
+   rgba(255,255,255,0.15) overlay). Blended contrast: light 4.64:1, dark
+   9.35–10.98:1. Both ≥4.5:1. PASS. `aria-current="page"` still present as
+   the programmatic indicator in every case observed.
+   OBSERVATION (non-blocking): overlay-vs-plain-header non-text contrast is
+   only ~1.35–1.62:1 in both themes (prior /20 was ~1.6–1.9:1) — the active
+   state leans on the text-contrast delta plus aria-current, not on the
+   overlay boundary being independently visible at 3:1. Not a regression
+   (prior state was equally low), noted for backlog per A-9 spirit (never
+   color-only) even though a11y-current + bold-white-text already satisfies
+   the letter of A-9/1.4.11 here.
+
+3. Roth `$` span, /whatif Roth Conversion card, dark mode (roth-conversion.html:48;
+   ACCESSIBILITY.md A-3 "4.5:1 for body text", A-2 "both themes"; WCAG 1.4.3
+   Contrast Minimum) — FAIL.
+   Measured via real DOM after a genuine #theme-toggle click: span
+   getComputedStyle.color = rgb(168,162,158) = #a8a29e (dark:text-gray-400,
+   i.e. stone-400 per this project's tailwind.config.js gray→stone override).
+   The span is absolutely positioned inside the input's own box and paints
+   over the input's actual fill; input getComputedStyle.backgroundColor =
+   rgb(68,64,60) = #44403c (dark:bg-gray-700 = stone-700). Font-size
+   14.875px, weight 400 — NOT large text (needs ≥18.66px bold / 24px), so
+   the 4.5:1 threshold applies, not 3:1.
+   Contrast(#a8a29e, #44403c) = 4.07:1 — below 4.5:1.
+   Cross-checked independently: (a) hand blend/luminance math in Python
+   gives the identical 4.073; (b) a cropped screenshot of the input
+   (roth_dark_wrap.png) shows the "$" visibly dimmer than the adjacent
+   "50000" value text — legible but measurably substandard, not a false
+   positive from stacking-context confusion.
+   Provenance: `git diff master -- web/templates/components/whatif/roth-conversion.html`
+   shows this task added `dark:text-gray-400` where no dark: variant
+   existed before (master used `text-gray-600` = #57534e in all themes,
+   which contrasts 1.35:1 against the same dark input bg — effectively
+   invisible). BL4 is a real improvement (1.35 -> 4.07) but stops short of
+   the BL-RUN-SPEC's own acceptance criterion for this exact line: "Roth
+   `$` span: ... ≥ 4.5:1 in dark". This is BL4's own new content, not
+   inherited from master or a foreign in-flight task — squarely in scope.
+   Axe did NOT catch this: axe's color-contrast rule exempts the lone "$"
+   glyph under its `shortTextContent` heuristic (visible in the incomplete
+   list for other single-glyph/short SVG text on the same page) — exactly
+   the kind of miss ACCESSIBILITY.md's manual-check requirement (and this
+   checker's own charter) exists for. A `dark:text-gray-300` (#d6d3d1,
+   confirmed elsewhere on this same page at 10.18:1 against the same
+   #292524-family dark surfaces) or equivalent would clear 4.5:1; the
+   exact replacement token vs. #44403c specifically needs re-measuring by
+   whoever fixes this, not assumed by me.
+
+4. Budget-vs-Actual "Target $N" annotation (internal/handlers/dashboard/handlers.go
+   ~line 1249; A-3/A-2, WCAG 1.4.3) — PASS.
+   /dashboard?start=2026-01-01&end=2026-08-27, real theme toggle. Read
+   Plotly's actual rendered SVG text element (not just the layout object):
+   light fill rgb(68,64,60)=#44403c, dark fill rgb(231,229,228)=#e7e5e4,
+   both font-size 12px, both times confirmed via `layout.font.color`
+   (#44403c light / #e7e5e4 dark, i.e. `layout.font` themed correctly on
+   themechange) AND the live SVG `<text>` fill attribute, which is the
+   ground truth for what's on screen. Card bg light rgb(255,255,255), dark
+   rgb(41,37,36)=#292524. Contrast: light 10.27:1, dark 12.08:1. Both far
+   above 4.5:1.
+   Re-fetch check: changed the start-date input and dispatched a `change`
+   event (HTMX range re-fetch), waited for the chart to redraw — the
+   annotation persisted (new target "$11523"), same fill rgb(231,229,228),
+   same 12px, confirming the theme color survives a real re-render, not
+   just the initial paint.
+
+5. insights.js prior-period marker colours (A-3 non-text 3:1 for data
+   colours; not a body-text requirement) — PASS, and an improvement.
+   Called the real global `insightChartMarkers()` in-page: light
+   '#78716c' (stone-500), dark '#a8a29e' (stone-400) — matches the diff
+   exactly. Contrast vs a representative card bg: light marker vs white
+   card 4.80:1; dark marker vs #292524 card 6.01:1. Both exceed the 3:1
+   floor (and exceed 4.5:1, though not required for a data marker). Prior
+   hex values (#6b7280/#9ca3af) measured 4.83:1/5.97:1 — comparable, so
+   this is a lateral/cosmetic-palette move, not a regression, and not
+   worse than master.
+
+6. axe (wcag2a/2aa/21aa/22aa), /dashboard /insights /whatif, 390 & 1280,
+   both themes, every <details> open: 0 violations on all 12
+   page/viewport/theme combinations. (See point 3 for why this is
+   necessary-but-not-sufficient here — axe's short-text-content exemption
+   means the one real regression found by manual measurement produced no
+   axe violation.) No BL1/BL2/BL3 axe findings surfaced in BL4's own file
+   set; any such findings belong to those tasks' own audits.
+
+7. Build/test/css gates: `go build ./...` clean. `go test
+   ./internal/handlers/dashboard/... ./internal/templates/...` — both ok.
+   `make css-verify` — "tailwind.css is up to date" on first try (no retry
+   needed). `git diff master --stat` for BL4's five files: handlers.go
+   (+7/-4, the Target annotation font block), tailwind.css (+1/-1, rebuilt
+   output), insights.js (+1/-1, the two hex literals), roth-conversion.html
+   (+1/-1, the one span), base.html (+46/-46 lines touched: three
+   text-white/60→/80 desktop group labels + twenty bg-white/20→/15 sites,
+   desktop and mobile). `grep -c bg-white/20 base.html` = 0 remaining;
+   `grep -c bg-white/15` = 20. Matches "every bg-white/20 (20 sites)" from
+   the task description exactly. No figure/behavior changes beyond colour
+   classes and the annotation font block.
+
+OBSERVATIONS (non-blocking):
+- Mobile-menu group-label <p> elements (mobile-nav-group-money/plan/setup)
+  are still `text-white/60`, byte-identical to master (confirmed via `git
+  show master:...`), and the BL-RUN-SPEC's point 1 text literally scopes
+  this task to "base.html desktop nav: the three group-label spans" — the
+  mobile labels were never in scope for BL4 and are PRE-EXISTING, not a
+  BL4 regression. Flagging for the backlog since the same math likely
+  applies (light: 3.29:1 today, same as the desktop labels were before
+  this fix) but this is out of scope per the "later, specific ruling
+  controls" precedent applied in reverse (the spec's own literal scope
+  here, not an expansion).
+- Point 2's non-text overlay-boundary contrast (~1.35–1.9:1 in both
+  themes) is unchanged in character from master and not required to hit
+  3:1 by ACCESSIBILITY.md A-3, which scopes non-text 3:1 to "icons/borders
+  that carry meaning" — the active-tab boundary is redundantly indicated
+  by aria-current, so I read this as compliant, not a nitpick to escalate.
