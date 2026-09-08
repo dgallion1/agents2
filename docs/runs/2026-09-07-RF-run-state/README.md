@@ -3,7 +3,8 @@
 Evidence snapshot of `.swarm/` (gitignored) for the seven-task run described
 in SPEC.md "Run RF" (option 2 of the 2026-09-07 assessment; option 1 was run
 LT, PR #97). Target repo: budget2, branch `feat/retiree-refresh` (commit
-8cfba95 off master 344cb30).
+8cfba95 off master 344cb30), merged as 871c04c and deployed to :8080 on
+2026-09-08 via master 43ce76e (which also carries another session's Roth work).
 
 - `ledger.tsv` — the shared LT+RF ledger: RF1 (Tier 2, accepted at attempt 2
   after a conceded second-lane FAIL), RF2/RF3 (Tier 2, attempt 1), RF4/RF5/

@@ -1487,4 +1487,8 @@ clean.
   only FAIL), PRIMARY CHECKER observations ×2 promoted to RF5–RF7. Every
   catch was against a lead artifact (brief territory, acceptance numbers,
   fixture maths, wording), none against worker capability — the same
-  pattern as run LT and the lean-verification retro.
+  pattern as run LT and the lean-verification retro. Merged 2026-09-08 as
+  871c04c; a concurrent session's unpushed Roth commit (74d966e, already
+  live on :8080) made local master diverge — the ship rule stopped the
+  deploy until that session merged (master 43ce76e); deployed to :8080 the
+  same morning (pid 3512799, health v1.4.0-1105-g43ce76e).
