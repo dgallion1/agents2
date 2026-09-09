@@ -1,0 +1,96 @@
+VERDICT: PASS
+CHECKER: checker-tests
+FAMILY: anthropic
+TASK: TH1
+ATTEMPT: 1
+---
+SUT: /home/darrell/bin/ai/budget2/.claude/worktrees/trends-theme-height (HEAD 258f058, branch feat/trends-theme-height, files UNCOMMITTED).
+All probes/mutations run in .git-stripped copies under /tmp/claude-1000/th1-checker-tests/. No git-mutating command run in the worktree; worktree hashes identical before and after my run.
+
+TREE INTEGRITY (required first step) — PASS
+  $ git hash-object web/static/js/insights.js web/static/js/insights-trends-cap.test.cjs
+    b998949b4f7ca0d0a494915867bd210e0fd28ba1
+    4cdfa5cc4b378876f4402c0870d54f367c3a9903   <- both match the expected blob hashes
+  $ cmp <worktree file> <lead snapshot .swarm/snapshots/TH1.1/...>   -> "SAME: insights.js", "SAME: insights-trends-cap.test.cjs" (byte identical, both files)
+  Re-hashed after all my work: same two hashes; `git status --porcelain` still exactly " M" on the two manifest files (+ untracked .swarm/manifests/TH1.1.files and the pre-existing `data` symlink).
+
+DESIGN ITEMS (spec 1-4), verified on the shipped file
+  1. themedTrendPayload(raw, categories, markers): present at insights.js:411-417, = filterTrendTraces(raw, categories) then `if (i < markers.length) trace.marker = markers[i]` on the FILTERED copy. Exposed on window.insightsTrends.
+     Live-page proof (Playwright on :8261, /insights?start=2026-01-01&end=2026-08-27):
+       keys: ["visibleTrendCategories","filterTrendTraces","themedTrendPayload"], typeOf "function",
+       themedTrendPayload(raw,['C','A'],[{color:'#111'},{color:'#222'}]) -> x ['C','A'], y [3,1], height 360, marker {#111}/{#222},
+       rawUnchanged true, rawHasMarker false, notSameObj true.
+  2. themechange listener: `$ awk '/addEventListener\(.themechange./,/^}\);/' web/static/js/insights.js` -> body is exactly `renderTrendsChart();`.
+     `$ grep -n restyle web/static/js/insights.js` -> only lines 454 and 465, both inside comments. No Plotly.restyle call remains.
+  3. activateInsightsTab: `if (trendsChartRaw) { renderTrendsChart(); } else if (chart && chart.data && window.Plotly) { Plotly.Plots.resize(chart) }` (insights.js:515-521, read via `git diff 258f058`).
+  4. Tests added (read in full via `git diff 258f058 -- web/static/js/insights-trends-cap.test.cjs`): fixtureNoMarker (raw with NO marker key), the exposure test, the 5-category/3-of-5-reordered case (asserts x ['C','A','D'], y [20,0,30] and [2,0,3], layout.height 360, deepEqual marker==markers[0]/markers[1], deepEqual(raw, before), and `!('marker' in raw.data[i])` per trace), and the 12-category case (height 576 + the same no-marker-on-raw loop). The tests assert what their names claim.
+
+CRITERION 1 — node tests green + mutation-kill — PASS
+  $ node --test "web/static/js/**/*.test.cjs"   (in the worktree)
+    -> tests 21, pass 21, fail 0; includes the 4 new themedTrendPayload cases (each printed with a leading check-mark).
+  MUTATION A (required): in the .git-stripped copy, made themedTrendPayload assign markers onto raw's own traces BEFORE filtering
+    (`raw.data.forEach(function (t,i){ if (i<markers.length) t.marker = markers[i]; });`).
+    $ node --test "web/static/js/insights-trends-cap.test.cjs"  -> tests 11, pass 9, fail 2. Both new themedTrendPayload tests fail:
+       12-category: "AssertionError: The expression evaluated to a falsy value: assert.ok(!('marker' in raw.data[i]))"
+       5-category:  "AssertionError: Expected values to be loosely deep-equal" (assert.deepEqual(raw, before))
+    The required "no marker on raw" assertion is confirmed mutation-killing. Copy then restored from the lead snapshot (cmp clean) before further work.
+  MUTATION B (my choice, the brief's suggestion): themechange reverted to Plotly.restyle(marker), activateInsightsTab fix KEPT.
+    -> node tests: 21/21 pass (not caught). Browser check on :8265 (full 52-step matrix): VIOLATIONS: 0 (not caught).
+  MUTATION C (my choice): activateInsightsTab reverted to the bare Plotly.Plots.resize, themechange fix KEPT.
+    -> node tests: 21/21 pass. Browser check on :8267: VIOLATIONS: 0 (not caught).
+  Characterisation (fact, not a FAIL ground): the two production changes are INDEPENDENTLY SUFFICIENT for the acceptance sequence —
+  either alone re-asserts layout.height before the toggle is observed, so only reverting BOTH (the 258f058 baseline) reproduces the
+  300 px collapse (see criterion 3). Neither half is behaviourally observable on its own in the specified sequence; spec items 2 and 3
+  are therefore verified structurally (grep/awk above), not behaviourally, and I state that explicitly.
+
+CRITERION 2 — Go — PASS
+  $ go build ./...            -> "BUILD OK" (no diagnostics)
+  $ go test -count=1 ./internal/handlers/insights/... ./internal/templates/...
+      ok budget2/internal/handlers/insights 1.277s ; ok budget2/internal/templates 1.282s
+  Composite target (beyond the brief, run in the restored .git-stripped copy): $ make check  -> "✓ all checks passed", exit 0
+  (vet + static + vuln + css-verify + `go test -count=1` over every package; storage 82.983s ok, templates 2.744s ok).
+
+CRITERION 3 — rendered behaviour, both ranges, both start themes — PASS
+  Harness /tmp/claude-1000/th1-checker-tests/probe.cjs: playwright from /home/darrell/.npm/_npx/e41f203b7505f1fb/node_modules/playwright,
+  chromium-1243 --no-sandbox, viewport 1300x950, theme switched by clicking the real #theme-toggle, categories read from chart.data[0].y
+  (renderChart's x/y swap for #chart-trends), height asserted on the RENDERED #chart-trends offsetHeight (not layout.height — see below),
+  parity asserted against `#category-trends-table tbody tr:not([hidden])` data-category values in DOM order.
+  Server: scripts/whatif-verify.sh start 8261 (SUT) / 8263 (baseline) / 8265 / 8267 (mutants). Never :8080 or :8081; all four confirmed down at the end.
+  Ranges: /insights?start=2026-01-01&end=2026-08-27 (41 categories) and /insights?start=2026-06-01&end=2026-06-30 (33).
+  $ node probe.cjs 8261 SUT ; python3 report.py sut.json  -> 52 rows (2 ranges x 2 start themes x 13 steps), "VIOLATIONS: 0",
+  no CONSOLE-ERROR rows. Per-row assertions, all satisfied: offsetHeight == max(360, nVisible*38+120); barCounts == [n,n];
+  chart categories deep-equal the visible row data-category list IN ORDER; data[0].marker.color AND _fullData[0].marker.color == the
+  live computed rgb(--accent); data[1] marker == #a8a29e when documentElement.dark else #78716c.
+  The named steps, e.g. JanAug/start light: load 576/12 rgb(79,70,229)+#78716c -> tab-away-and-back 576/12 ->
+  theme-toggle-after-tabswitch 576/12 rgb(165,180,252)+#a8a29e -> show-all 1678/41 -> theme-toggle-while-expanded 1678/41
+  rgb(79,70,229)+#78716c -> collapse-back 576/12 -> plain-theme-toggle 576/12 rgb(165,180,252)+#a8a29e. June expanded height 1374 (33*38+120).
+  Same pattern for JanAug/dark, June/light, June/dark (all 4 blocks in the table, all clean).
+  DEFECT-DETECTION PROOF: .git-stripped copy of 258f058 (`git show 258f058:web/static/js/insights.js` -> hash 47017ec, the diff's pre-image), served on 8263,
+  same harness: "VIOLATIONS: 4" — ('JanAug','light','theme-toggle-after-tabswitch','offsetHeight',300,576),
+  ('JanAug','dark',...,300,576), ('June','light',...,300,576), ('June','dark',...,300,576). Exactly the 300 px collapse, in all four combos, and nothing else.
+  Methodology note that matters: on the baseline the chart element's _fullLayout.height still READ 576 while the element was 300 px tall,
+  and el.layout.height was absent entirely. An assertion on layout/_fullLayout would have passed the defective baseline; the check is
+  anchored on the rendered offsetHeight, which is where the criterion actually lives.
+
+CRITERION 4 — TC parity — PASS
+  Steps tc-load / tc-expand / tc-collapse / tc-sort-current / tc-sort-category-expand / tc-htmx-range-3m in the same 52-row run
+  (fresh load per range/theme, sorts via [data-sort="current"] / [data-sort="category"], cap via [data-trends-toggle], HTMX range swap
+  via [data-preset="3m"]). Every row: barCounts == [nVisible,nVisible] and chart categories deep-equal the visible rows in order
+  (12/12 at load, collapse, sort-current and after the 3M swap; 41/41 and 33/33 when expanded). Dark and light both covered. VIOLATIONS: 0.
+
+CRITERION 5 — a11y/axe — SKIPPED per the brief (a11y lane).
+
+CRITERION 6 — scope + css — PASS
+  $ /usr/bin/git diff 258f058 --stat --  ->  web/static/js/insights-trends-cap.test.cjs | 66 ++++, web/static/js/insights.js | 62 +++--- ;
+    "2 files changed, 111 insertions(+), 17 deletions(-)". `--name-only` lists exactly those two paths — identical to .swarm/manifests/TH1.1.files.
+  $ make css-verify (in the .git-stripped copy, because the recipe writes tmp/tailwind.check.css) -> "tailwind.css is up to date".
+  No path in .swarm/critical.globs is touched (all six entries are under internal/services/).
+
+OBSERVATIONS (not FAIL grounds)
+  - Redundancy: mutations B and C above each survive the whole browser matrix and the node suite. Both production changes are wanted by
+    the spec and both are present; but the acceptance sequence cannot distinguish "themechange re-renders" from "tab activation re-renders".
+    A future regression that silently reverts ONE of them would not be caught by anything in this repo today.
+  - The worktree carries an untracked `data` -> /home/darrell/bin/ai/budget2/data symlink (the standard worktree setup artifact) and the
+    untracked manifest file; neither is a source change. whatif-verify.sh's `cp -rL` isolated the served data as designed.
+  - .swarm/manifests/TH1.1.files contains the worker's own notes as well as the file list; I verified every claim in it independently
+    rather than relying on it.

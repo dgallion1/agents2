@@ -1,0 +1,160 @@
+VERDICT: PASS
+CHECKER: checker-a11y
+FAMILY: anthropic
+TASK: TH1
+ATTEMPT: 1
+---
+
+SUBJECT: /home/darrell/bin/ai/budget2/.claude/worktrees/trends-theme-height
+(branch feat/trends-theme-height, HEAD 258f058). Changed files per
+.swarm/manifests/TH1.1.files: web/static/js/insights.js (behavior),
+web/static/js/insights-trends-cap.test.cjs (node tests, not UI).
+
+## Tree-integrity (required first step)
+`cmp` of both changed files against the lead's snapshots at
+.swarm/snapshots/TH1.1/web/static/js/ — both exit 0 (byte-identical, no
+drift between the snapshot the lead took and the tree I audited):
+  cmp .../trends-theme-height/web/static/js/insights.js  .../snapshots/TH1.1/.../insights.js   -> exit 0
+  cmp .../trends-theme-height/web/static/js/insights-trends-cap.test.cjs .../snapshots/TH1.1/.../insights-trends-cap.test.cjs -> exit 0
+
+## Diff reviewed (git diff 258f058 -- web/static/js/insights.js)
+Confirmed the change is confined to: (1) a new themedTrendPayload() helper
+that applies current-theme markers to a filtered copy without mutating
+trendsChartRaw; (2) the `themechange` listener now calls renderTrendsChart()
+(full re-render) instead of Plotly.restyle(marker); (3) Insights tab
+activation (activateInsightsTab) now calls renderTrendsChart() when
+trendsChartRaw is populated, falling back to Plotly.Plots.resize() only
+when no data has been fetched yet. No template/markup changes; no new DOM
+nodes, ARIA, or CSS.
+
+## Server
+Served via `scripts/whatif-verify.sh start 8262` (isolated data copy),
+stopped via `scripts/whatif-verify.sh stop 8262` at the end. Never touched
+:8080/:8081, never ran the raw binary.
+
+## Playwright/axe environment
+Playwright required from /home/darrell/.npm/_npx/e41f203b7505f1fb/node_modules/playwright;
+chromium executablePath /home/darrell/.cache/ms-playwright/chromium-1243/chrome-linux64/chrome
+with --no-sandbox. Viewports 1300x900 and 390x844. Dark mode reached with a
+real elementHandle.click() on #theme-toggle (desktop) / #theme-toggle-mobile
+(narrow viewport, since #theme-toggle is hidden below the xl breakpoint) —
+never a bare classList toggle. axe-core injected via page.addScriptTag from
+the path supplied in the brief.
+
+## AC "3 (colour part)" — full sequence, both viewports
+Script: /tmp/claude-1000/th1-checker-a11y/seq-test.js
+Sequence per viewport: load -> click [data-ins-tab="income"] -> click
+[data-ins-tab="trends"] -> real click #theme-toggle -> click
+[data-trends-toggle] ("Show all") -> real click #theme-toggle again.
+Read chart.data[0]/[1].marker.color, chart.layout.height,
+#chart-trends.getBoundingClientRect().height, and visible tbody row count,
+after every step.
+
+Results (1300 and 390 identical):
+  initial-load-light:            trace0 rgb(79,70,229)   trace1 #78716c   height 576  rows 12  bars 12
+  after-tab-away-and-back-light: trace0 rgb(79,70,229)   trace1 #78716c   height 576  rows 12  bars 12
+  after-theme-toggle-dark:       trace0 rgb(165,180,252) trace1 #a8a29e   height 576  rows 12  bars 12
+  after-show-all-toggle-dark:    trace0 rgb(165,180,252) trace1 #a8a29e   height 1678 rows 41  bars 41
+  after-second-theme-toggle-light: trace0 rgb(79,70,229) trace1 #78716c   height 1678 rows 41  bars 41
+
+Every trace colour matches the brief's expected values exactly in every
+step, including the load->tab-away->tab-back->theme-toggle sequence the
+brief called out as the regression path (the prior Plotly.restyle-only
+implementation was fixed by TC1/attempt2 for colour but the TH1 defect was
+specifically about height surviving a tab-switch-then-theme-toggle, tested
+below). Category labels confirmed present in chart.data[0].y (12 and 41
+entries, human-readable category names, e.g. "Lucid payment",
+"Health insurance", ... "Ignore"). chart.data[0].x holds the numeric
+amounts (Plotly swaps x/y for horizontal bars per charts.js:182-189, as the
+brief noted). Height math verified: 12*38+120=576, 41*38+120=1678, matching
+filterTrendTraces's Math.max(360, categories.length*38+120). No console
+errors in either viewport (consoleErrors: [] both).
+
+## AC "3 (contrast/clipping part)"
+Script: /tmp/claude-1000/th1-checker-a11y/visual-test.js + contrast calc.
+getBoundingClientRect of #chart-trends vs #category-trends-table at both
+viewports, both themes: chart bottom always < table top (390: 5175.06 <
+5187.81; 1300: 3836.44 < 3849.19) — no overlap/clipping in either theme.
+plot_bgcolor/paper_bgcolor are both "transparent", so the effective
+background is the card (white light / rgb(41,37,36) dark).
+
+Non-text contrast (WCAG 1.4.11 / ACCESSIBILITY.md point 7, ≥3:1), computed
+with the standard relative-luminance formula against the card background:
+  light trace0 rgb(79,70,229)  vs white card (255,255,255):        6.29:1
+  light trace1 #78716c         vs white card:                       4.80:1
+  dark  trace0 rgb(165,180,252) vs dark card (41,37,36):            7.61:1
+  dark  trace1 #a8a29e          vs dark card:                       6.01:1
+All four comfortably clear 3:1 in both themes — point 7 and point 12 (dark
+parity) both hold.
+
+## AC "height must not collapse on tab-switch-then-theme-toggle" (the TH1 defect)
+This is the specific regression the code comment documents: activating
+another Insights tab used to call Plotly.Plots.resize() on #chart-trends,
+which (with no explicit layout.height pinned) reset height to Plotly's
+default, collapsing the container to the page's 300px CSS min-height —
+invisible until the NEXT themechange (which only restyled marker, never
+height). The seq-test above exercises exactly that path (tab away, tab
+back, THEN toggle theme) and shows layout.height and the rendered
+getBoundingClientRect height both staying at 576 (12 rows) / 1678 (41 rows)
+through every step — never dropping to 300. Confirmed fixed.
+
+## AC "text alternative stays in step with chart" (point 11)
+In every one of the 5 sequence steps above, the visible tbody row count
+equals chart.data[0].y.length exactly (12=12, 41=41) — table and chart
+never diverge in any state, including immediately after a theme toggle.
+
+## AC 5 — axe-core, both ranges x both viewports x both themes x both
+Show-all states (16 combinations)
+Script: /tmp/claude-1000/th1-checker-a11y/axe-test.js, ranges
+?start=2026-01-01&end=2026-08-27 and ?start=2026-06-01&end=2026-06-30,
+trends tab active, wcag2a+wcag2aa+wcag22aa rules.
+Result: 0 violations in all 16 combinations. No console errors.
+
+## Keyboard (point 9)
+Script: /tmp/claude-1000/th1-checker-a11y/keyboard-test2.js and
+tab-walk.js. Arrow-key roving tabindex on the Insights tablist still works
+after the change (ArrowRight trends->income, ArrowLeft back to trends,
+Enter activates — panel.hidden false, aria-selected "true"). Real Tab-key
+walk (page.keyboard.press('Tab'), not .focus()) from page top found both
+[data-ins-tab="trends"] and [data-trends-toggle] reachable and keyboard-
+operable in BOTH themes, with a visible :focus-visible outline in both:
+  light: outline solid 2px rgb(79,70,229)   (+ white 2px box-shadow ring)
+  dark:  outline solid 2px rgb(165,180,252) (+ white 2px box-shadow ring)
+(Earlier attempt using programmatic .focus()+.click() showed no outline in
+dark — traced this to Chromium's :focus-visible heuristic being cleared by
+the intervening trusted mouse click on the theme toggle; a real Tab
+keypress after the click restores focus-visible as expected. This is a
+test-harness artifact, not a page defect — recorded here per the "trace
+what you did" instruction, not as a finding.) Focus ring is a pre-existing
+site-wide token (BK-run precedent), unaffected by and confirmed intact
+after this diff.
+
+## Reduced motion / no new motion
+charts.js renderChart() (unchanged by this diff) clears the container and
+calls Plotly.newPlot with no layout.transition — no animation is
+introduced by this change; TH1 only altered WHEN renderTrendsChart() is
+invoked (themechange, tab activation), not how it draws. No
+prefers-reduced-motion concern; nothing in this diff triggers CSS
+transitions either.
+
+## Structure/landmarks/forms/alt-text (points 1,2,4,6,8,10,13,14,16,17)
+No template or markup changes in this diff (JS-only). axe's 0-violation
+result across all 16 states covers headings/landmarks/labels/contrast
+mechanically; no manual finding applies since nothing in scope touches
+these surfaces.
+
+## Observations (non-blocking, out of scope for TH1)
+- The white ring-offset box-shadow (`rgb(255,255,255) 0 0 0 2px`) appears
+  identically in both light and dark focus states — a pre-existing sitewide
+  token from the BK run, not introduced or altered by TH1. Noted only
+  because it showed up while probing focus styles; not a defect and not
+  this task's surface.
+- container.innerHTML = '' inside renderChart() (charts.js, unchanged)
+  causes a full destroy/recreate on every themechange and tab
+  re-activation; no visible flash/motion issue was observed in the trace,
+  but this is pre-existing shared code, out of TH1's scope.
+
+## Server lifecycle
+Started: `scripts/whatif-verify.sh start 8262` -> READY http://localhost:8262
+Stopped: `scripts/whatif-verify.sh stop 8262` -> "stopped and cleaned :8262"
+No use of :8080/:8081; no direct binary invocation.

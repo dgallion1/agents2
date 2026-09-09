@@ -2379,3 +2379,19 @@ is a rendered-string / split-classification claim across two surfaces.
   uncommitted edits (Makefile, vendored htmx), so the release binary was
   built from a clean detached worktree of origin/master and installed by
   rename; the served htmx was confirmed identical to master's.
+
+## Run TH — Trends chart keeps height and theme across theme toggles (2026-09-08)
+
+Full constitution: `.swarm/TH-RUN-SPEC.md` (gitignored run file). Closes
+TC ruling c (theme toggle after a tab switch collapsed `#chart-trends` to
+the 300 px min-height) and the V3 candidate from TC ruling b.
+
+| Task | Tier | Checks | Scope |
+|---|---|---|---|
+| TH1 | 2 | tests, a11y | insights.js: pure `themedTrendPayload(raw, categories, markers)`; `themechange` and tab activation re-render through `renderTrendsChart()`; node guard that markers never land on the raw payload |
+
+### Run TH rulings
+
+- **TH-2026-09-08a** (observation, checker-tests): each of the two re-render hooks is independently sufficient for the specified sequence; items 2–3 verified structurally. Design intent (one path for every repaint), not a defect.
+- **TH-2026-09-08b** (method, checker-tests): on the defective baseline Plotly's `_fullLayout.height` still read 576 while the element rendered at 300 px — anchor height checks on `offsetHeight`; the harness was proven against 258f058 (4 violations) before crediting the fix.
+- **Run TH closed 2026-09-08**: `gate.sh done` exit 0; `gate.sh stats` verbatim `first-attempt clean: 16/21 (no-evidence rows: 0)`. Both lanes PASS at attempt 1, no catches. Shipped per the user's instruction: PR #103 merged as master 5fae968 (on top of another session's pushed guardrail commits) and deployed to :8080 (pid 690595, health v1.4.0-1119-g5fae968), built from a detached worktree of origin/master because the main checkout still carried that session's uncommitted edits; the fix re-verified on the live server (576 → tab switch 576 → theme toggle 576 → expand 1678 → toggle 1678).
