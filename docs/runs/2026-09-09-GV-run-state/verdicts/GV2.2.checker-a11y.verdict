@@ -1,0 +1,199 @@
+VERDICT: PASS
+CHECKER: checker-a11y
+FAMILY: anthropic
+TASK: GV2
+ATTEMPT: 2
+---
+SCOPE: What-If Overview "Portfolio Longevity" card — two-panel Plotly chart
+(Cut trigger / Raise trigger dashed steps on the balance panel; Planned /
+After guardrails lines + cut/raise triangle markers on the "Living budget"
+panel) and the server-rendered "Guardrails:" summary line. GV3/GV4 changes
+(guardrail_optimizer.html PlanFloor notice, GuardrailAnchors "Next yearly
+check" lines) are OBSERVATION-only per task scope.
+
+METHOD: cp -a copy of /tmp/budget2-gv-final-snap → /tmp/budget2-gv-checker-copy
+(kept .git). Server started with scripts/whatif-verify.sh start 8094 (isolated
+data copy). Guardrails enabled via the real POST /whatif/guardrails endpoint
+(same form the worker's own harness uses). Audited the REAL running app at
+http://localhost:8094/whatif with Playwright (chromium-1243) driving the
+app's own theme toggle (#theme-toggle) and real controls — never hand-built
+HTML/CSS. All my probes are my own (fresh eyes), written independently of
+the worker's cmd/server/testdata/guardrail_tone_contrast_browser.cjs, though
+I also ran that probe once as a first data point (PASS) before writing mine.
+Server stopped cleanly after (scripts/whatif-verify.sh stop 8094). No git
+checkout/stash/reset/commit; no writes under the copy's data/ dir (isolated
+by the verify script itself).
+
+git diff master --stat confirms the touched surface: handlers.go (+364),
+charts.js (+80: getTonePalette/applyTonePalette + themechange restyle),
+styles.css (+12: #chart-projection.chart-container-tall), guardrails.html,
+guardrail_optimizer.html, projection-chart.html, whatif.html, models.go,
+engine/month.go, engine/stepper.go.
+
+=== A-3 (the point attempt 1 FAILED on) — full contrast table, both themes,
+every re-render path ===
+
+Programmatic probe (own script, WCAG relative-luminance formula) reads the
+ACTUAL rendered SVG legend-swatch stroke/fill color of each trace via
+getComputedStyle and the ACTUAL computed background of
+[data-whatif-projection-card] via getComputedStyle, in a real Chromium page:
+
+stage                      trace              color              bg                  ratio
+light-initial              Cut trigger        rgb(220,38,38)     rgb(255,255,255)    4.83
+light-initial              Raise trigger      rgb(21,128,61)     rgb(255,255,255)    5.02
+light-initial              Planned            rgb(87,83,78)      rgb(255,255,255)    7.63
+light-initial              After guardrails   rgb(29,78,216)     rgb(255,255,255)    6.70
+light-initial              marker (cut/raise) rgb(21,128,61)     rgb(255,255,255)    5.02
+dark-after-toggle          Cut trigger        rgb(248,113,113)   rgb(41,37,36)       5.48
+dark-after-toggle          Raise trigger      rgb(74,222,128)    rgb(41,37,36)       8.71
+dark-after-toggle          Planned            rgb(214,211,209)   rgb(41,37,36)       10.18
+dark-after-toggle          After guardrails   rgb(147,197,253)   rgb(41,37,36)       8.41
+dark-after-toggle          marker (cut/raise) rgb(74,222,128)    rgb(41,37,36)       8.71
+dark-after-tabswitch       (all 5 traces)     — identical to dark-after-toggle —     5.48–10.18
+dark-after-real-toggle     (all 5 traces)     — identical —                          5.48–10.18
+dark-after-compare         (4 line traces)    — identical —                          5.48–10.18
+light-after-toggle-back    (all 5 traces)     — identical to light-initial —         4.83–7.63
+fresh-prefers-dark (no manual toggle, colorScheme:'dark' context, fresh load)
+                            Cut trigger        rgb(248,113,113)   rgb(41,37,36)       5.48
+                            Raise trigger      rgb(74,222,128)    rgb(41,37,36)       8.71
+                            Planned            rgb(214,211,209)   rgb(41,37,36)       10.18
+                            After guardrails   rgb(147,197,253)   rgb(41,37,36)       8.41
+                            marker             rgb(74,222,128)    rgb(41,37,36)       8.71
+
+Every value ≥ 3:1 (the "icon/border that carries meaning" threshold; the
+worst case is 4.83:1, well clear). This directly overturns attempt 1's
+failure: the "Raise trigger" dashed line is now rgb(21,128,61)/rgb(74,222,128)
+(5.02/8.71:1), not #22c55e (2.28:1); "Planned" (#57534e/#d6d3d1, 7.63/10.18:1)
+and "After guardrails" (#1d4ed8/#93c5fd, 6.70/8.41:1) are both now well above
+3:1 in both themes, closing the lead's flagged points too.
+
+Tones verified to PERSIST (not just re-appear) through every re-render path
+required by the brief: theme toggle (light→dark→light), Risk-tab switch away
+and back, Nominal/Today's-Dollars toggle, and pressing "+ Compare without
+guardrails" (which adds a 6th, pre-existing, unrelated "Without guardrails"
+overlay trace — see OBSERVATIONS). A fresh page load under
+prefers-color-scheme: dark (no button click at all) also renders the correct
+dark-theme tones from the first paint — confirms getTonePalette()/
+applyTonePalette() run before the initial Plotly.newPlot, not only on the
+themechange listener.
+
+Screenshots (visual corroboration, both clearly readable — dash color +
+style + legend text distinguish every trace in both themes):
+  /tmp/budget2-gv-checker-copy/.checker-shots/card-light.png
+  /tmp/budget2-gv-checker-copy/.checker-shots/card-dark.png
+  /tmp/budget2-gv-checker-copy/.checker-shots/1-light-initial.png (full page)
+  /tmp/budget2-gv-checker-copy/.checker-shots/2-dark-toggle.png (full page)
+  /tmp/budget2-gv-checker-copy/.checker-shots/3-dark-real.png
+  /tmp/budget2-gv-checker-copy/.checker-shots/4-dark-compare.png
+  /tmp/budget2-gv-checker-copy/.checker-shots/5-light-disabled.png (single-panel
+    fallback, confirms A-10/A-11 below)
+  /tmp/budget2-gv-checker-copy/.checker-shots/6-fresh-prefers-dark.png
+  /tmp/budget2-gv-checker-copy/.checker-shots/reflow-1024.png
+  /tmp/budget2-gv-checker-copy/.checker-shots/reflow-375.png
+
+The GuardrailChartSummary paragraph itself
+(#projection-guardrail-summary, text-gray-600/dark:text-gray-300, body text
+so held to 4.5:1) also verified: 7.63:1 light, 10.18:1 dark — clear pass.
+
+=== A-1/A-2 — axe zero violations, light + dark, real engine, real render ===
+
+Injected the real axe-core 4.13.0 engine (from the globally-installed
+@axe-core/cli's bundled axe.min.js) into the live server-rendered
+/whatif page via page.addScriptTag + axe.run(document, {tags: wcag2a,
+wcag2aa, wcag22aa}) — light mode (default) and dark mode (via the real
+#theme-toggle click, settled 300ms). Both: zero violations.
+  light: {"violations": []}
+  dark:  {"violations": []}
+(cmd log: /tmp/gv2-axe-out.json)
+
+=== A-10/A-11 — chart height / no flashing ===
+
+#chart-projection with guardrails enabled: 540px in light-initial,
+dark-after-toggle, dark-after-tabswitch (Risk→Overview) — stable, no
+collapse. Disabling guardrails via the real card checkbox (getByLabel
+"Enable spending guardrails", auto-submits via the pre-existing
+onchange=this.form.requestSubmit() — see OBSERVATIONS, byte-identical to
+master) re-renders results and the chart returns to: no
+`chart-container-tall` class, height 300 (the pre-GV2 single-panel size),
+"Cut trigger" trace gone, #projection-guardrail-summary element gone.
+Screenshot 5-light-disabled.png confirms single-panel fallback visually.
+No flashing observed (discrete htmx swap + full class replace, not an
+animated resize; the sitewide prefers-reduced-motion block in styles.css
+already disables .transition-* utilities — none of GV2's new markup uses
+a transition class on the resizing container).
+
+=== A-8/A-9 — never color-only ===
+
+Cut vs raise conveyed by: (1) legend TEXT ("Cut trigger"/"Raise trigger"/
+"Guardrail cuts / raises"), (2) dash STYLE (dash vs dot vs solid — verified
+via chart .data[].line.dash: Cut/Raise trigger = "dash", Planned = "dot",
+After guardrails = unset/solid), (3) marker SHAPE (triangle-down for cuts,
+triangle-up for raises), and (4) the server-rendered hover text and the
+"Guardrails:" summary paragraph spelling out "N cut(s), N raise(s)" in
+plain text. Color is reinforcing, never the sole carrier. This machinery is
+unchanged from before GV2 except the hex values (git diff confirms only
+color literals + the new meta.tone/meta.tones keys changed on these traces).
+
+=== A-14 — no inline handlers introduced by this diff ===
+
+`git diff master` on every GV2-touched template/JS file, filtered to added
+lines, contains zero on(click|change|load|mouseover|keydown|submit)= hits
+(128 added lines checked programmatically). The one inline
+`onchange="this.form.requestSubmit()"` on the guardrails-enabled checkbox is
+BYTE-IDENTICAL to master (git show master:...guardrails.html confirms) —
+PRE-EXISTING, out of this task's scope, reported as an OBSERVATION only.
+
+=== A-15 / reflow ===
+
+Target sizes (real boundingBox, viewport 1400px so the desktop toggle row is
+visible): Nominal 76×30px, Today's Dollars 115×30px, "+Compare without
+guardrails" 206×32px — all ≥24×24 with visible gaps between them.
+At 1024px and 375px viewports: no horizontal scroll overflow
+(document.scrollWidth <= clientWidth+2px), #chart-projection stays 540px
+tall at both, single-column reflow confirmed in reflow-1024.png /
+reflow-375.png.
+
+=== Keyboard / focus (A-4/A-5) ===
+
+Tab order through the card header controls: Nominal → Today's Dollars →
+"+Compare without guardrails", each reachable, each shows a 2px solid
+visible outline (rgb(79,70,229), pre-existing focus-ring token, unchanged
+by this diff).
+
+=== OBSERVATIONS (non-blocking, out of GV2's scope per task instructions) ===
+
+1. guardrails.html's checkbox `onchange="this.form.requestSubmit()"` inline
+   handler (A-14) is pre-existing (byte-identical to master) — not
+   introduced or replicated by GV2; flagging for the backlog since A-14
+   forbids inline handlers generally, but this attempt neither added nor
+   touched it.
+2. The "Without guardrails" compare overlay trace (charts.js
+   toggleGuardrailCompareOverlay, `line: {color: '#a8a29e', ...}` — stone-400,
+   labeled "RF1" in a code comment) is fixed and NOT theme-aware — it has no
+   meta.tone and is untouched by this diff (git diff master shows zero
+   changes to that function). At dark bg rgb(41,37,36), #a8a29e (168,162,158)
+   measures ~5.9:1 (fine); at light bg #a8a29e vs white measures ~2.5:1 —
+   below 3:1. This trace is PRE-EXISTING (RF1 run, unrelated to GV2) and
+   only appears after an explicit user click, so it is an OBSERVATION, not a
+   GV2 FAIL, but is a real pre-existing light-mode contrast defect worth a
+   backlog item.
+3. GV4's guardrail_optimizer.html PlanFloor notice (`bg-warning-soft
+   text-warning`) and guardrails.html's GuardrailAnchors "Next yearly check"
+   lines (`text-negative`/`text-positive`) are new content on this page but
+   outside the GV2 "Portfolio Longevity card + summary line" scope per the
+   task brief — not audited in depth here; flagging only that they exist so
+   whichever checker owns GV3/GV4 knows to verify their contrast in both
+   themes.
+4. Both my probe and the worker's own
+   cmd/server/testdata/guardrail_tone_contrast_browser.cjs / gv2_chart_test.go
+   promote this manual-walk-shaped check into a permanent regression test —
+   good practice per SPEC.md's "promote a throwaway probe" guidance; I did
+   not re-review that Go test's numeric-contrast assertions in depth since
+   that is checker-tests' lane, not mine.
+
+CONCLUSION: A-3 (attempt 1's failure) is fixed and verified across every
+theme × re-render-path combination the brief called for, including a path
+attempt 1 was never tested against (fresh prefers-color-scheme: dark load).
+A-1/A-2 (axe) clean in both themes on the real render. A-8/A-9/A-10/A-11/
+A-14/A-15 all hold for the in-scope surface. No GV2-introduced or
+GV2-replicated violation found.

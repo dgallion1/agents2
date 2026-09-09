@@ -1,0 +1,120 @@
+VERDICT: PASS
+CHECKER: checker-a11y
+FAMILY: anthropic
+TASK: GV3
+ATTEMPT: 2
+---
+Method: own `cp -a` copies (kept .git), never wrote into the shared source
+snapshots. /tmp/gv3-2-work-snap = copy of /tmp/budget2-gv-final-snap
+(attempt 2 tree). /tmp/gv3-2-attempt1-snap = copy of /tmp/budget2-gv3-snap
+(read-only attempt-1 reference, used only for file diffing — no server
+started against it). Server for attempt 2 started isolated via
+`scripts/whatif-verify.sh start 8087` (own data/backups copy under
+/tmp/budget2-whatif-verify-8087, LIVE data never written), stopped cleanly
+at the end (`stop 8087`). axe: @axe-core/cli 4.13.0 (npx) plus a Playwright
+driver (module cached in my scratchpad) using the SAME axe-core 4.13.0
+bundle from the CLI's own node_modules, driving headless Chromium — real
+server-rendered HTML only, no hand-built markup.
+
+(1) Rendered optimizer markup unchanged vs attempt 1 — CONFIRMED by direct
+file diff, not just claim:
+  `diff -u attempt1-snap/.../guardrail_optimizer.html work-snap/.../guardrail_optimizer.html`
+  shows exactly ONE hunk: a `{{/* ... */}}` Go-template comment block
+  reworded (from "Deferred wiring: ... See NOTES in the GV3 task record..."
+  to "Renders only once page data carries GuardrailPlanFloor..."). Template
+  comments are stripped by html/template at parse time and never reach the
+  rendered byte stream — this is a no-op on output by construction, not
+  just by inspection.
+  Also diffed the handler/model files that feed this template between the
+  two snapshots: `internal/handlers/whatif/handlers_guardrail_optimizer.go`
+  — 0 diff (byte-identical). `internal/models/whatif.go` — 0 diff.
+  `internal/handlers/whatif/handlers.go` differs, but every hunk is
+  GV4's new `buildGuardrailAnchors`/`GuardrailAnchors` (settings-card
+  anchors, unrelated struct/function) and GV2's chart-trace color/meta.tone
+  changes (`#ef4444`->`#dc2626`, `#22c55e`->`#15803d`, etc., plus a `meta`
+  field) inside the projection-chart JSON builder — none of it touches the
+  guardrail-optimizer handler, its page-data keys, or its templates.
+  `diff -rq` across internal/handlers/whatif and internal/models between
+  the two snapshots additionally shows only test files differ or are new
+  (guardrail_plan_floor_test.go strengthened per-row/per-cell assertions;
+  gv2_chart_test.go and gv4_guardrail_anchors_test.go are the other lanes'
+  own test files, not GV3's; handlers_test.go picked up GV2's new marker
+  colors in its own assertion, a one-line adaptation, not new production
+  logic). Net: GV3 attempt 2 changed test files and one comment only, as
+  claimed — verified by content diff, not trusted from the task
+  description.
+
+(2) axe re-run on /whatif (this snapshot's full page — GV2's reworked
+  chart and GV4's card changes are present and were swept along, tags
+  wcag2a/wcag2aa/wcag21a/wcag21aa/wcag22aa):
+  - `npx @axe-core/cli` (light, default OS scheme): 0 violations.
+    a11y-work-out/axe-light.json
+  - Playwright+axe, `colorScheme:'light'`: 0 violations, 1 incomplete
+    (color-contrast, 12 nodes: site-nav links/logo from base.html, and
+    healthcare-person.html's ACA/Medicare split-bar + "Primary" badge).
+    a11y-work-out/axe-pw-light.json / .log
+  - Playwright+axe, `colorScheme:'dark'`: 0 violations, 1 incomplete
+    (same rule, same 12-node set, dark-theme classes).
+    a11y-work-out/axe-pw-dark.json / .log
+  Attribution of the one incomplete finding: `grep -rn "bg-positive-soft
+  rounded-l"` locates it in web/templates/components/whatif/
+  healthcare-person.html — NOT in this task's changed-file list (only
+  guardrail_optimizer.html, guardrails.html [GV4], projection-chart.html
+  [GV2], and whatif.html [+1 line] changed anywhere in this tree per
+  `git diff master --stat`). The nav portion is base.html, also untouched.
+  Both are OBSERVATIONS (pre-existing / other-lane), matching attempt 1's
+  identical finding — GV3 introduces zero new axe findings.
+  H1 count on the live page: 1 (`grep -o '<h1[^>]*>'`), landmark structure
+  unchanged (GV3's diff is optimizer-partial text only).
+
+(3) Floor-field aria-describedby chain + status-region announcement,
+  live run against the shipped plan-floor fixture (No-Go phase, floor
+  $5,590.00/mo, year 18 — present in data as attempt 1 found):
+  - `aria-describedby="guardrail-optimizer-floor-help
+    guardrail-optimizer-status guardrail-optimizer-floor-plan-note"`; all
+    three ids resolved to real, non-empty text (the status region is
+    legitimately empty pre-run) via `document.getElementById` per id.
+    a11y-work-out/optimizer_flow.log ("FLOOR_DESCRIBEDBY").
+  - Field is keyboard-focusable: `.focus()` + `document.activeElement.id
+    === 'guardrail-optimizer-floor'` — true.
+  - `#guardrail-optimizer-status` has `role="status"` `aria-live="polite"`.
+  - Ran the REAL optimizer (floor 7500 default input left at its shipped
+    value, target 95%, "Run optimizer" clicked) end to end — 98.9s
+    elapsed (within the 150s allowance) — and confirmed:
+      STATUS_TEXT === OUTCOME_TEXT + ' ' + NOTICE_TEXT exactly
+      ("No options met your minimum-spending target Your plan itself
+      schedules living spending down to $5,590.00/mo from year 18
+      (No-Go)...") — the single-assignment join contract from GV3's
+      script (byte-identical script since attempt 1, per the diff above)
+      holds under a live run, not just by source inspection.
+      ACTIVE_IS_OUTCOME: true — focus moved to the outcome heading.
+      CONSOLE_ERRORS: [] — no page/console errors during the flow.
+    a11y-work-out/optimizer_flow.log.
+  - Dark-theme spot check of the plan-floor-note element:
+    color rgb(214,211,209) (dark:text-gray-300) on a transparent
+    background over gray-900 — matches attempt 1's measured 11.74:1 pair;
+    template/CSS for this element is unchanged so the ratio is unchanged.
+    a11y-work-out/dark-floor-note.png.
+
+(4) A-14 no inline handlers: `grep -noE ' on[a-zA-Z]+='
+  guardrail_optimizer.html` on the attempt-2 file — zero matches (grep
+  exit 1). No new script tags or external origins introduced; behavior is
+  still the single inline `<script>` block that shipped in attempt 1
+  (byte-identical per the diff in (1)).
+
+OBSERVATIONS (non-blocking, not GV3's scope):
+  - The site-nav and healthcare-person.html color-contrast "incomplete"
+    axe findings are pre-existing/other-surface, unchanged from attempt 1,
+    reported here only for completeness of the full-page /whatif audit
+    the task asked for.
+  - GV2's chart-trace color rework (#ef4444/#22c55e -> #dc2626/#15803d)
+    and GV4's new settings-card anchor lines are present in this tree and
+    were swept into the axe run above (0 violations either way) but are
+    each their own lane's a11y responsibility, not re-audited in depth
+    here.
+
+No FAILURES found within GV3's scope. Attempt 2's claim — that only Go
+tests and one template comment changed, with the rendered optimizer
+markup identical to attempt 1 — is confirmed by direct diff, and every
+GV3-owned a11y surface (A-1 through A-15 as applicable) re-verified clean
+against a real server render in both themes. VERDICT: PASS.

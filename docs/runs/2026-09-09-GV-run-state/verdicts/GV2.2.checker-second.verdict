@@ -1,0 +1,178 @@
+VERDICT: FAIL
+CHECKER: checker-second
+FAMILY: adversarial
+TASK: GV2
+ATTEMPT: 2
+---
+Scope: GV2's own manifest (charts.js, projection-chart.html, handlers.go's
+buildProjectionChartData, gv2_chart_test.go, the new browser probe) checks
+out CORRECT under real end-to-end verification. The FAIL is on the explicit
+attack surface named in the dispatch brief: "the optimizer base-case preview
+... reuses buildProjectionChartData ... a broken preview IS in scope (SPEC
+GV2 criterion 5)."
+
+=== Surfaces that PASS (verified, not just read) ===
+
+1. Theme-change path (charts.js `themechange` listener): calls
+   `getTonePalette()` and, for every trace carrying `meta.tone`/`meta.tones`,
+   issues `Plotly.restyle` — confirmed by reading web/static/js/charts.js
+   lines 668-719 (diff vs 5fae968) and by an ACTUAL browser run.
+
+2. Ran the shipped `cmd/server/gv2_tone_contrast_browser_test.go` for real
+   (playwright + chromium were available at
+   ~/.npm/_npx/9833c18b2d85bc59/node_modules/playwright and
+   ~/.cache/ms-playwright/chromium-1243): it launches a real Chromium
+   against an isolated server, enables guardrails, reads ACTUAL rendered SVG
+   legend colors and computed card background in light, toggles to dark via
+   the real #theme-toggle control, re-reads, and checks #chart-projection
+   height (>=540px) after the toggle AND after a Risk->Overview tab switch.
+   Result: `--- PASS: TestGuardrailChartToneContrastBrowser (3.69s)` /
+   `ok budget2/cmd/server 3.702s`. This closes the "is dark theme covered by
+   more than eyeballing" question the brief raised — it is, and it passes.
+
+3. Mutation-killed the render-before-newPlot call site
+   (`applyTonePalette(data.data, getTonePalette())` in `renderChart`) with a
+   throwaway probe that presets `localStorage.theme='dark'` via
+   `context.addInitScript` BEFORE the first page load (no toggle) — the
+   scenario the shipped test does NOT cover (it only tests light-then-
+   toggle-to-dark, never "loads already dark", even though
+   web/templates/layouts/base.html sets the `dark` class pre-paint from
+   localStorage). Unmutated: initial "Cut trigger" line.color = #f87171
+   (the DARK palette value) at load, contrast 5.484:1. Mutated (call
+   commented out): line.color = #dc2626 (the LIGHT default, baked
+   server-side), contrast 3.141:1 — different color, proving the call is
+   live code correctly exercised on cold dark-mode loads, not dead code.
+   (Note: contrast alone didn't distinguish the two cases here — 3.141 still
+   technically clears 3:1 by coincidence on this hue; the color VALUE is
+   the discriminator. Flag as a shipped-test gap, not a FAIL basis: the
+   Go-side gv2_chart_test.go covers light values numerically and the
+   browser probe covers toggle-after-load; "load already dark" has no
+   permanent regression coverage.)
+
+4. Computed WCAG contrast for all four getTonePalette() tones against both
+   card backgrounds by hand: dark #292524 → negative 5.484, positive 8.705,
+   planned 10.183, after 8.412 (all >=3:1); light #ffffff → negative 4.829,
+   positive 5.016, planned 7.629, after 6.702 (all >=3:1). Matches
+   gv2_chart_test.go's `TestBuildProjectionChartDataTraceTonesAndContrast`
+   (light only, numerically) plus the browser probe (both, empirically).
+
+5. Conditional height: `layout["height"] = 520` only inside
+   `if guardrailsEnabled` (handlers.go); template only adds
+   `chart-container-tall` `{{if and .Settings.Guardrails
+   .Settings.Guardrails.Enabled}}`; with guardrails off the container falls
+   back to the untouched pre-GV2 `.chart-container { min-height: 300px }`
+   (byte-identical to `git show 5fae968:web/static/css/styles.css`). No
+   defect.
+
+6. Marker outline (white 1px on triangles): static in both themes, applied
+   around the tone-carrying fill, not instead of it. Does not reduce fill
+   contrast; if anything improves edge visibility on the dark background.
+
+7. Compare-without-guardrails overlay: pre-existing (present verbatim in
+   `git show 5fae968:web/static/js/charts.js`, `toggleGuardrailCompareOverlay`
+   at line 652), untouched by GV2. It has no `meta`, so `applyTonePalette`
+   correctly leaves it alone (design intent, matching brief's framing).
+   OBSERVATION (not a FAIL basis — pre-existing, out of GV2's manifest):
+   its own fixed color `#a8a29e` (stone-400) measures 2.52:1 against white
+   card background in light mode — below the 3:1 floor. Pre-dates this task;
+   belongs to whichever run introduced the overlay, flag for backlog.
+
+=== The defect (FAIL basis) ===
+
+`web/templates/components/whatif/guardrail_optimizer.html`'s `graphTheme()`
+(pre-existing, unmodified by GV2 — confirmed byte-identical in `git show
+5fae968:...guardrail_optimizer.html`) is the client-side "retheme" for the
+"Base case" view of `handleGuardrailOptimizerGraph`
+(internal/handlers/whatif/handlers_guardrail_graph.go:14), which calls
+`buildProjectionChartData(&clone, projection, mode)` — the SAME function
+GV2 attempt 2 reworked, with `clone.Guardrails` set from the candidate (real
+optimizer candidates virtually always have guardrails enabled — that's the
+point of the feature). "Base case" is not a hidden/dev path: it's a
+first-class `<option value="base">Base case</option>` in the "Graph view"
+`<select>` at guardrail_optimizer.html:213, directly user-reachable after
+running the optimizer and clicking "View graph."
+
+`graphTheme()` recolors PURELY BY INDEX:
+  `chart.data.forEach((trace,index)=>{const color=index===0?...green...:...
+  amber...;if(trace.line)trace.line.color=color;if(trace.marker)trace.
+  marker.color=color;});`
+It never reads `trace.meta.tone`/`meta.tones` at all.
+
+Reproduced against REAL server output (isolated test server, guardrails
+enabled via the real `/whatif/guardrails` endpoint, fetched
+`/whatif/chart/projection?display_dollars=nominal` — the same
+`buildProjectionChartData` payload shape the optimizer preview consumes),
+then ran the ACTUAL `graphTheme` body (copied verbatim) against it in node:
+
+  trace 0 Portfolio Balance -> line #166534 (light) / #86efac (dark)  [OK]
+  trace 1 Key events        -> marker #92400e (light) / #fcd34d (dark)
+  trace 2 Cut trigger  (meta.tone=negative) -> line #92400e / #fcd34d
+  trace 3 Raise trigger(meta.tone=positive) -> line #92400e / #fcd34d
+  trace 4 Planned      (meta.tone=planned)  -> line #92400e / #fcd34d
+  trace 5 After guardrails (meta.tone=after)-> line #92400e / #fcd34d
+  trace 6 Guardrail cuts/raises (meta.tones=[neg,neg,neg])
+                                  -> marker.color OVERWRITTEN with a single
+                                     SCALAR string #92400e / #fcd34d
+                                     (was an array of per-point tone colors)
+
+Every trace from index 1 onward — Cut trigger, Raise trigger, Planned,
+After guardrails, and the cut/raise event markers — is painted the SAME
+single flat color. The cut-vs-raise distinction on the markers trace loses
+its color entirely (marker.color goes from a 3-entry array to one string);
+only the server-set marker SHAPE (triangle-up/-down) survives to
+disambiguate. This is exactly the split-classification defect class
+(CLAUDE.md "Recurring defect classes" #1): one tone classification lives on
+the server (`meta.tone`), one consuming surface (charts.js) honors it
+correctly, a second consuming surface (guardrail_optimizer.html) has its
+OWN independent, unmodified classifier that ignores the server's meta and
+clobbers it. The worker's own code comment in handlers.go even names this
+consumer explicitly ("Built server-side so every consumer of
+buildProjectionChartData (the Overview chart, the no-guardrails overlay,
+and the optimizer base-case preview) shares identical traces") — the DATA
+is shared; the RENDERING is not.
+
+Second, independent symptom of the same root cause — height clipping:
+`graphTheme()` unconditionally sets `layout.height=340` and only touches
+`xaxis`/`yaxis` gridcolor (never `yaxis2`). The real server layout for this
+same guardrails-enabled payload has `yaxis.domain=[0.42,1]` and
+`yaxis2.domain=[0,0.3]` (verified from the actual JSON dump) with
+`height=520` — designed together per GV2's own conditional-height
+criterion. `graphTheme` keeps the domain split but shrinks total height to
+340px (roughly 65% of the 520px the split was sized for), and the "Base
+case" view shows only the `#guardrail-graph-plot` div (the "living" div is
+hidden in base mode: `visible = kind==='base' ? measure==='portfolio' :
+hasYears`), so this single visible chart is the one carrying BOTH y-axis
+panels squeezed into 340px — well under GV2's own 540px floor
+(`gv2_chart_test.go` asserts `layout["height"] != 520` fails the main
+chart; the optimizer preview gets no such floor at all).
+
+Test coverage gap confirming this slipped through: `guardrail_graph_test.go`
+(IN GV2's manifest, modified this attempt) adds
+`TestGuardrailGraphExactPolicyAndNoMutation`'s new assertion block citing
+"GV2 criterion 5" — but it only checks that the SERVER JSON contains the
+guardrail trace NAMES for a guardrails-enabled candidate
+(`gv2GraphHasTrace`). It never touches `graphTheme()`, which is pure
+client-side JS unreachable from a Go test, and no browser test exercises
+the optimizer's "Base case" preview at all (the shipped
+`gv2_tone_contrast_browser_test.go` only drives `/whatif`'s main projection
+chart, never `/whatif/guardrails/optimize` + `/whatif/guardrails/optimize/graph`
++ the `#guardrail-graph-kind=base` select). The claim "shares identical
+traces" is true at the data layer and false at the rendered layer, and
+nothing in the current test suite would catch a regression here.
+
+Remedy that would actually fix this (not just plausible-sounding): make
+`graphTheme()` key off `trace.meta.tone`/`meta.tones` the same way
+charts.js's `applyTonePalette` does (or, better, route the optimizer
+preview through the SAME shared function instead of a second
+hand-maintained recolorer), and make its `height` conditional on the
+presence of a `yaxis2` panel instead of a flat 340. Either repairs both
+symptoms since they share one root cause (a second, un-synced classifier).
+
+OBSERVATION (backlog, not FAIL basis): `#a8a29e` compare-overlay trace
+color fails 3:1 against the light card background (2.52:1) — pre-existing,
+outside GV2's manifest.
+
+OBSERVATION (backlog, not FAIL basis): a background `/whatif/results-full`
+request 500'd during browser probe runs (async self-fill hash-mismatch
+path, `internal/handlers/whatif/handlers.go:1266`) — unrelated to GV2's
+manifest, did not affect any assertion made here.

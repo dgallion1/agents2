@@ -1,0 +1,13 @@
+internal/models/whatif.go
+internal/services/retirement/engine/stepper.go
+internal/services/retirement/engine/month.go
+internal/services/retirement/engine/guardrail_triggers_test.go
+internal/handlers/whatif/handlers.go
+internal/handlers/whatif/handlers_test.go
+internal/handlers/whatif/gv2_chart_test.go
+internal/handlers/whatif/guardrail_graph_test.go
+web/templates/components/whatif/projection-chart.html
+web/static/css/styles.css
+web/static/js/charts.js
+cmd/server/gv2_tone_contrast_browser_test.go
+cmd/server/testdata/guardrail_tone_contrast_browser.cjs

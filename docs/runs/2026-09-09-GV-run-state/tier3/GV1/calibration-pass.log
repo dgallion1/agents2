@@ -1,0 +1,29 @@
+== criterion 1: build, vet, package tests
+ok  	budget2/internal/handlers/whatif	23.411s
+ok  	budget2/internal/services/retirement	33.352s
+ok  	budget2/internal/services/retirement/analysis	24.748s
+ok  	budget2/internal/services/retirement/completeness	0.003s
+ok  	budget2/internal/services/retirement/engine	0.025s
+ok  	budget2/internal/services/retirement/history	0.002s
+ok  	budget2/internal/services/retirement/overrides	0.004s
+ok  	budget2/internal/services/retirement/prepare	0.003s
+== criteria 2+3: oracle tests (overlay-injected)
+=== RUN   TestGV1OracleSearchUsesPlanHooks
+    gv1_acceptance_external_test.go:108: validation runs=1000 seed=-3934195485358678003; optimizer current-row depletion=177; direct MC with hooks=177; without hooks=1000
+--- PASS: TestGV1OracleSearchUsesPlanHooks (3.00s)
+=== RUN   TestGV1OracleEveryCandidateUsesPlanHooks
+    gv1_acceptance_external_test.go:159: candidate grid-10-10-25-5-120 baseline=false: optimizer depletion=109 hooked direct=109
+    gv1_acceptance_external_test.go:159: candidate grid-10-10-25-5-150 baseline=false: optimizer depletion=109 hooked direct=109
+    gv1_acceptance_external_test.go:159: candidate grid-20-5-15-10-120 baseline=false: optimizer depletion=307 hooked direct=307
+    gv1_acceptance_external_test.go:159: candidate grid-20-5-15-10-150 baseline=false: optimizer depletion=308 hooked direct=308
+    gv1_acceptance_external_test.go:159: candidate current baseline=true: optimizer depletion=182 hooked direct=182
+    gv1_acceptance_external_test.go:159: candidate no-guardrails baseline=true: optimizer depletion=592 hooked direct=592
+    gv1_acceptance_external_test.go:159: candidate grid-10-5-15-5-120 baseline=false: optimizer depletion=218 hooked direct=218
+    gv1_acceptance_external_test.go:159: candidate grid-10-5-15-5-150 baseline=false: optimizer depletion=218 hooked direct=218
+--- PASS: TestGV1OracleEveryCandidateUsesPlanHooks (4.83s)
+PASS
+ok  	budget2/internal/handlers/whatif	7.844s
+== criterion 4: GO-run regressions unchanged
+ok  	budget2/internal/handlers/whatif	4.292s
+ok  	budget2/internal/handlers/whatif	4.910s
+ORACLE PASS

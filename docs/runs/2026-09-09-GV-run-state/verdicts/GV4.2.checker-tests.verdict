@@ -1,0 +1,236 @@
+VERDICT: PASS
+CHECKER: checker-tests
+FAMILY: anthropic
+TASK: GV4
+ATTEMPT: 2
+---
+METHOD
+`cp -a /tmp/budget2-gv-final-snap` -> scratchpad/work (plus probe/ and four
+mut-{a,b,c,d}/ copies). All commands below ran in those copies; the only write
+to the real tree is this verdict file. No git checkout/stash/reset/commit; no
+server started; nothing written under data/. Base = 5fae968 (git log --oneline
+-1 in the copy).
+
+=== GATE COMMANDS ===
+G1. go build ./...                      -> BUILD_EXIT=0
+G2. go vet ./internal/...               -> VET_EXIT=0 (no output)
+G3. go test -count=1 ./internal/handlers/whatif/
+    -> "ok  budget2/internal/handlers/whatif  41.722s"  TEST_EXIT=0
+G4. make check (vet static vuln css-verify test)
+    -> log tail: "tailwind.css is up to date" ... "ok budget2/internal/handlers/whatif 90.808s"
+       ... "✓ all checks passed"; zero lines matching ^FAIL.
+       Re-run for the status code: MAKE_CHECK_EXIT=0.
+G5. gofmt -l internal/handlers/whatif/handlers.go \
+             internal/handlers/whatif/gv4_guardrail_anchors_test.go
+    -> no filenames printed (both already gofmt-clean).
+
+=== CRITERION-BY-CRITERION ===
+
+C1. Card lines "Next yearly check: cut if the portfolio falls below $X" /
+    "Next yearly check: raise if it rises above $Y".
+    Command: probe test rendering the FULL "whatif-guardrails" card partial with
+    the fractional-cent fixture (PortfolioValue 987654.32, drop/rise 15%).
+      PROBE card container:
+        id="whatif-guardrail-anchors">
+        <p class="text-body-sm text-negative">Next yearly check: cut if the portfolio falls below $839,506.17</p>
+        <p class="text-body-sm text-positive">Next yearly check: raise if it rises above $1,135,802.47</p>
+    Exact wording present on both lines. MET.
+
+C2. X/Y are the year-0 ProjectionYearSummary.GuardrailCutTrigger /
+    GuardrailRaiseTrigger via formatMoney, NEVER recomputed.
+    Command: same probe, printing the engine fields and FormatMoney of them:
+      PROBE year0 raw: cut=839506.1719999999 raise=1135802.4679999999
+      PROBE FormatMoney(year0): cut=$839,506.17 raise=$1,135,802.47
+      PROBE container contains FormatMoney(year0 cut)=true raise=true
+    => the RENDERED strings equal templates.FormatMoney of the year-0 engine
+    fields (rendered-string assertion, not the float).
+    formatMoney is the same function: internal/templates/render.go:74
+    `"formatMoney": formatMoney` and render.go:474
+    `func FormatMoney(v float64) string { return formatMoney(v) }` — one
+    rounding path, no second formatter.
+    "Never recomputed" is proved by mutation (a) below, NOT by this fixture:
+    the probe also printed
+      PROBE FormatMoney(pct product cut)=$839,506.17
+    i.e. on this fixture the percentage product renders to the SAME string —
+    which is precisely why attempt 1's rendering tests could not kill mutation
+    (a). Code inspection of handlers.go confirms buildGuardrailAnchors returns
+    `&GuardrailAnchors{CutBelow: year0.GuardrailCutTrigger,
+    RaiseAbove: year0.GuardrailRaiseTrigger}` with no arithmetic. MET.
+
+C3. Only when guardrails are enabled and the year-0 triggers are positive;
+    absent, never "$0.00".
+    Command: handler probe, POST /whatif/guardrails with `enabled` omitted:
+      PROBE OOB (guardrails DISABLED): "" ; contains $0.00: false
+    Command: handler probe, GET /whatif with Guardrails.Enabled=false:
+      PROBE PAGE(disabled) status=200 anchorLines=0 containerCount=0
+    Permanent tests: TestBuildGuardrailAnchors_NilCases (nil settings,
+    nil Guardrails, Enabled=false, nil projection, no yearly summaries,
+    zero triggers -> all nil) and TestRenderGuardrailAnchorsPartial_AbsentWhenNil
+    (empty output). Both PASS. MET.
+
+C4. Container #whatif-guardrail-anchors ALSO emitted with hx-swap-oob from
+    whatif-results-with-oob.
+    Command: git diff 5fae968 -- web/templates/pages/whatif.html shows exactly
+    one added line inside the `whatif-results-with-oob` <template>:
+      +    <div id="whatif-guardrail-anchors" hx-swap-oob="true">{{template "whatif-guardrail-anchors" .}}</div>
+    Command: handler probe, POST /whatif/guardrails (drop 15):
+      PROBE OOB (drop=15): "<p ...>Next yearly check: cut if the portfolio falls
+      below $839,506.17</p>\n<p ...>Next yearly check: raise if it rises above
+      $1,135,802.47</p>"
+    (snippet extracted by anchoring on the OOB-only marker
+    `id="whatif-guardrail-anchors" hx-swap-oob="true">`, so it cannot match the
+    in-card copy). MET.
+
+C5. Data via buildGuardrailAnchors in BOTH page data and results-partial data.
+    Command: git diff 5fae968 -- internal/handlers/whatif/handlers.go shows
+    "GuardrailAnchors": buildGuardrailAnchors(settings, projection) added to
+    buildResultsPartialData's map, and "GuardrailAnchors":
+    buildGuardrailAnchors(settings, analysis.Projection) added to handleWhatIf's
+    pageData map.
+    Command (page path executed, not inspected): probe calling handleWhatIf:
+      PROBE PAGE status=200 len=202113
+      PROBE PAGE ANCHOR LINE: Next yearly check: cut if the portfolio falls below $839,506.17
+      PROBE PAGE ANCHOR LINE: Next yearly check: raise if it rises above $1,135,802.47
+      PROBE PAGE count of id="whatif-guardrail-anchors": 1
+    Command (results-partial path executed): permanent test
+    TestRenderWhatIfResultsWithOOB_GuardrailAnchors renders
+    "whatif-results-with-oob" from buildResultsPartialData output and asserts
+    both lines in the OOB snippet — PASS. MET.
+
+C6. Handler-level run: POST /whatif/guardrails with a CHANGED drop % returns
+    the OOB element with the NEW figure.
+    Command: probe posting drop=15 then drop=25 (PortfolioValue 987654.32):
+      PROBE POST drop=15 status=200
+      PROBE OOB (drop=15): "... falls below $839,506.17 ... rises above $1,135,802.47"
+      PROBE POST drop=25 status=200
+      PROBE OOB (drop=25): "... falls below $740,740.74 ... rises above $1,135,802.47"
+      PROBE saved settings after POST: PortfolioValue=987654.32 FloorDropPct=25.00
+      PROBE engine year0 cut=740740.7400000000 raise=1135802.4679999999
+          -> FormatMoney $740,740.74 / $1,135,802.47
+    The OOB figure changed to the NEW value and equals FormatMoney of the
+    recomputed projection's year-0 cut trigger; the raise line correctly did not
+    move. Permanent test: TestHandleWhatIfGuardrails_AnchorsRefreshOnSave. MET.
+
+C7. Heading "Spending guardrails"; Guyton-Klinger sentence moved; nothing else
+    changed in rendered text.
+    Command: twin renders of the "whatif-guardrails" card — branch copy vs a
+    copy with web/templates/components/whatif/guardrails.html AND
+    web/templates/pages/whatif.html restored from `git show 5fae968:` — tags
+    stripped, then python3 difflib unified diff. COMPLETE diff:
+      -Drop/rise guardrails (simple)
+      -These rules ... it does not guarantee funding.
+      -Cuts the living-expense budget ... above baseline. This is a simplified guardrail — not the four-rule Guyton-Klinger (2006) model.
+      +Spending guardrails
+      +These rules ... it does not guarantee funding. This is a simplified guardrail — not the four-rule Guyton-Klinger (2006) model.
+      +Cuts the living-expense budget ... above baseline.
+      (later, between "spending increase" and "Min spending %")
+      +Next yearly check: cut if the portfolio falls below $839,506.17
+      +Next yearly check: raise if it rises above $1,135,802.47
+    Nothing else in the card's rendered text differs from 5fae968. The
+    Guyton-Klinger sentence is byte-identical, only relocated from the end of
+    para 3 to the end of para 2. MET.
+    (Side evidence that the master baseline render was a real one: restoring
+    only guardrails.html made the template loader abort with "undefined template
+    whatif-guardrail-anchors" at whatif.html:255 — the OOB reference is live.)
+
+C8. Attempt-2 rendered-text change is ONLY the "Today:" -> "Next yearly check:"
+    prefix.
+    Command: python3 difflib of the three manifest source files, attempt-1
+    snapshot /tmp/budget2-gv4-snap vs this tree.
+      guardrails.html: exactly two changed lines, both the <p> anchor lines,
+        -"Today: cut if the portfolio falls below {{formatMoney ...}}"
+        +"Next yearly check: cut if the portfolio falls below {{formatMoney ...}}"
+        (same for raise). No other line differs.
+      whatif.html: IDENTICAL.
+      handlers.go: the delta is entirely GV2 attempt-2 chart work (trace
+        meta.tone/tones keys, palette colours #ef4444->#dc2626 etc., layout
+        height moved under `if guardrailsEnabled`). The GV4-owned regions —
+        GuardrailAnchors struct, buildGuardrailAnchors, the two data-map
+        entries — are byte-identical to attempt 1.
+    Command: probe GET /whatif -> PROBE PAGE count of 'Today:': 0 ;
+      'Drop/rise guardrails': 0 ; 'Spending guardrails' heading: 1.
+    Command: difflib of gv4_guardrail_anchors_test.go attempt1 vs attempt2 ->
+      purely ADDITIVE (two new tests) plus the same prefix update in two
+      existing want-strings; no assertion weakened or removed. MET.
+
+=== REQUIRED MUTATION PROOFS (each in its own cp -a copy of the branch) ===
+Each mutation applied by an anchored python3 string replacement (the script
+asserts the anchor text exists before writing), then
+`go test -count=1 ./internal/handlers/whatif/`.
+
+(a) buildGuardrailAnchors recomputes from percentages
+    (return &GuardrailAnchors{CutBelow: PortfolioValue*(1-FloorDropPct/100),
+     RaiseAbove: PortfolioValue*(1+CeilingRisePct/100)}).
+    KILLED BY: TestBuildGuardrailAnchors_UsesEngineTriggersNotPercentages
+      --- FAIL: TestBuildGuardrailAnchors_UsesEngineTriggersNotPercentages
+        CutBelow = 900000, want 100000 (the engine's year-0 trigger, not
+          PortfolioValue*(1-FloorDropPct/100)=900000)
+        RaiseAbove = 1.2e+06, want 200000 (... =1200000)
+    This is the attempt-1 escape, now closed. Only that test fails, which is
+    the correct, targeted kill.
+
+(b) delete `<div id="whatif-guardrail-anchors" hx-swap-oob="true">...` from
+    web/templates/pages/whatif.html.
+    KILLED BY (both, permanently):
+      --- FAIL: TestRenderWhatIfResultsWithOOB_GuardrailAnchors
+        "missing OOB #whatif-guardrail-anchors element"
+      --- FAIL: TestHandleWhatIfGuardrails_AnchorsRefreshOnSave
+
+(c) drop the `!settings.Guardrails.Enabled` guard so anchors are returned when
+    guardrails are disabled.
+    KILLED BY: TestBuildGuardrailAnchors_NilCases
+      --- FAIL: TestBuildGuardrailAnchors_NilCases
+        case 2: expected nil, got &{CutBelow:100 RaiseAbove:200}
+
+(d) delete `<div id="whatif-guardrail-anchors">{{template
+    "whatif-guardrail-anchors" .}}</div>` from guardrails.html (card loses the
+    lines; the standalone block still renders).
+    KILLED BY: TestRenderGuardrailsCard_AnchorsInsideCard
+      --- FAIL: TestRenderGuardrailsCard_AnchorsInsideCard
+        "missing #whatif-guardrail-anchors container in guardrails card"
+    This is the second attempt-1 escape, now closed. Only that test fails.
+
+Anchoring note (checked, not assumed): the two extractors are byte-anchored
+where the artifact actually sits. oobGuardrailAnchorsSnippet keys on
+`id="whatif-guardrail-anchors" hx-swap-oob="true">`, which the in-card copy
+(`id="whatif-guardrail-anchors">`) cannot match — confirmed by mutation (b)
+failing while the card copy was still present. The card test slices from
+`id="whatif-guardrail-anchors"` to the first `</div>`, and the block contains
+only <p> elements, so that is the container's own close tag.
+
+=== SCOPE ===
+git status --porcelain in the copy lists only:
+  M handlers.go, guardrails.html, whatif.html  + ?? gv4_guardrail_anchors_test.go
+    -> exactly the GV4.2 manifest (4/4, no extras).
+  M guardrail_graph_test.go, handlers_test.go, models/whatif.go,
+    engine/month.go, engine/stepper.go, styles.css, charts.js,
+    projection-chart.html          -> declared FOREIGN (GV1/GV2)
+  M handlers_guardrail_optimizer.go, guardrail_optimizer.html
+    ?? analysis/planned_living.go, analysis/planned_living_test.go,
+       guardrail_plan_floor_test.go -> declared FOREIGN (GV3)
+  ?? gv2_chart_test.go, cmd/server/gv2_tone_contrast_browser_test.go,
+     cmd/server/testdata/           -> declared FOREIGN (GV2)
+  ?? data                           -> the live-data symlink; not written.
+handlers.go GV4 footprint is exactly what the manifest permits: the
+GuardrailAnchors struct, buildGuardrailAnchors, and the two "GuardrailAnchors"
+data-map entries. Nothing else in that file is GV4's.
+critical.globs: `git status --porcelain -- internal/services/retirement/settings.go
+scripts/ Makefile` -> empty. None touched.
+
+=== FINDINGS / OBSERVATIONS (not FAILs) ===
+O1. Two changed files sit just outside the FOREIGN list I was given verbatim:
+    internal/handlers/whatif/guardrail_optimizer_hooks_test.go and
+    internal/services/retirement/engine/guardrail_triggers_test.go. Both are
+    unmistakably GV1 (optimizer plan hooks) and GV2 (engine guardrail
+    thresholds) work, not GV4's; attributing, not failing. Lead may want them
+    added to the foreign enumeration for the remaining checkers.
+O2. TestRenderGuardrailsCard_AnchorsInsideCard's disabled half passes
+    `"GuardrailAnchors": nil` explicitly, so it exercises the template {{if}}
+    rather than buildGuardrailAnchors' enabled gate. That gate is covered
+    separately by TestBuildGuardrailAnchors_NilCases (mutation (c)) and by the
+    live handler probe (disabled POST -> empty OOB). Noted only so the coverage
+    boundary is on the record; the criterion is met.
+O3. Not verified by command: whether "Next yearly check:" is the right phrase
+    for a user (the anchors are the year-1 check levels computed at year 0).
+    That is a content/wording judgement for checker-content / the lead, not a
+    testable criterion, and the brief prescribes this exact string.

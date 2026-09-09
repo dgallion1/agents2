@@ -1,0 +1,5 @@
+# task_id	tier	checks	status	attempt	worker	reason
+GV1	3	tests,second	accepted	1	worker-coder	Optimizer search must simulate with plan hooks (SS income)
+GV2	3	tests,second,a11y	accepted	3	worker-coder	Engine thresholds + chart panels; money on multiple surfaces
+GV3	2	tests,a11y,second	accepted	2	worker-coder	Plan-design floor notice; money figures
+GV4	2	tests,a11y,second	accepted	2	worker-coder	Settings card dollar anchors from engine fields

@@ -1,0 +1,189 @@
+VERDICT: PASS
+CHECKER: checker-a11y
+FAMILY: anthropic
+TASK: GV2
+ATTEMPT: 3
+---
+SCOPE (confirmed via `git -C /tmp/budget2-gv-a3-snap diff`): only
+web/templates/components/whatif/guardrail_optimizer.html's `graphTheme`
+and `graphTable` JS functions carry "GV2 attempt 3" markers, plus
+internal/handlers/whatif/guardrail_graph_test.go's new server-side trace
+assertion (`gv2GraphHasTrace`, criterion 5). All other diff hunks vs master
+(handlers.go guardrail traces/yaxis2, charts.js getTonePalette/
+applyTonePalette, guardrails.html, projection-chart.html) are dated
+"GV2 attempt 2" in their own comments — pre-existing, already PASSed by this
+lane for the main Overview chart, and only *reused* (not modified) by
+attempt 3. Audited accordingly: full depth on the optimizer preview,
+one light/one dark re-confirmation on the Overview chart.
+
+METHOD: `cp -a` of the read-only snapshot to my own scratch dir, built and
+ran the real server via `scripts/whatif-verify.sh start/stop 8094` (isolated
+data/backups copy — live data untouched). Drove the real page with
+Playwright (chromium), real user flow: /whatif -> Optimize guardrails ->
+95% -> Run optimizer (ran ~40s; "No options met your minimum-spending
+target," all 6 alternatives + Current guardrails + Guardrails-disabled rows
+rendered) -> View graph on "Current guardrails" -> Graph view "Base case".
+axe-core injected into the LIVE DOM via addScriptTag (real
+@axe-core/cli's bundled axe.min.js), not static/guessed HTML, run against
+`document` with the preview open, tags
+wcag2a,wcag2aa,wcag21a,wcag21aa,wcag22aa. Scripts, logs, JSON evidence, and
+screenshots are under
+/tmp/claude-1000/-home-darrell-work-agents2--claude-worktrees-guardrails-graph-visualization-b63dd6/821e4fa4-258e-45ae-9411-2e5b05425667/scratchpad/gv2-a3-audit/
+(run.js, run2.js, run.log, run2.log, *.json, *.png, *.html).
+
+A-1/A-2 (axe, both themes, preview open):
+  axe-light.json:        0 violations (1 incomplete: color-contrast on the
+                          global top-nav gradient links, pre-existing chrome
+                          outside this task's scope — see OBSERVATIONS)
+  axe-dark-inplace.json: 0 violations (same 1 incomplete) — dark applied via
+                          the real #theme-toggle while the preview stayed
+                          open (MutationObserver restyle path)
+  axe-dark-reopen.json:  0 violations (same 1 incomplete) — preview closed
+                          and RE-OPENED while dark (fresh graphTheme() render
+                          path, not just the restyle path)
+  duplicate-id-aria: ran, 0 violations in all three. target-size: ran, 159
+  passing nodes, 0 violations in all three (covers this preview's controls).
+
+A-3 (contrast, all 7 traces, both themes, against the PREVIEW'S ACTUAL
+computed panel background — walked the DOM from #guardrail-graph-plot up;
+resolved to the card's own background, not assumed):
+  Panel bg light: rgb(255,255,255) on DIV.bg-white.dark:bg-gray-800...
+  Panel bg dark:  rgb(41,37,36)    ("#292524", same card, dark: class)
+  Colors read from the rendered Plotly legend swatches (live SVG), matched
+  1:1 against getTonePalette()'s documented hex values.
+
+  LIGHT (bg #ffffff):
+    Portfolio Balance   #166534  -> 7.13:1
+    Key events           #92400e -> 7.09:1
+    Cut trigger (tone)   #dc2626 -> 4.83:1
+    Raise trigger (tone) #15803d -> 5.02:1
+    Planned (tone)       #57534e -> 7.63:1
+    After guardrails(tone)#1d4ed8-> 6.70:1
+    Guardrail cuts/raises marker, positive tone #15803d -> 5.02:1
+    Guardrail cuts/raises marker, negative tone #dc2626 -> 4.83:1 (same hex
+      as Cut trigger's "negative" tone; this projection's events were all
+      raises in the rendered sample, so only the positive swatch appeared
+      live — negative computed from the documented palette value)
+
+  DARK (bg #292524):
+    Portfolio Balance   #86efac  -> 10.80:1
+    Key events           #fcd34d -> 10.52:1
+    Cut trigger (tone)   #f87171 -> 5.48:1
+    Raise trigger (tone) #4ade80 -> 8.71:1
+    Planned (tone)       #d6d3d1 -> 10.18:1
+    After guardrails(tone)#93c5fd-> 8.41:1
+    Guardrail cuts/raises marker, positive tone #4ade80 -> 8.71:1
+    Guardrail cuts/raises marker, negative tone #f87171 -> 5.48:1
+
+  All >= 3:1 (large/graphical-element threshold) in both themes, well
+  clear of the line. Markers are additionally distinguished by SHAPE
+  (triangle-down cut / triangle-up raise, set server-side in handlers.go,
+  pre-existing/attempt-2) and lines by DASH PATTERN (Cut trigger dashed,
+  others solid, visible in base-light.png/base-dark-reopened.png) — never
+  color-only (A-9), unaffected by this attempt's changes since it only
+  reused getTonePalette/applyTonePalette, did not touch symbol/dash logic.
+
+A-7/A-12 (data tables under "Chart values, yearly path counts, and
+events", light table-info-light.json / dark table-info-dark.json —
+identical structure in both themes as expected, styling only differs):
+  Real <table> per trace, <th scope="col"> confirmed on every header:
+    Portfolio Balance      -> Year, Portfolio balance
+    Key events              -> Year, Portfolio balance, Event
+    Cut trigger              -> Year, Portfolio balance, Event
+    Raise trigger            -> Year, Portfolio balance, Event
+    Planned                  -> Year, Monthly living budget   <- attempt-3 fix
+    After guardrails          -> Year, Monthly living budget   <- attempt-3 fix
+    Guardrail cuts / raises  -> Year, Monthly living budget, Event
+  This is exactly the attempt-3 contract: yaxis "y2" (budget-panel) traces
+  get "Monthly living budget," balance traces keep "Portfolio balance,"
+  every marker/event trace still carries its Event column.
+  Scroll region #guardrail-graph-data: tabindex="0" role="region"
+  aria-label="Projection values; scroll horizontally if needed" — confirmed
+  present in both themes.
+
+A-4/A-5/A-10 (keyboard path, screenshots base-light.png /
+base-dark-reopened.png):
+  View graph click -> focus lands on #guardrail-graph-heading (confirmed via
+  document.activeElement.id, both the mouse-click and the flow after dark
+  toggle); visible focus ring shown in both screenshots.
+  Graph view / Graph dollars <select>s: keyboard-focusable
+  (page.focus('#guardrail-graph-kind') succeeded), operate via `change`
+  (already exercised programmatically to select "Base case" and to switch
+  dollars in every pass).
+  Close preview via KEYBOARD (Tab-equivalent focus + Enter, not a mouse
+  click): focus returned to the ORIGINATING "View graph" button — verified
+  by attribute, not just .id (the button has no id attribute so an
+  id-only check would false-negative): resulting activeElement is
+  BUTTON[data-guardrail-graph="dcd02ca4..."][aria-label="View graph for
+  guardrail policy current"] — i.e. the exact row's own trigger (see
+  kb-close-focus.json). status text region (#guardrail-optimizer-status,
+  role=status aria-live=polite) unaffected by this attempt.
+
+A-10/A-11 (heights, re-render, motion):
+  Current guardrails (guardrails enabled, has yaxis2): 520px in both the
+  first light render (light-colors.json) and both dark passes
+  (dark-inplace-colors.json, dark-reopen-colors.json height=520px,
+  hasYaxis2=true).
+  Guardrails-disabled row's base case: 340px, hasYaxis2=false, legend only
+  2 traces (Portfolio Balance, Key events) — disabled-base-case.json,
+  matching the new Go test's contract (gv2GraphHasTrace: no guardrail
+  traces when !cfg.Enabled).
+  Switching Graph dollars (real -> nominal) on BOTH rows re-renders without
+  height collapse: disabled row 340px -> 340px
+  (disabled-after-dollar-switch.json); current-guardrails row 520px ->
+  520px (run2.log "current-guardrails height before/after dollar switch
+  520px 520px").
+  chart.layout.transition duration is hard-coded to 0 in graphTheme (both
+  before and after this attempt) — no animation to suppress; reduced-motion
+  compliant by construction, unaffected by this attempt's changes.
+
+A-15 (target size / reflow):
+  axe target-size: 159 passing nodes, 0 violations, both themes.
+  Reflow at 1024px and 375px with the preview open and Base case selected:
+  reflow-1024.json / reflow-375.json show docScrollWidth == viewportWidth
+  (1024==1024, 375==375) — no page-level horizontal scroll introduced by
+  the (now-taller, two-panel) preview. Screenshots reflow-1024.png,
+  reflow-375.png saved.
+
+QUICK RE-CONFIRMATION — Overview/main chart (unchanged from attempt 2,
+one light + one dark measurement, explicit dark-class check before each to
+avoid a stale-toggle mislabel — see main-chart-light-fixed.json /
+main-chart-dark-fixed.json):
+  Light (docDark:false confirmed): height 540px, panel bg rgb(255,255,255),
+    Portfolio Balance #22c55e, Key events #f59e0b (index-based, main
+    chart's own established colors — untouched by this attempt), Cut
+    trigger/Raise trigger/Planned/After guardrails/marker tones identical
+    hex values to the optimizer preview (same shared getTonePalette).
+  Dark (docDark:true confirmed): height 540px, panel bg rgb(41,37,36),
+    tone-palette colors match the dark table above exactly.
+  Height and both palettes match what this lane already PASSed at attempt 2
+  for this same chart; this attempt did not touch handlers.go, charts.js,
+  guardrails.html, or projection-chart.html, and the trace confirms no
+  runtime regression either.
+
+OBSERVATIONS (non-blocking, out of scope for this attempt):
+- axe "incomplete" (not a violation) on both themes: color-contrast
+  undeterminable on the global top-nav's gradient links
+  (div[aria-labelledby="nav-group-money"] > a[href$="dashboard"/"explorer"]).
+  This is sitewide chrome, byte-identical to master, entirely outside
+  guardrail_optimizer.html — noted for the backlog, not a GV2 finding.
+- The "Event" column header is reused generically for the Cut trigger/
+  Raise trigger threshold-line tables (their "text" is a hover description
+  of the trigger level, not a discrete event) — this labeling choice
+  predates attempt 3 (part of the shared graphTable/attempt-2 contract) and
+  was not part of this attempt's diff; flagging only as a naming
+  observation for a future pass, not a FAIL.
+- This projection's "Current guardrails" base case only produced RAISE
+  events in the rendered sample (marker legend showed only the positive/
+  green triangle-up swatch); the negative/cut tone and triangle-down symbol
+  were verified against the documented palette and server-side symbol
+  logic rather than a live cut event in this particular run. Both tones are
+  used identically by the same code path, so this is a data-availability
+  note, not a coverage gap in the audit.
+
+Server/data hygiene: scripts/whatif-verify.sh used exclusively (isolated
+copy at /tmp/budget2-whatif-verify-8094, cp -rL dereferenced data, isolated
+backups dir); server started and stopped via the script's own
+start/stop commands on port 8094; no direct binary invocation; live :8080
+and /home/darrell/bin/ai/budget2 untouched; no git checkout/stash/reset
+run against the snapshot or my copy.

@@ -1,0 +1,206 @@
+VERDICT: PASS
+CHECKER: checker-tests
+FAMILY: anthropic
+TASK: GV3
+ATTEMPT: 2
+---
+Worked in a private cp -a copy of /tmp/budget2-gv-final-snap taken at 09:12
+(scratchpad/gv3v2), with the `data` symlink replaced by a copy so nothing could
+write to LIVE data. NOTE FOR THE LEAD: /tmp/budget2-gv-final-snap was DESTROYED
+and replaced by an unrelated screenshots directory by another agent at ~09:14,
+mid-verification; all evidence below comes from my copy, and I also preserved
+the attempt-1 baseline (/tmp/budget2-gv3-snap -> scratchpad/a1/tree) before it
+could be clobbered. Base 5fae968 exported read-only via
+`git --git-dir=/home/darrell/bin/ai/budget2/.git archive 5fae968`. No git state
+was changed; the real worktrees were never touched.
+
+== GATE COMMANDS ==
+* `go build ./...` -> BUILD_OK (go1.26.6).
+* `go vet ./internal/...` -> no output, VET_RC=0.
+* `go test -count=1 ./internal/handlers/whatif/ ./internal/services/retirement/analysis/`
+  -> `ok budget2/internal/handlers/whatif 80.160s` / `ok budget2/internal/services/retirement/analysis 55.749s`.
+* `GOFLAGS=-count=1 make check` (vet static vuln css-verify test) -> last line
+  `✓ all checks passed`, every package `ok`, including
+  `ok budget2/internal/handlers/whatif 107.840s` and
+  `ok budget2/internal/services/retirement/analysis 61.155s`.
+* `gofmt -l` on all six GV3 manifest .go files -> empty output (clean).
+
+== CRITERION 1 — form hint from page data GuardrailPlanFloor ==
+PASS. Command: `go test -count=1 -run 'TestHandleWhatIfGuardrailPlanFloorHint' ./internal/handlers/whatif/`
+(green inside the package run above). Read the test: it drives the REAL
+handleWhatIf over a phase-decline fixture and asserts the RENDERED string
+"Your plan's lowest planned living spending is $5,000.00/mo in today's dollars
+(No-Go, year 1)..." plus
+`aria-describedby="guardrail-optimizer-floor-help guardrail-optimizer-status guardrail-optimizer-floor-plan-note"`,
+and the sibling _AbsentWithoutValue asserts the id is omitted from
+aria-describedby when the key is absent. Handler wiring confirmed at
+handlers.go:1330-1332 + 1350 (`retanalysis.LowestPlannedLivingReal`).
+
+== CRITERION 2 — results notice, adjacency, status path, row wording ==
+PASS.
+* Notice present/absent: TestGuardrailOptimizerPlanFloorNoticeBelow /
+  ...NoticeAbove (green) assert `data-guardrail-plan-floor-notice` and the
+  rendered figures "$5,000.00/mo from year 1 (No-Go)" / "not because of market
+  risk".
+* ADJACENCY asserted on RENDERED bytes, not the template: dumped the results
+  partial and printed the window from `data-guardrail-outcome`; the notice `<p>`
+  is the immediately following sibling AFTER `</h4>`, never nested.
+* STATUS PATH EXECUTED, not traced: `node scratchpad/status_probe.js` runs the
+  EXACT expression copied from guardrail_optimizer.html:128 against the real
+  rendered results body ->
+  STATUS = "No options met your minimum-spending target Your plan itself
+  schedules living spending down to $4,400.00/mo from year 1 (No-Go). Policies
+  without an absolute floor..." ; STATUS_INCLUDES_NOTICE: true ; negative
+  control with no notice element -> heading text only.
+  HARNESS GAP DISCLOSED: no jsdom is installed anywhere on this box, so I used a
+  hand-rolled tag scanner for querySelector/textContent. It does NOT exercise
+  `results.innerHTML=markup`, `htmx.process`, focus movement or aria-live
+  delivery; it proves only the string the code assigns to status.textContent.
+* ROW WORDING, live: probe over the plan-floor fixture printed all 8 rendered
+  rows -> 6 qualifying rows "Meets target", and exactly the two unfloored
+  baselines ("Current guardrails", "Guardrails disabled") carrying
+  "Below target — planned spending is below your minimum from year 1".
+
+== CRITERION 3 — worst-annual-cut explanation only on rendered "100.00" ==
+PASS. TestGuardrailOptimizerWorstAnnualCutSaturationExplained now parses each
+row by its own `<th scope="row">` and reads THAT row's 3rd `<td class="p-2">`
+(= Worst annual cut). It includes a 99.995 row; under mutation (c) the harness
+printed its cell as "100.00%", confirming the assertion is on the RENDERED
+string, not the float.
+
+== CRITERION 4 — search/qualification/tokens/Apply/seeds unchanged ==
+PASS. Attempt 2 changed NO production code: planned_living.go and
+handlers_guardrail_optimizer.go are md5-identical to the attempt-1 snapshot, and
+the only template edit is a Go template comment (proof below). GV3's production
+delta vs base 5fae968 in handlers_guardrail_optimizer.go touches only the notice
+struct, the base-projection call, the per-row flag and the "PlanFloor" data key;
+candidate grid, qualification, GraphToken/Token minting, Apply form and seed
+derivation are byte-identical to base. `make check` green.
+
+== COMMENT-ONLY TEMPLATE CHANGE — RENDERS IDENTICAL HTML ==
+Proved on rendered bytes, not by reading the diff. A throwaway probe rendered
+BOTH partials across 5 data shapes (form partial with no GuardrailPlanFloor,
+with a phased value, with an unphased fractional value; results partial with and
+without PlanFloor, covering qualifying / plan-design / plain / 99.995 rows),
+first with the attempt-2 template, then with the attempt-1 file swapped in:
+  85185 bytes both times, `cmp` clean, md5 4d5a5baa7b839272bd89b36106307d2b for
+  both -> RENDER_IDENTICAL.
+
+== MUTATION PROOFS (scratch copy; failing tests are PERMANENT, in the manifest) ==
+(a) planned_living.go:42, dropped `/ m.CumulativeInflation`:
+    KILLED by TestLowestPlannedLivingReal_DivisorSensitive
+    (internal/services/retirement/analysis/planned_living_test.go:109) ->
+    "fixture invariant broken: amount = 4900 looks like a NOMINAL value, not a
+    real one". Package result: FAIL budget2/internal/services/retirement/analysis.
+(b) handlers_guardrail_optimizer.go:172 widened to
+    `if floorNotice != nil && !c.Qualifies {`:
+    KILLED by TestGuardrailOptimizerRowWording_PlanDesignVsFundingRisk
+    (internal/handlers/whatif/guardrail_plan_floor_test.go:183) -> six grid rows
+    reported, e.g. `"Alternative grid-10-5-15-5-120": wording = "Below target —
+    planned spending is below your minimum from year 1", want plain "Below
+    target"`. Package result: FAIL budget2/internal/handlers/whatif.
+(c) guardrail_optimizer.html:181 `{{if eq $cut "100.00"}}` -> `"99.99"`:
+    KILLED by TestGuardrailOptimizerWorstAnnualCutSaturationExplained
+    (guardrail_plan_floor_test.go:352) -> three failures, incl.
+    `"Alternative not-saturated": cut cell explanation present = true, want
+    false; cell = "99.99% (no funded living spending...)"` and
+    `"Alternative rounds-up": ... cell = "100.00%"`. Package result: FAIL.
+(d) handlers_guardrail_optimizer.go:172, dropped `!c.Qualifies`:
+    SURVIVES -> `ok budget2/internal/handlers/whatif 35.841s`.
+    THIS REQUIREMENT IS UNSATISFIABLE AS WRITTEN, and I proved it rather than
+    asserting it. A throwaway probe rendered a QUALIFYING row twice, with
+    PlanDesignBelowTarget=false and =true, PlanFloor present:
+      "qualifying-row rendering IDENTICAL with flag false vs true (7431 bytes)"
+      control, non-qualifying row: "identical=false".
+    The template's `{{if $c.Qualifies}}Meets target{{else if and
+    .PlanDesignBelowTarget $.PlanFloor}}...` never reads the flag on a
+    qualifying row, and `grep -rn PlanDesignBelowTarget internal web` shows the
+    field has no other consumer (no JSON, no graph payload). So mutation (d) is
+    an EQUIVALENT MUTANT: it changes no observable byte, and NO test can
+    possibly fail on it. Not a defect in the worker's tests.
+    I additionally ran the stronger semantic variant the requirement was
+    presumably reaching for — handler mutation (d) PLUS reordering the template
+    to `{{if and .PlanDesignBelowTarget $.PlanFloor}}...{{else if $c.Qualifies}}
+    Meets target...` so the plan-design wording would win on qualifying rows.
+    That ALSO survives (`ok budget2/internal/handlers/whatif 34.921s`). Reason,
+    established empirically: every grid candidate sets MinMonthlySpendingReal ==
+    the requested floor, so the `(nil || !Enabled || < floor)` clause is false
+    for all of them, and the live probe shows the only rows that both qualify
+    and coexist with a notice are exactly those adequately-floored grid rows. I
+    could NOT construct a reachable input for which the pair of guards produces
+    wrong wording. FINDING for the lead, below.
+
+== FLAKE ASSESSMENT OF THE NEW ROW TEST ==
+No flake observed. `go test -count=1 -run
+'TestGuardrailOptimizerRowWording_PlanDesignVsFundingRisk$' ./internal/handlers/whatif/`
+run as 8 separate processes (8 independent wall-clock auto-seeds; the brief
+asked for 5): RUN 1..8 all `ok` (1.20s-1.51s).
+Margin quantified rather than asserted: a probe over
+guardrailPlanFloorAllMissFixture printed every row's rendered success figure
+across 3 independent auto-seeded handler runs:
+  iter 0/1/2: rows=8 meets=0 success pcts=0.00,0.00,0.00,0.00,0.00,0.00,0.00,0.00
+i.e. 0 of 1000 validation futures maintain a 7500/mo real floor on a 150000
+portfolio with no other income, against a 50% target, for all 8 rows. The
+failure probability is not merely "empirically stable" — it needs ~500/1000
+futures to flip, from an observed 0/1000. I judge the flake risk negligible and
+NOT a defect.
+Deterministic seam, since it was asked: one EXISTS at the analysis level —
+`models.GuardrailOptimizerRequest.Seed` is threaded through
+`analysis.EffectiveSeed(req.Seed)` (seed.go), and 0 means auto-seed from the
+clock. It is NOT reachable from this test: handleGuardrailOptimizer builds
+`req := models.GuardrailOptimizerRequest{FloorMonthlyReal: floor,
+TargetSuccessPct: target}` and reads no seed form field, so a handler-level test
+cannot pin the seed without a production change (out of a test-only attempt's
+scope).
+
+== TESTS ASSERT WHAT THEIR NAMES CLAIM ==
+Read both changed test files in full. _DivisorSensitive uses a fixture where the
+minimum NOMINAL month (0) differs from the minimum REAL month (24) and guards
+that invariant explicitly — mutation (a) trips the guard, not an incidental
+assertion. _PlanDesignVsFundingRisk parses per-row and t.Fatalf's on any
+template-shape change, duplicate row name, or zero rows, so it cannot silently
+skip. ...SaturationExplained is anchored to each row's own cell, so neither
+moving the explanation to another row nor a whole-body substring accident can
+pass it. All three were shown to fail under the mutation of the exact thing they
+guard.
+
+== SCOPE ==
+Attempt-2 delta (diff of the attempt-1 snapshot vs the final tree) is exactly
+three files, all inside manifest .swarm/manifests/GV3.2.files:
+  internal/handlers/whatif/guardrail_plan_floor_test.go   (tests only)
+  internal/services/retirement/analysis/planned_living_test.go (tests only)
+  web/templates/components/whatif/guardrail_optimizer.html (one {{/* */}} comment;
+    rendered output proven byte-identical)
+Everything else differing is FOREIGN and correctly attributed, not GV3:
+  GV2 — gv2_chart_test.go, charts.js, projection-chart.html, handlers_test.go,
+        cmd/server/gv2_tone_contrast_browser_test.go + testdata, and the chart
+        tone/colour/height hunks in handlers.go;
+  GV4 — guardrails.html, whatif.html, gv4_guardrail_anchors_test.go, and the
+        GuardrailAnchors/buildGuardrailAnchors hunks in handlers.go;
+  GV1 — `in.Hooks = retirement.DefaultHooks()` in
+        handlers_guardrail_optimizer.go and guardrail_optimizer_hooks_test.go
+        (TestGuardrailOptimizerSearchUsesPlanHooks /
+        ...EveryCandidateUsesPlanHooks), plus
+        internal/services/retirement/engine/guardrail_triggers_test.go.
+        I flagged this line while checking criterion 4 because it does feed the
+        SAME `in` into OptimizeGuardrails (which copies input hooks per
+        candidate at guardrail_optimizer.go:78) — but it is GV1's change with
+        GV1's own tests, already accepted in GV1's lane, so I attribute rather
+        than FAIL.
+Nothing in .swarm/critical.globs (settings.go, scripts/deploy*, Makefile) was
+modified. testdata/uploads and tmp/ are runtime artifacts, unchanged by GV3.
+
+== FINDINGS FOR THE LEAD (not FAILs) ==
+F1 (against required mutation (d)): the mutation the brief mandates be killed is
+provably an equivalent mutant — byte-identical rendering, demonstrated above. No
+test can satisfy that requirement; the requirement, not the work, is at fault.
+F2 (residual, criterion 2): "only for !Qualifies" is guarded twice — once in the
+handler (`!c.Qualifies`) and once in the template (`{{if $c.Qualifies}}` first
+branch) — and each masks the other, so breaking BOTH simultaneously (my variant
+d') is caught by no test. I could not construct a reachable input where that
+combination renders wrong wording, so I do not treat it as a defect; if the lead
+wants it closed, the cheap fix is a render-level test that a qualifying row with
+PlanDesignBelowTarget=true and PlanFloor set still reads "Meets target".
+F3 (environment, not GV3): /tmp/budget2-gv-final-snap was deleted and its path
+reused by another agent during this verification. Any later checker pointed at
+that path will be verifying the wrong tree.

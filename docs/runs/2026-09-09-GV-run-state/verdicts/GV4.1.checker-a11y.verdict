@@ -1,0 +1,145 @@
+VERDICT: PASS
+CHECKER: checker-a11y
+FAMILY: anthropic
+TASK: GV4
+ATTEMPT: 1
+---
+Scope confirmed via `git diff` in my own `cp -a` snapshot at
+/tmp/claude-1000/.../scratchpad/gv4-copy: GV4 touched exactly
+web/templates/components/whatif/guardrails.html (heading rename, GK sentence
+moved, new `#whatif-guardrail-anchors` block) and
+web/templates/pages/whatif.html (matching OOB `<div id="whatif-guardrail-anchors"
+hx-swap-oob="true">` line), plus handlers.go data plumbing
+(buildGuardrailAnchors/GuardrailAnchors struct — no markup). Diff text
+reproduced and matches the task description exactly.
+
+Method: real server render, not hand-built HTML. Built+ran the actual Go
+server from the snapshot via `scripts/whatif-verify.sh start 8089` (isolated
+data copy; verified `data` dir was dereferenced, not the live symlink) and
+audited http://localhost:8089/whatif with Playwright 1.63 (chromium)
+loading axe-core 4.13 (the @axe-core/cli-bundled axe.min.js) via
+page.addScriptTag against the live DOM, plus a plain-fetch capture of the
+byte-identical server HTML for structure checks. Plan has guardrails
+enabled so both anchor lines render with real figures ($1,920,000.00 /
+$2,880,000.00). Server stopped cleanly at the end
+(`scripts/whatif-verify.sh stop 8089`).
+
+A-1/A-2 axe, light+dark, zero violations:
+  node gv4_audit.cjs (axe.run with tags wcag2a/wcag2aa/wcag21a/wcag21aa/wcag22aa)
+  light: violations: []
+  dark (documentElement.classList: dark, localStorage.theme=dark, matching
+  the app's own toggle mechanism in base.html): violations: []
+  Full JSON saved: scratchpad/gv4-axe-results.json
+  Additional scoped run against just the guardrails card
+  (gv4_axe_detail.cjs): passes includes "color-contrast": true;
+  violations: []; incomplete: [].
+
+A-3 contrast, computed colors (getComputedStyle), card background actually
+behind the two new lines (confirmed NOT the tinted Floor/Ceiling boxes —
+the anchors div is a direct child of the card's `bg-white dark:bg-gray-800`
+container, per DOM `.closest('.rounded-lg')`):
+  light: cardBg rgb(255,255,255); text-negative rgb(190,18,60) -> 6.29:1;
+         text-positive rgb(4,120,87) -> 5.48:1
+  dark:  cardBg rgb(41,37,36) (tailwind.config.js remaps gray-800 to
+         warm-stone #292524, confirmed in source); text-negative
+         (rose-300) rgb(253,164,175) -> 8.02:1; text-positive
+         (emerald-400) rgb(52,211,153) -> 7.89:1
+  Both lines measured 14.875px / weight 400 (body text, 4.5:1 threshold) —
+  every figure clears it by a wide margin in both themes.
+  Contrast ratios computed with the standard WCAG relative-luminance
+  formula (python3, sRGB->linear, script inline in session).
+  Screenshots: scratchpad/gv4-light-card.png, scratchpad/gv4-dark-card.png
+  (card crop) and gv4-light-full.png/gv4-dark-full.png (full page).
+
+A-6 structure: page has exactly one <h1> ("What-If Analysis"), heading
+levels h1->h2->h3 never skip (full heading list captured via
+gv4_structure.cjs), header/nav/main landmarks present (footer: 0 — see
+OBSERVATION, pre-existing/out of scope). The renamed h2 "Spending
+guardrails" sits in the same position in heading order as before (still
+directly after "Retirement Spending Phases"/h3 "Spending Trajectory", still
+followed by h3 "Optimize guardrails"). `#whatif-guardrail-anchors`
+children are both `<P>` (confirmed via DOM query) — no heading/list misuse.
+
+A-9 never color-only: both lines carry the distinction in words — "cut ...
+falls below" vs "raise ... rises above" — not only red/green, confirmed
+visually in both screenshots above.
+
+A-10 live updates, isolated from a Playwright click-actionability artifact:
+first pass used `locator(...).click()` on "Apply Guardrails", which
+Playwright auto-scrolls into view before clicking (a test-tool artifact,
+reproduced identically on the pre-GV4 template via `git stash` of just the
+two GV4 template files — same ~7300px scroll jump with or without GV4's
+changes, so NOT attributable to GV4). Re-tested with a programmatic
+`form.requestSubmit()` (gv4_live3.cjs) that isolates real app behavior:
+  scroll before/after: 800 / 800 (unchanged)
+  focus before/after: floor-drop-pct-input / floor-drop-pct-input (unchanged,
+  HTMX did not steal focus)
+  anchors before/after: $1,920,000.00 -> $2,112,000.00 (Drop % 10->12,
+  OOB swap updated correctly, no stale figures)
+No flash observed (single DOM replace, no transition/animation on the
+anchors element — grep shows only the pre-existing button's
+`transition-colors` hover state, unrelated to GV4's new markup).
+
+Toggle off/on (gv4_toggle.cjs): after unchecking "Enable spending
+guardrails" (real checkbox `change` event, form auto-submits per the
+pre-existing `onchange="this.form.requestSubmit()"`), the anchors div goes
+to `<div id="whatif-guardrail-anchors">\n\n</div>` — empty, no background
+of its own (it sits directly on the white/gray-800 card, so an empty state
+here is invisible, not an empty coloured box — A-13/A-10 "lines
+disappear/appear cleanly" is satisfied). Re-checking restores both lines
+with current figures. See OBSERVATION below re: the Floor/Ceiling tinted
+boxes themselves, which is pre-existing and out of scope.
+
+A-4/A-5 keyboard/focus: tab sequence from floor-drop-pct-input reaches
+every guardrails-card control in order (floor-cut-pct-input,
+ceiling-rise-pct-input, ceiling-raise-pct-input, min-spending-pct-input,
+max-spending-pct-input, guardrail-real-floor, submit BUTTON) — the new
+anchors `<p>` elements are correctly NOT in the tab sequence (static text,
+not interactive, so nothing to reach or lose). Focus-visible ring
+(box-shadow 0 0 0 2px indigo) confirmed on floor-drop-pct-input — unchanged
+sitewide focus styling, GV4 did not touch any focusable element's markup.
+
+A-14: `#whatif-guardrail-anchors` outerHTML (both locations, form-embedded
+and OOB template) contains no onclick/onchange/inline handler — plain `<p
+class="...">` tags only. The pre-existing checkbox `onchange` on the
+"Enable spending guardrails" input is unmodified by GV4 (present
+byte-identical pre- and post-GV4 in the diff) — OBSERVATION, not a GV4
+finding.
+
+A-15 target size / reflow at 1024px and 375px (gv4_misc.cjs): no horizontal
+overflow on the card or document at either width; both anchor lines render
+on their own line, `scrollWidth === clientWidth` for each `<p>` (no
+clipping/wrap-overflow). Apply Guardrails button (pre-existing, unchanged)
+measured 355.8 x 29.75 CSS px, clears 24x24.
+
+OBSERVATIONS (non-blocking, out of GV4's scope per `git diff master`
+attribution):
+- The Floor/Ceiling tinted boxes (`bg-negative-soft`/`bg-positive-soft`)
+  remain visible/stale in the DOM after toggling "Enable spending
+  guardrails" off, because the checkbox's `hx-target="#whatif-results"`
+  submit only swaps the results panel plus the explicitly OOB'd
+  `#whatif-guardrail-anchors` div — it does not re-render the guardrails
+  card's own `{{if .Settings.Guardrails.Enabled}}` block. Reproduced
+  byte-for-byte identically on the pre-GV4 template (git-stashed GV4's two
+  template files, rebuilt, retested: same stale boxes). Pre-existing,
+  unrelated to the anchors feature — candidate for a future task, not a
+  GV4 defect.
+- `<footer>` landmark count is 0 on /whatif. Not introduced by GV4 (no
+  footer-related content in the diff); flagged for the backlog, not a FAIL
+  here.
+- GV2's projection-chart green-trace contrast defect (explicitly called
+  out as known/being reworked) and GV3's optimizer notice/hint were not
+  re-audited beyond confirming they are untouched by this diff — out of
+  scope per the task brief.
+- The Playwright `locator.click()` auto-scroll-into-view artifact (not an
+  app defect at all — it's Chromium/Playwright actionability behavior)
+  should not be mistaken for an A-10 failure in future manual QA; use
+  `requestSubmit()` or keyboard activation to test real scroll/focus
+  preservation, as done here.
+
+Evidence files (scratchpad, my own cp -a working copy at
+/tmp/claude-1000/-home-darrell-work-agents2--claude-worktrees-guardrails-graph-visualization-b63dd6/821e4fa4-258e-45ae-9411-2e5b05425667/scratchpad):
+  gv4_audit.cjs, gv4-axe-results.json, gv4-light-card.png, gv4-dark-card.png,
+  gv4-light-full.png, gv4-dark-full.png, gv4_structure.cjs,
+  gv4_live2.cjs/gv4_live3.cjs, gv4_toggle.cjs, gv4_toggle2.cjs (+_old.cjs),
+  gv4-card-after-toggle.html, gv4_misc.cjs, gv4_axe_detail.cjs.

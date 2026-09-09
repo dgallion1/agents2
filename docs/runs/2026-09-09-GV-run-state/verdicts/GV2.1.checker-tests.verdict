@@ -1,0 +1,210 @@
+VERDICT: FAIL
+CHECKER: checker-tests
+FAMILY: anthropic
+TASK: GV2
+ATTEMPT: 1
+---
+Work copy: cp -a /tmp/budget2-gv2-snap -> <scratch>/gv2-verify (base 5fae968 exported read-only
+with `git --git-dir=/home/darrell/bin/ai/budget2/.git archive 5fae968` into <scratch>/base5fae968;
+no git checkout/stash/reset/commit run anywhere; the worker tree was never written to).
+
+SUMMARY: the oracle passes and criteria 1, 2, 4, 5, 6 are demonstrated. Criterion 3 FAILS the
+required permanent-evidence bar: the mandated mutation proof (b) is NOT caught by any committed
+test. `go test -count=1 ./...` exits 0 with the real-mode CPI divisor deliberately wrong.
+
+============ ORACLE ============
+$ bash .swarm/tier3/GV2/accept.sh <scratch>/gv2-verify   -> exit 0
+  last line: ORACLE PASS
+  subtests: --- PASS: TestGV2OracleEngineThresholdsAreExact / TestGV2OracleChartTracesBothModes /
+            TestGV2OracleNoEventsStillShowsTriggers / TestGV2OracleDisabledGuardrailsEmitNothing
+
+============ CRITERION 1 — build/vet/test, make check, gofmt, css-verify ============
+PASS (with one pre-existing FINDING on gofmt).
+- Inside accept.sh: `go build ./...`, `go vet ./internal/models/ ./internal/services/retirement/...
+  ./internal/services/mcpsvc/... ./internal/handlers/whatif/`, and
+  `go test -count=1 -timeout=900s ./internal/models/ ./internal/services/... ./internal/handlers/...`
+  all green (e.g. "ok budget2/internal/services/retirement/engine 0.056s",
+  "ok budget2/internal/handlers/whatif 26.224s"). Cache defeated by -count=1.
+- $ cd <scratch>/gv2-verify && make check   -> MAKE_CHECK_EXIT=0
+  log lines: "staticcheck ./..." , "govulncheck ./..." -> "Your code is affected by 0 vulnerabilities.",
+  "tailwind.css is up to date"  (== `make css-verify` clean), and final "✓ all checks passed".
+- $ gofmt -l internal/  is NOT empty: 22 files. FINDING, NOT a GV2 defect —
+  $ gofmt -l internal/ on <scratch>/base5fae968 lists the SAME 22 files; `comm -13` of the two
+  sorted lists is empty ("NEW on worker (not on base):" -> nothing). The 22 are struct-comment
+  realignments produced by the go1.26.3 gofmt (go.mod says go 1.26 / toolchain go1.26.6); none of
+  them is a GV2 file. $ gofmt -l on the 7 GV2 .go files prints nothing.
+
+============ CRITERION 2 — engine exactness + omitempty ============
+PASS on behaviour; one narrow permanent-evidence gap reported as a finding.
+- Permanent tests: internal/services/retirement/engine/guardrail_triggers_test.go
+  TestGuardrailTriggerLevelsMatchEvaluate (cut+raise fixture: asserts CutTrigger==Peak*(1-drop/100),
+  RaiseTrigger==Baseline*(1+rise/100) on EVERY year; year-0 peak/baseline == PortfolioValue;
+  event.Portfolio == Months[n*12-1].PortfolioBalance; cut => Portfolio <= prev CutTrigger and
+  YearlySummaries[n].GuardrailPeak == event.Portfolio; raise => >= prev RaiseTrigger and Baseline ==
+  event.Portfolio; no-event years strictly between the lines unless the multiplier is pinned),
+  TestGuardrailTriggerLevelsNoEventFixture, TestGuardrailTriggerLevelsZeroWhenDisabled.
+  $ go test -count=1 ./internal/services/retirement/engine/ -run TestGuardrailTriggerLevels -> ok
+- Source-of-truth: the ONLY threshold arithmetic in the repo is
+  internal/services/retirement/engine/stepper.go:323-324; month.go copies the four fields onto the
+  year summary; engine/guardrails.go is byte-identical to base (semantics untouched).
+- Nil-safety unchanged: the new `s.Guardrails.FloorDropPct` deref at stepper.go:323 sits in the same
+  `st.Guardrails != nil` block that already dereferences s.Guardrails via
+  `st.Guardrails.Evaluate(s.Guardrails, ...)` at stepper.go:295 on master — no new panic surface.
+- FINDING (permanent-evidence gap, narrow): "no JSON keys" is asserted only by the EPHEMERAL oracle.
+  MUTATION D: removed `,omitempty` from all four tags in internal/models/whatif.go ->
+  `go test -count=1 ./internal/...` still passes with zero failures. TestGuardrailTriggerLevelsZeroWhenDisabled
+  asserts the values are 0 but nothing asserts key absence. (For float64, 0 + omitempty does imply
+  key absence, so today's behaviour is correct; only the guard is missing.)
+
+============ CRITERION 3 — chart JSON both modes / crossing / markers ============ *** FAIL ***
+Behaviour is correct today (oracle + live server both confirm), but the REQUIRED mutation proof (b)
+is not caught by any permanent test, so the criterion's committed evidence does not exist.
+
+Behaviour evidence (isolated server, `scripts/whatif-verify.sh start 8091`, live data COPIED by
+cp -rL to /tmp/budget2-whatif-verify-8091; stopped afterwards; live data/ untouched — see SCOPE):
+  $ curl /whatif/chart/projection?display_dollars=nominal|real
+  nominal: traces Portfolio Balance(y), Key events(y), Cut trigger(y,40 pts), Raise trigger(y,40 pts),
+           Planned(y2,468), After guardrails(y2,468), Guardrail cuts / raises(y2,2)
+           layout yaxis.domain [0.42,1]; yaxis2 {anchor:x, domain:[0,0.3], tickformat:$,.0f,
+           title:"Living budget ($/mo)"}; 39 projection years + 1 trailing point (x last = 38.9167,
+           y repeated) ; hover "Cut if balance ≤ $1,920,000.00 at the year 1 check" ...
+           "Cut if balance ≤ $3,373,049.86 at the year 39 check"
+  real:    same shape; yaxis2 title "Living budget ($/mo, today's dollars)"; last cut y 761028.6996
+  markers: x [9,19]; nominal y [10678.7655, 13876.7722] (== After-guardrails at month Year*12);
+           real y [7568, 6708]; text ["Year 9: raise 10% (110% of plan)<br>$9,707.97/mo →
+           $10,678.77/mo", "Year 19: raise 9% ..."] == guardrailEventHoverText (GM contract intact).
+  Disabled case (no yaxis2, no traces): TestBuildProjectionChartDataGuardrailDisabledOmitsTraces +
+  oracle TestGV2OracleDisabledGuardrailsEmitNothing, both green.
+
+MUTATION (b) — REQUIRED PROOF, NOT SATISFIED:
+  handlers.go:816  `idx := (i+1)*12 - 1`  ->  `idx := (i + 1) * 12`   (wrong real-mode CPI index)
+  $ go test -count=1 ./internal/handlers/whatif/ -run 'TestBuildProjectionChartData|TestBuildGuardrailChartSummary|TestGuardrailGraph'
+      -> ok  budget2/internal/handlers/whatif  0.063s     (worker's chart test PASSES)
+  $ go test -count=1 ./internal/...   -> no failures
+  $ go test -count=1 ./...            -> EXIT=0           (whole module blind to the defect)
+  The defect is real and detectable — only the ephemeral oracle sees it:
+  $ go test -overlay <oracle> ./internal/handlers/whatif/ -run ^TestGV2Oracle
+      -> "CRITERION 3 FAIL (real): Cut trigger y[0]=390243.902439, want 391047.740983"
+  Root cause: TestBuildProjectionChartDataGuardrailTriggerTraces asserts only STRUCTURE — trace
+  names, line.shape=="hv", line.dash=="dash", len(x)==ProjectionYears+1, yaxis=="y2",
+  len(afterY)==len(Months), layout["yaxis2"]!=nil, and marker y==afterY[e.Year*12]. It never
+  compares a single Cut/Raise trigger y value, nor any Planned/After y value, to the specified
+  formula, in either mode — despite its doc comment claiming coverage "in both display modes".
+  Corroborating probe, MUTATION E: handlers.go:881 `plannedY[i] = mo.PlannedLivingExpenses/divisor`
+  -> `mo.AdjustedLivingExpenses/divisor` (Planned trace silently reads the post-guardrail series):
+  $ go test -count=1 ./internal/handlers/... ./internal/services/... -> no failures;
+  oracle catches it: "CRITERION 3 FAIL (nominal): Planned point 12 = (1, 11070.000000), want (1, 12300.000000)".
+  WHAT IS MISSING: a permanent test in internal/handlers/whatif that asserts, for both "nominal" and
+  "real", (i) Cut/Raise trigger y[i] == YearlySummaries[i].GuardrailCutTrigger|RaiseTrigger divided
+  by Months[min((i+1)*12-1, last)].CumulativeInflation, (ii) x[i]==i and the trailing point,
+  (iii) Planned/After y[i] == Months[i].PlannedLivingExpenses|AdjustedLivingExpenses / that month's
+  CumulativeInflation, and (iv) the hover-text strings. The oracle_test.go is overlay-injected and
+  never committed, so none of this survives the run.
+
+============ CRITERION 4 — summary line rendered strings ============ PASS
+- MUTATION (c): handlers.go `": %s%.0f%%"` -> `": %s%.1f%%"`
+  $ go test -count=1 ./internal/handlers/whatif/ -run TestBuildGuardrailChartSummary
+    --- FAIL: TestBuildGuardrailChartSummary
+      EventsLine = "1 cut (year 35: -10.0%, $13,821.49/mo → $12,439.35/mo)."
+      want        "1 cut (year 35: -10%, $13,821.49/mo → $12,439.35/mo)."
+  CAUGHT BY: TestBuildGuardrailChartSummary (gv2_chart_test.go:158) — a rendered-STRING comparison
+  on a fractional-cent fixture (13821.494999 / 12439.345001 / triggers x.4949 and x.5051), and it
+  re-derives the expectation through the events list's own arithmetic
+  ((Prev-Mult)/Prev*100, "%.0f", templates.FormatMoney).
+- Cross-surface rendered-string equality on the live plan (isolated server, GET /whatif):
+    summary  <p id="projection-guardrail-summary">: "Guardrails: 2 raises (year 9: +10%,
+      $9,707.97/mo → $10,678.77/mo; year 19: +9%, $12,720.37/mo → $13,876.77/mo). Next cut if the
+      balance falls below $3,373,049.86; next raise if it rises above $4,217,571.38 (future dollars;
+      today: $761,028.70 / $951,569.94). See Guardrail Events on the Risk tab."
+    events list (same page, Risk tab): "Year 9: Raise by 10% (110% of plan) $9,707.97/mo →
+      $10,678.77/mo" and "Year 19: Raise by 9% (120% of plan) $12,720.37/mo → $13,876.77/mo"
+      -> identical percentage and money strings on both surfaces.
+    last-year-summary thresholds: chart JSON nominal last Cut/Raise trigger 3373049.8588 /
+      4217571.3813 render as $3,373,049.86 / $4,217,571.38; real-mode last values 761028.6996 /
+      951569.9435 render as the summary's "today: $761,028.70 / $951,569.94" — same
+      CumulativeInflation divisor, one rounding path (templates.FormatMoney) everywhere.
+  Note: html/template emits "+" as "&#43;" in the summary; the RENDERED string is "+10%".
+- "no cuts or raises" variant: TestBuildGuardrailChartSummaryNoEvents; hidden when disabled:
+  TestBuildGuardrailChartSummaryNilWhenDisabled (nil settings, nil Guardrails, Enabled:false, nil
+  projection, empty YearlySummaries).
+
+============ CRITERION 5 — optimizer base-case preview ============ PASS
+- internal/handlers/whatif/guardrail_graph_test.go TestGuardrailGraphExactPolicyAndNoMutation now
+  asserts, over modes {real,nominal} x policies {selected,current,no-guardrails}, on the REAL
+  handler's HTTP response body (handleGuardrailOptimizerGraph -> decoded JSON), that
+  "Cut trigger"/"Raise trigger"/"Planned"/"After guardrails" are present iff cfg != nil && cfg.Enabled
+  (the "no-guardrails" candidate sets cfg = nil).
+  $ go test -count=1 ./internal/handlers/whatif/ -run TestGuardrailGraph -> ok
+
+============ CRITERION 6 — server-rendered text, no inline handlers ============ PASS
+- $ curl http://localhost:8091/whatif  ->  the summary is real server-rendered HTML text inside
+  <p id="projection-guardrail-summary" class="mt-2 text-body-sm text-gray-600 dark:text-gray-300">
+  (quoted in full under criterion 4); not JS-generated.
+- $ grep -n 'on[a-z]*=' web/templates/components/whatif/projection-chart.html -> no matches; the
+  added block carries only id/class; no .js file was added or modified (see SCOPE).
+- Retheme/height: no charts.js change was needed — charts.js layoutAxisKeys() (line 41) already
+  collects every /^[xy]axis\d*$/ key from _fullLayout and feeds themedLayoutUpdate at line 631, so
+  yaxis2 is themed; layout.height=520 is server-sent and untouched by the relayout paths, and
+  #chart-projection.chart-container-tall{min-height:540px} (id specificity) beats base.html's later
+  inline `.chart-container{min-height:300px}` (styles.css is linked at base.html:32, the inline
+  <style> starts at line 34 — confirmed). I did NOT execute a jsdom probe of the theme toggle;
+  A-1..A-15 and the visual/theme behaviour remain checker-a11y's lane.
+  OBSERVATION (not a criterion): layout.height=520 and the chart-container-tall class are applied
+  unconditionally, so the projection chart is also 520px tall when guardrails are DISABLED (single
+  panel). Not prohibited by the written criteria; flagged for the UI/a11y lane.
+
+============ SURFACE ENUMERATION (threshold / event figures) ============
+$ grep -rn 'FloorDropPct|CeilingRisePct' --include=*.go --include=*.html --include=*.js (non-test)
+  -> threshold ARITHMETIC exists at exactly two places, both in the engine:
+     engine/stepper.go:323-324 (the new GV2 derivation) and engine/guardrails.go:47,58 (Evaluate's
+     pre-existing comparison, file unchanged vs 5fae968).
+  -> every other hit is a raw config percentage being displayed or parsed:
+     guardrails.html:23,43 (settings <input> values), guardrail_optimizer.html:199 (candidate
+     description, GV3 territory), handlers_rates.go:474-499 (defaults + form parsing),
+     analysis/guardrail_optimizer.go:179,187 (candidate grid construction).
+Surfaces rendering a guardrail threshold or event figure after this change:
+  1. Chart "Cut trigger"/"Raise trigger" traces  -> read ys.GuardrailCutTrigger/GuardrailRaiseTrigger
+     (handlers.go ~806-826). No recomputation.
+  2. Their hover text -> formats the same cy/ry values via templates.FormatMoney.
+  3. Chart budget panel "Planned"/"After guardrails" -> Months[i].PlannedLivingExpenses /
+     AdjustedLivingExpenses (engine fields).
+  4. Chart markers "Guardrail cuts / raises" -> event fields + guardrailEventHoverText (unchanged).
+  5. Summary line under the chart -> buildGuardrailChartSummary reads the LAST YearlySummary's
+     GuardrailCutTrigger/GuardrailRaiseTrigger and its CumulativeInflation; event figures from
+     GuardrailEvent. No recomputation.
+  6. Guardrail Events list (guardrails.html:104-124) -> GuardrailEvent fields only; unchanged.
+  7. projection-breakdown.html:33-41 -> only $ys.GuardrailMultiplier (tint/title); no threshold.
+  8. MCP plan view -> $ grep -rn 'Guardrail' internal/services/mcpsvc/plan/*.go (non-test):
+     NO matches; the MCP surface renders no guardrail threshold figure. Its JSON view of
+     ProjectionYearSummary is unaffected because the four fields are omitempty (criterion 2).
+  9. lifestyle-outcomes.html mentions guardrails in prose only (no figure).
+
+============ SCOPE ============
+Tree comparison: SHA-256 of every file (excluding .git, data, node_modules, tmp, .swarm) in
+<scratch>/gv2-verify vs <scratch>/base5fae968 (base exported with `git archive 5fae968`).
+ADDED (6):   internal/handlers/whatif/guardrail_optimizer_hooks_test.go        [FOREIGN — GV1]
+             internal/handlers/whatif/guardrail_plan_floor_test.go             [FOREIGN — GV3]
+             internal/handlers/whatif/gv2_chart_test.go                        [GV2 manifest]
+             internal/services/retirement/analysis/planned_living.go           [FOREIGN — GV3]
+             internal/services/retirement/analysis/planned_living_test.go      [FOREIGN — GV3]
+             internal/services/retirement/engine/guardrail_triggers_test.go    [GV2 manifest]
+MODIFIED (9):internal/handlers/whatif/guardrail_graph_test.go                  [GV2 manifest]
+             internal/handlers/whatif/handlers.go                              [GV2 manifest]
+             internal/handlers/whatif/handlers_guardrail_optimizer.go          [FOREIGN — GV1+GV3]
+             internal/models/whatif.go                                         [GV2 manifest]
+             internal/services/retirement/engine/month.go                      [GV2 manifest]
+             internal/services/retirement/engine/stepper.go                    [GV2 manifest]
+             web/static/css/styles.css                                         [GV2 manifest]
+             web/templates/components/whatif/guardrail_optimizer.html          [FOREIGN — GV3]
+             web/templates/components/whatif/projection-chart.html             [GV2 manifest]
+REMOVED: none.  Nothing outside the GV2 manifest + declared GV1/GV3 foreign territory changed.
+.swarm/critical.globs (internal/services/retirement/settings.go, scripts/deploy*, Makefile):
+NONE touched.
+engine/guardrails.go byte-identical to base (guardrail semantics untouched, per SPEC §3).
+Additive omitempty fields only; no existing ProjectionYearSummary field changed.
+Live data: /home/darrell/bin/ai/budget2/data/settings/whatif.json has mtime 2026-09-09 08:02:14,
+which PREDATES this verification session's first action (snapshot copy ~08:2x, server 08:37) —
+attributable to another session, not to me. The verify server ran on an isolated cp -rL copy at
+/tmp/budget2-whatif-verify-8091 and was stopped ("stopped and cleaned :8091"). Neither
+/home/darrell/bin/ai/budget2/.worktrees/guardrail-viz nor /home/darrell/bin/ai/budget2 was used or
+written. No git checkout/stash/reset/commit was run.

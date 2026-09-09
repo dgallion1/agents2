@@ -1,0 +1,95 @@
+VERDICT: PASS
+CHECKER: checker-second
+FAMILY: adversarial
+TASK: GV1
+ATTEMPT: 1
+---
+Scope check: `git diff --stat 5fae968` (in a `cp -a` scratch copy at /tmp/gv1-check) shows
+exactly one line changed in internal/handlers/whatif/handlers_guardrail_optimizer.go
+(`in.Hooks = retirement.DefaultHooks()` after `buildEngineInput`), plus the new
+untracked test file guardrail_optimizer_hooks_test.go — matches the manifest exactly.
+`data` is the pre-existing broken symlink, untouched.
+
+Attack 1 — other engine-input builders / OptimizeGuardrails callers that could still
+drop hooks (split-classification-style attack, per the fear that GV1 fixes one call
+site but leaves a twin unfixed):
+  grep -rn "buildEngineInput(" internal/ cmd/ | grep -v _test.go   -> 13 call sites.
+  grep -rn "OptimizeGuardrails(" internal/ cmd/ | grep -v _test.go -> only
+    handlers_guardrail_optimizer.go:114 calls it; the func itself lives in
+    guardrail_optimizer.go. No other caller exists (no MCP tool touches it —
+    `grep -rn guardrail internal/services/mcpsvc/` returns nothing outside tests).
+  grep -rn "\.Hooks = " -> handlers_guardrail_graph.go (preview endpoint, already had
+    hooks pre-GV1), handlers_sweep.go, handlers.go:1288, orchestrator.go (2x) — all
+    pre-existing, all already hooked. handleApplyGuardrailOptimizer never builds an
+    engine.Input at all (it only mutates and saves WhatIfSettings + redirects); no
+    hooks concern there, and its fingerprint (sha256 of marshaled settings) is
+    unrelated to Hooks so the fix cannot invalidate it.
+  Conclusion: handleGuardrailOptimizer was the only unhooked caller; fixed, no twin left.
+
+Attack 2 — does the new regression test actually discriminate (would it catch a
+revert of the fix)? Mutated handlers_guardrail_optimizer.go in the scratch copy to
+delete the `in.Hooks = retirement.DefaultHooks()` line, rebuilt (compiles clean —
+`retirement` import still used elsewhere), reran:
+  go test ./internal/handlers/whatif/... -run GuardrailOptimizer -v
+  -> both TestGuardrailOptimizerSearchUsesPlanHooks and
+     TestGuardrailOptimizerEveryCandidateUsesPlanHooks FAIL on the reverted code,
+     all other guardrail-optimizer tests still pass (no collateral breakage).
+Restored the file; full suite green again (see below).
+
+Attack 3 — fixture legitimacy: does SocialSecurityConfig inject income only through
+hooks, not a manual income source that would mask the comparison? Read
+internal/services/retirement/social_security.go and engine_hooks.go:
+DefaultHooks wires SocialSecurityProjectionActive/ProjectedSocialSecurityIncome
+directly from the SocialSecurity config; the fixture sets only
+s.SocialSecurity = &models.SocialSecurityConfig{...} (no s.IncomeSources entry),
+so the with/without-hooks difference the test measures is exactly the SS-optimizer
+income path, not a manual override.
+
+Attack 4 — seed-derivation identity between the optimizer's internal simulator
+(runGuardrailOptimizerScenarios) and the test's direct comparison call
+(analysis.MonteCarloWithResults -> runSimulations): both derive per-run seeds via
+`master := rand.New(rand.NewSource(baseSeed)); seeds[i] = master.Int63()` then
+`rand.New(rand.NewSource(seeds[i]))` per run — byte-identical derivation. The two
+paths differ only in config.MinMonthlySpendingReal/CaptureSpendingYears (floor
+tracking); traced the sim loop (monte_carlo.go): the depletion decision
+(`Survives: !depleted`) is fixed at the depletion month, and the only effect of a
+non-nil floorTracker is to keep the per-run loop running (consuming further RNG
+draws) *after* depletion instead of breaking early — draws that cannot retroactively
+change an already-fixed `depleted` flag. So DepletionPaths equality is not
+accidental one-shot luck; it's structurally guaranteed by RunSingleMonteCarloSimulation's
+control flow, and the oracle (independent fixture, independent seeds) confirms it: see
+below, exact-count equality held on 9 distinct candidates across two independent test
+files with different seeds/fixtures.
+
+Criterion 1 (build/vet/tests green), in the scratch copy:
+  go build ./...                    -> clean
+  go vet ./...                      -> clean
+  go test ./... (all packages)      -> all `ok`, including
+     budget2/internal/handlers/whatif and budget2/internal/services/retirement/...
+
+Criterion 2+3 (oracle): ran the lead's
+  .swarm/tier3/GV1/accept.sh /tmp/gv1-check
+  == criterion 2+3 output ==
+  TestGV1OracleSearchUsesPlanHooks: optimizer current-row depletion=161;
+    direct MC with hooks=161; without hooks=1000  -> PASS
+  TestGV1OracleEveryCandidateUsesPlanHooks: 8 candidates (grid + both baselines),
+    optimizer depletion == hooked direct depletion on every one -> PASS
+  Final line: ORACLE PASS
+Also confirmed the oracle's own both-ends calibration logs
+(.swarm/tier3/GV1/calibration-fail.log / -pass.log): the unfixed code produces
+CRITERION 2/3 FAIL with the exact discriminating numbers (1000 vs 172/168 depleted),
+the fixed code passes — the oracle is proven to fail on the real defect and pass on
+the real fix, not just by name.
+
+Criterion 4 (existing GO tests unchanged): `git status --porcelain` shows only the
+manifested handler file modified and the new test file untracked; no existing
+_test.go file in the diff. accept.sh's own criterion-4 section
+(`go test ... -run Guardrail`) is green.
+
+Out-of-scope observations (do not affect this verdict):
+- .swarm-go/tier3/GO7/oracle_test.go and sibling GO1/GO2 tier3 dirs are leftover
+  infrastructure from a prior run, already committed at 40722be; not a compiled
+  Go package under this module path (`go test ./.swarm-go/...` matches no
+  packages) and untouched by GV1. Noted for the lead's awareness only.
+
+No defect found that is both concrete and in-scope. VERDICT: PASS.
