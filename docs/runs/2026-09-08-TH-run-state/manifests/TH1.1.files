@@ -1,0 +1,68 @@
+web/static/js/insights.js
+web/static/js/insights-trends-cap.test.cjs
+# notes
+node --test "web/static/js/**/*.test.cjs" -> 21 tests, 21 pass, 0 fail (11 in insights-trends-cap.test.cjs, incl. 4 new themedTrendPayload tests; 10 unrelated in page-refresh.test.cjs)
+go build ./... -> OK (no output)
+go test ./internal/handlers/insights/... ./internal/templates/... -> ok budget2/internal/handlers/insights 1.246s; ok budget2/internal/templates 1.329s
+make css-verify -> "tailwind.css is up to date"
+/usr/bin/git diff 258f058 --stat (HEAD == 258f058, the branch point) -> only the two files above changed (111 insertions, 17 deletions); `git diff master --stat` instead shows ~80 unrelated files because the worktree's local `master` ref has since advanced past 258f058 (an unrelated guardrail-optimizer feature merged into master while this task was in flight) -- verified against 258f058 (the actual branch point / HEAD) instead, which is the correct baseline.
+
+Mutation proof (temporary edit, reverted before final run):
+  Edited themedTrendPayload in web/static/js/insights.js to add:
+    raw.data.forEach(function (t, i) { if (i < markers.length) t.marker = markers[i]; });
+  before the filterTrendTraces call (assigning markers onto raw's own traces).
+  Ran: node --test "web/static/js/insights-trends-cap.test.cjs"
+  Result: 9 pass, 2 fail (both new tests). Failing assertion (both failures):
+    AssertionError [ERR_ASSERTION]: The expression evaluated to a falsy value:
+      assert.ok(!('marker' in raw.data[i]))
+    { generatedMessage: true, code: 'ERR_ASSERTION', actual: false, expected: true, operator: '==', diff: 'simple' }
+  Also failed the raw-deep-equals-snapshot assert.deepEqual(raw, before) in the 5-category test (raw now carried the injected marker objects).
+  Reverted the edit; diff'd against /tmp/claude-1000/th1-worker/insights.js.bak (identical) to confirm a clean revert; re-ran full suite -> 21/21 pass again.
+
+Browser verification (Playwright, chromium-1243, --no-sandbox, 1300x900 viewport, server on :8251 via scripts/whatif-verify.sh):
+Ranges: Jan-Aug = /insights?start=2026-01-01&end=2026-08-27 (41 categories total); June = /insights?start=2026-06-01&end=2026-06-30 (33 categories total).
+Note: for #chart-trends, charts.js's renderChart swaps x<->y for the horizontal-bar orientation, so category labels/order live in chart.data[0].y (not .x) after render -- the verify script asserts against .y accordingly. Category-order parity checked against `#category-trends-table tbody tr:not([hidden])` data-category values in DOM order at every step; all orderOk=true, no FAIL/console.error lines printed by the harness across any range/theme/step.
+
+Results table (range | startTheme | step | height(px) | barCount | marker0(accent) | marker1(prior)):
+Jan-Aug | light | load                          | 576  | 12 | rgb(79,70,229)  | #78716c
+Jan-Aug | light | tab-switch-back               | 576  | 12 | rgb(79,70,229)  | #78716c
+Jan-Aug | light | theme-toggle-after-tabswitch  | 576  | 12 | rgb(165,180,252)| #a8a29e   (regression case: was collapsing to 300px pre-fix)
+Jan-Aug | light | show-all-41                   | 1678 | 41 | rgb(165,180,252)| #a8a29e
+Jan-Aug | light | theme-toggle-while-expanded   | 1678 | 41 | rgb(79,70,229)  | #78716c
+Jan-Aug | light | collapse-back-12              | 576  | 12 | rgb(79,70,229)  | #78716c
+Jan-Aug | light | plain-theme-toggle            | 576  | 12 | rgb(165,180,252)| #a8a29e
+Jan-Aug | light | sort+expand-parity            | 1678 | 41 | orderOk=true
+Jan-Aug | light | sort+collapse-parity          | 576  | 12 | orderOk=true
+Jan-Aug | light | htmx-range-change-3m          | 576  | 12 | orderOk=true
+Jan-Aug | dark  | load                          | 576  | 12 | rgb(165,180,252)| #a8a29e
+Jan-Aug | dark  | tab-switch-back               | 576  | 12 | rgb(165,180,252)| #a8a29e
+Jan-Aug | dark  | theme-toggle-after-tabswitch  | 576  | 12 | rgb(79,70,229)  | #78716c
+Jan-Aug | dark  | show-all-41                   | 1678 | 41 | rgb(79,70,229)  | #78716c
+Jan-Aug | dark  | theme-toggle-while-expanded   | 1678 | 41 | rgb(165,180,252)| #a8a29e
+Jan-Aug | dark  | collapse-back-12              | 576  | 12 | rgb(165,180,252)| #a8a29e
+Jan-Aug | dark  | plain-theme-toggle            | 576  | 12 | rgb(79,70,229)  | #78716c
+Jan-Aug | dark  | sort+expand-parity            | 1678 | 41 | orderOk=true
+Jan-Aug | dark  | sort+collapse-parity          | 576  | 12 | orderOk=true
+Jan-Aug | dark  | htmx-range-change-3m          | 576  | 12 | orderOk=true
+June    | light | load                          | 576  | 12 | rgb(79,70,229)  | #78716c
+June    | light | tab-switch-back               | 576  | 12 | rgb(79,70,229)  | #78716c
+June    | light | theme-toggle-after-tabswitch  | 576  | 12 | rgb(165,180,252)| #a8a29e
+June    | light | show-all-33                   | 1374 | 33 | rgb(165,180,252)| #a8a29e
+June    | light | theme-toggle-while-expanded   | 1374 | 33 | rgb(79,70,229)  | #78716c
+June    | light | collapse-back-12              | 576  | 12 | rgb(79,70,229)  | #78716c
+June    | light | plain-theme-toggle            | 576  | 12 | rgb(165,180,252)| #a8a29e
+June    | light | sort+expand-parity            | 1374 | 33 | orderOk=true
+June    | light | sort+collapse-parity          | 576  | 12 | orderOk=true
+June    | light | htmx-range-change-3m          | 576  | 12 | orderOk=true
+June    | dark  | load                          | 576  | 12 | rgb(165,180,252)| #a8a29e
+June    | dark  | tab-switch-back               | 576  | 12 | rgb(165,180,252)| #a8a29e
+June    | dark  | theme-toggle-after-tabswitch  | 576  | 12 | rgb(79,70,229)  | #78716c
+June    | dark  | show-all-33                   | 1374 | 33 | rgb(79,70,229)  | #78716c
+June    | dark  | theme-toggle-while-expanded   | 1374 | 33 | rgb(165,180,252)| #a8a29e
+June    | dark  | collapse-back-12              | 576  | 12 | rgb(165,180,252)| #a8a29e
+June    | dark  | plain-theme-toggle            | 576  | 12 | rgb(79,70,229)  | #78716c
+June    | dark  | sort+expand-parity            | 1374 | 33 | orderOk=true
+June    | dark  | sort+collapse-parity          | 576  | 12 | orderOk=true
+June    | dark  | htmx-range-change-3m          | 576  | 12 | orderOk=true
+
+Server stopped: scripts/whatif-verify.sh stop 8251 -> "stopped and cleaned :8251"
