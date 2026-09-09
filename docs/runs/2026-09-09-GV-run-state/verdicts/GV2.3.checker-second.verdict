@@ -1,0 +1,37 @@
+VERDICT: PASS
+CHECKER: checker-second
+FAMILY: adversarial
+TASK: GV2
+ATTEMPT: 3
+---
+Worked in a `cp -a` copy of /tmp/budget2-gv-a3-snap (read-only), chmod u+w, all commands run there. Never touched /home/darrell/bin/ai/budget2 or its worktree. `data` symlink left untouched (no writes). No isolated server left running.
+
+CODE READ (guardrail_optimizer.html graphTheme/graphTable, charts.js applyTonePalette/getTonePalette, handlers.go buildProjectionChartData):
+- graphTheme: `structuredClone(payload.chart)` happens BEFORE `applyTonePalette(chart.data, getTonePalette())` — mutation lands on the clone, never on the shared `payload`/`graphPayload`. Every call (initial render, theme toggle via refreshGraphAppearance, kind/dollars re-fetch) re-clones from the untouched source, so repeated calls cannot compound or lose `meta`.
+- Index-based fallback (`if(trace.meta)return; ... index===0?green:amber`) only applies to traces without `meta` (Portfolio Balance always index 0, optional Key events always index 1 when present) — matches buildProjectionChartData's real trace order exactly.
+- graphTable labels the value column per `trace.yaxis==='y2'` rather than hard-coding "Portfolio balance".
+
+PERMANENT NODE-HARNESS TEST (gv2_optimizer_theme_test.go), extracted real graphTheme/graphTable source + real charts.js + real handleGuardrailOptimizerGraph payload:
+- `go test ./internal/handlers/whatif/... -run TestGuardrailOptimizerGraphThemeAndTableUseSharedPaletteAndAxisLabels -v` → PASS.
+- Full package: `go test ./internal/handlers/whatif/...` → ok (38.7s), `go build ./...` → clean.
+- MUTATION 1: removed the `applyTonePalette` call from graphTheme → test FAILS (`enabled/dark: Cut trigger color, actual '#dc2626' expected '#f87171'`). Kills the regression.
+- MUTATION 2: changed charts.js's `negative` hex from #dc2626 to #123456 → test FAILS (`actual '#123456' expected '#dc2626'`), proving the test loads the REAL charts.js from disk, not a duplicated literal.
+- Debug run of the test's own "enabled" fixture confirms the real handler payload's markers trace carries `meta.tones: ["negative","negative","negative","positive"]` — i.e. the permanent test's per-point marker-color assertion already exercises BOTH cut and raise tones against real backend data, not just a synthetic array.
+
+REAL CHROMIUM BROWSER PROBE (new throwaway Playwright script, isolated server, fixture: portfolio 60000, living 4000, 4yr horizon, SS active from month 0, guardrails enabled — the GV1-fixture shape). Full flow: run optimizer search → View graph on "current" (guardrailed) row → Simulated ranges (default) → Base case → theme toggle → rapid dollars reselection → data table → close → View graph on "no-guardrails" row → Base case.
+Measured on the REAL rendered SVG (legend swatch stroke/fill via getComputedStyle, or scatter-layer path stroke directly when Plotly omits the legend for a single-trace chart):
+- Simulated ranges (unchanged): P50 line color `#1e40af` — matches pre-GV2 simulationChart, untouched.
+- Base case, light, guardrailed candidate: Cut trigger `#dc2626`, Raise trigger `#15803d`, Planned `#57534e`, After guardrails `#1d4ed8` — 4 distinct colors, exact match to the LIGHT tone palette. Plot height = 520 (exact).
+- Marker (`Guardrail cuts / raises`) rendered SVG point fill: `rgb(220, 38, 38)` = `#dc2626` (this fixture only tripped a cut, not a raise, in the base case — the dual-tone case is covered by the permanent Go test above using real backend data).
+- Theme toggle while preview open (real `#theme-toggle` click → MutationObserver → refreshGraphAppearance → graphTheme(graphPayload)): all 4 tone traces re-rendered to the exact DARK palette (`#f87171`/`#4ade80`/`#d6d3d1`/`#93c5fd`); height stayed 520 (exact) — no collapse, no drift from the light-mode clone.
+- Rapid re-selection of `#guardrail-graph-dollars` (nominal→real in quick succession): settles on the last-selected value ("real"), plot still populated — stale-response guard intact.
+- `graphTable` on the enabled candidate: 6 tables rendered; markers table headers = `["Year","Monthly living budget","Event"]` (y2-axis label applied, Event column retained); `#guardrail-graph-data` region has `tabindex="0" role="region"` (keyboard scrollable).
+- Close preview → `#guardrail-graph-preview` goes `hidden`.
+- No-guardrails candidate, base case: height = 340 (exact), no `Cut trigger` trace present, Portfolio Balance line color `#166534` (light-mode index-green) — old, unchanged, correct behavior for a candidate with no guardrail traces.
+
+SCOPE / REGRESSION CHECK: `git diff` inside the working copy against base 5fae968 shows every hunk in guardrail_optimizer.html outside graphTheme/graphTable belongs to GV1's PlanFloor feature and GV3's "100% worst-cut" explanatory text (both pre-existing, correctly declared FOREIGN). `handlers_guardrail_optimizer.go`'s diff is entirely GV1's `guardrailPlanFloorNotice`/`PlanDesignBelowTarget` (foreign, as declared). `guardrails.html`/`whatif.html` diffs are entirely GV4's `GuardrailAnchors` (foreign, as declared). No attempt-2 snapshot was available in the provided evidence to produce a literal attempt-2→attempt-3 diff; scope was instead verified by confirming every non-graphTheme/graphTable hunk in the shared files is attributable to a named foreign task per the manifest, and that attempt 3's own comments/markers ("GV2 attempt 3 (ruling GV-2026-09-09m)") bound its actual edits to exactly the two functions claimed.
+
+No defect found. Attempt 3's fix (shared tone palette via meta.tone/meta.tones, budget-panel height/labels, per-axis table column labels) holds under mutation testing, real-browser rendering in both themes, theme-toggle-while-open, rapid reselection, and the no-guardrails/simulated-ranges unchanged paths.
+
+OBSERVATIONS (not grounds for FAIL, in-scope but not required by GV2's task block):
+- The permanent Go test's LIGHT/DARK palette constants (TONE_TRACES/LIGHT/DARK objects in the harness) are hand-duplicated from charts.js rather than read via `sandbox.getTonePalette()`; mutation-tested above and confirmed to still catch drift (since the harness's own hardcoded expectation stays pinned while the actual output moves), but a future palette-value change will require updating both charts.js and this harness by hand.

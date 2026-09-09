@@ -1,0 +1,230 @@
+VERDICT: FAIL
+CHECKER: checker-tests
+FAMILY: anthropic
+TASK: GV3
+ATTEMPT: 1
+---
+Environment: worked in my own `cp -a` of the frozen snapshot /tmp/budget2-gv3-snap
+(taken 08:25) at <scratch>/gv3/work, with base 5fae968 extracted read-only via
+`git --git-dir=/home/darrell/bin/ai/budget2/.git archive 5fae968` into <scratch>/gv3/base.
+Mutations and probes ran in separate copies (<scratch>/gv3/muta|mutb|mutc|probe).
+No writes to the shared snapshot, the live worktree, or `data`. No git state changed.
+
+SUMMARY: the GV3 BEHAVIOUR is correct on every criterion I could execute
+(1, 2, 3, 4, cross-surface identity, build/vet/test/gofmt/make check all green).
+The task FAILS on its own written acceptance item "Mutation proofs (required)":
+two of the three required mutations survive the whole test suite, so criteria 2
+(row wording) and 3 (saturation cell) are asserted by tests that do not guard them.
+
+────────────────────────────────────────────────────────────────────────
+CRITERION 1 — floor-field hint from page data GuardrailPlanFloor: PASS
+Command: cd <scratch>/gv3/work && go test -count=1 -v -run 'TestHandleWhatIfGuardrailPlanFloorHint' ./internal/handlers/whatif/
+  --- PASS: TestHandleWhatIfGuardrailPlanFloorHint_Present (0.03s)
+  --- PASS: TestHandleWhatIfGuardrailPlanFloorHint_AbsentWithoutValue (0.01s)
+The _Present test asserts the exact rendered string
+  "Your plan's lowest planned living spending is $5,000.00/mo in today's dollars (No-Go, year 1). A minimum above that is missed by design in every future without an absolute floor."
+and that the floor input's tag carries
+  aria-describedby="guardrail-optimizer-floor-help guardrail-optimizer-status guardrail-optimizer-floor-plan-note"
+(I read the test body: it slices the input tag from `id="guardrail-optimizer-floor"` to the
+next ">" and asserts on that slice, so the aria-describedby claim is real, not incidental).
+Handler wiring confirmed in the diff: handlers.go adds only the aliased import
+`retanalysis "budget2/internal/services/retirement/analysis"` and, inside handleWhatIf,
+the unconditional `if amount, year, phase, ok := retanalysis.LowestPlannedLivingReal(analysis.Projection); ok`
+block plus the "GuardrailPlanFloor" page-data key — nothing else (see SCOPE).
+Surface enumeration for this figure (split-classification hunt):
+  grep -rn 'whatif-guardrail-optimizer"' web/templates → defined once, included once
+  (components/whatif/guardrails.html:84, inside the LEFT column of pages/whatif.html:117).
+  "whatif-results" (pages/whatif.html:165) and "whatif-results-with-oob" (:232) do NOT
+  re-render the optimizer card — the OOB list is portfolio/rate/spending-phases/social-security
+  only. So handleWhatIf is the only server surface that renders the hint; there is no
+  partial path that would drop it. Money is rendered with {{formatMoney .Amount}}
+  (render.go:74 maps "formatMoney"), matching the constitution.
+
+CRITERION 2 — results notice + row wording: BEHAVIOUR PASS, GUARD FAIL (see MUTATION b)
+Command: go test -count=1 -v -run 'TestGuardrailOptimizerPlanFloorNotice' ./internal/handlers/whatif/
+  --- PASS: TestGuardrailOptimizerPlanFloorNoticeBelow (4.27s)   [fixture (a), phase decline]
+  --- PASS: TestGuardrailOptimizerPlanFloorNoticeAbove (4.87s)   [fixture (b), above floor]
+Below asserts the exact strings "Your plan itself schedules living spending down to
+$5,000.00/mo from year 1 (No-Go)", "not because of market risk", "Lower your minimum to
+$5,000.00 or below", and the row wording "Below target — planned spending is below your
+minimum from year 1". Above asserts BOTH the absence of data-guardrail-plan-floor-notice
+and the absence of "is below your minimum from year".
+Notice placement: template renders <p data-guardrail-plan-floor-notice> as the immediate
+sibling AFTER the <h4 data-guardrail-outcome> heading (not nested), and
+TestGuardrailOptimizerOutcomeHasMeaningfulFocusTarget still PASSes.
+Announcement path — EXECUTED, not traced. I dumped the real handler response
+(<scratch>/gv3/results.html, 25 359 bytes, fixture (a), floor 7500) and ran the
+template's own expression in jsdom (/home/darrell/work/gantt/node_modules/jsdom);
+I verified byte-identity of the fragment I executed with the template:
+  python3: "fragment in template: True / fragment in probe js: True"
+  node <scratch>/gv3/status.js <scratch>/gv3/results.html →
+  STATUS TEXT: Options meet your minimum-spending target Your plan itself schedules living
+  spending down to $5,000.00/mo from year 1 (No-Go). Policies without an absolute floor at
+  or above your minimum are counted as missing it in every such future for that reason —
+  not because of market risk. Lower your minimum to $5,000.00 or below to compare policies
+  on market risk alone.
+  Harness gap disclosed: jsdom executes querySelector/textContent faithfully; it does not
+  exercise the real fetch/HTMX sequencing or aria-live announcement by a screen reader.
+
+CRITERION 3 — 100.00 saturation cell: BEHAVIOUR PASS, GUARD FAIL (see MUTATION c)
+Command: go test -count=1 -v -run TestGuardrailOptimizerWorstAnnualCutSaturationExplained ./internal/handlers/whatif/
+  --- PASS (0.02s)
+Rendered-string comparison confirmed in the template ({{$cut:=printf "%.2f" ...}} then
+{{if eq $cut "100.00"}}), one place only. Probe on the UNMUTATED tree renders:
+  CUT CELL: "100.00% (no funded living spending for a full year in at least 5% of futures — usually portfolio depletion; see Portfolio depletion below)"
+  CUT CELL: "99.99%"
+
+CRITERION 4 — search/qualification/tokens/Apply/seeds/graph unchanged: PASS
+Command: go test -count=1 -v -run 'TestGuardrailOptimizer|TestGuardrailGraph|TestGuardrailRanges' ./internal/handlers/whatif/
+  15/15 PASS, including the figure-pinned TestGuardrailOptimizerCardAndResultsRender
+  ("94.90%", "51 / 1000", "0.30% (3 / 1000)"), TestGuardrailOptimizerApplyAndCancellation,
+  TestGuardrailOptimizerPreviewThenExplicitApply, TestGuardrailGraphExactPolicyAndNoMutation.
+  diff -q base/work: guardrail_optimizer_test.go IDENTICAL, guardrail_ranges_test.go IDENTICAL
+  (guardrail_graph_test.go differs — GV2 foreign territory, attributed).
+  The diff of handlers_guardrail_optimizer.go contains exactly four additive hunks
+  (PlanDesignBelowTarget field, guardrailPlanFloorNotice type, the floorNotice computation,
+  the row flag + "PlanFloor" data key) plus GV1's `in.Hooks` line; no change to candidate
+  generation, ranking, token minting, or the apply handler.
+
+BUILD / FORMAT / COMPOSITE: PASS
+  go build ./...                                  → exit 0, no output
+  go vet ./internal/...                           → exit 0, no output
+  go test -count=1 ./internal/handlers/whatif/ ./internal/services/retirement/analysis/
+        ok budget2/internal/handlers/whatif 79.060s
+        ok budget2/internal/services/retirement/analysis 53.589s
+  gofmt -l <5 manifest .go files>                 → empty output (clean)
+  make check (vet + staticcheck + govulncheck + css-verify + test) → MAKE_CHECK_EXIT=0
+        log lines: "No vulnerabilities found.", "tailwind.css is up to date",
+        "ok budget2/internal/handlers/whatif 70.692s", "✓ all checks passed".
+        Nothing in `make check` had to be skipped.
+  A11y-lane confirmations only (checker-a11y owns the rest): grep -oE ' on[a-z]+="' on the
+  template returns nothing in BOTH base and work (no inline event handlers added), and the
+  notice/hint/row wording are server-rendered html/template text (proved by the handler
+  response dump above, which contains the full sentences).
+
+────────────────────────────────────────────────────────────────────────
+MUTATION PROOFS (required by the brief)
+
+(a) helper without the CPI divisor — KILLED. PASS.
+  Mutation: planned_living.go:42 `engine.RoundLivingCents(m.PlannedLivingExpenses / m.CumulativeInflation)`
+            → `engine.RoundLivingCents(m.PlannedLivingExpenses)`
+  cd <scratch>/gv3/muta && go test -count=1 -v -run 'TestGuardrailOptimizerPlanFloorNotice|TestHandleWhatIfGuardrailPlanFloorHint' ./internal/handlers/whatif/
+    --- FAIL: TestGuardrailOptimizerPlanFloorNoticeBelow (8.28s)
+        guardrail_plan_floor_test.go:111: notice missing "Your plan itself schedules living spending down to $5,000.00/mo from year 1 (No-Go)"
+        guardrail_plan_floor_test.go:111: notice missing "Lower your minimum to $5,000.00 or below"
+    --- FAIL: TestHandleWhatIfGuardrailPlanFloorHint_Present (0.05s)
+        guardrail_plan_floor_test.go:184: missing floor-field hint "...$5,000.00/mo in today's dollars (No-Go, year 1)..."
+  FAILING TESTS: TestGuardrailOptimizerPlanFloorNoticeBelow, TestHandleWhatIfGuardrailPlanFloorHint_Present.
+  Observation (not a failure): the helper's OWN unit tests do not kill this mutation —
+  `cd <scratch>/gv3/muta && go test -count=1 -run TestLowestPlannedLivingReal ./internal/services/retirement/analysis/` → ok.
+  TestLowestPlannedLivingReal_PhaseDecline uses CumulativeInflation=1 throughout, and
+  _Flat's inflated months deflate back to the same 5000.01, so neither is sensitive to
+  the divisor. Only the handler tests (real engine, real CPI) catch it.
+
+(b) flip the row condition so adequately-floored rows also get the plan-design wording — SURVIVES. FAIL.
+  Mutation: handlers_guardrail_optimizer.go:172
+      `if floorNotice != nil && !c.Qualifies && (c.Guardrails == nil || !c.Guardrails.Enabled || c.Guardrails.MinMonthlySpendingReal < floor) {`
+    → `if floorNotice != nil && !c.Qualifies {`
+  cd <scratch>/gv3/mutb && go test -count=1 ./internal/handlers/whatif/
+    ok  	budget2/internal/handlers/whatif	58.453s      ← ENTIRE package still green
+  The mutation is NOT inert — it visibly mislabels the UI. Probe (identical file added to
+  both trees; fixture: portfolio 250k, 10000/mo living, Go-Go→No-Go 0.50 at 66,
+  floor 7500, target 99, so adequately-floored candidates exist and do not qualify):
+    UNMUTATED work tree:
+      ROW Alternative grid-10-5-15-5-120   STATUS="Below target"                                   (x6 such rows)
+      ROW Current guardrails               STATUS="Below target — planned spending is below your minimum from year 1"
+      ROW Guardrails disabled              STATUS="Below target — planned spending is below your minimum from year 1"
+    MUTATED (b) tree:
+      ALL EIGHT rows STATUS="Below target — planned spending is below your minimum from year 1"
+  WHAT IS MISSING: no permanent test asserts the spec sentence "rows with an adequate floor
+  keep 'Below target'". TestGuardrailOptimizerPlanFloorNoticeBelow only checks that the
+  plan-design wording is PRESENT somewhere in the body; its fixture (a) contains no
+  non-qualifying candidate with MinMonthlySpendingReal >= floor (my cross-surface run shows
+  all six grid candidates Qualify there), so the adequate-floor branch is never exercised.
+  TestGuardrailOptimizerPlanFloorNoticeAbove cannot cover it either: floorNotice is nil in
+  that fixture, so the condition is short-circuited before the clause under test.
+  REQUIRED: a case where the notice IS present and a candidate with Guardrails.Enabled &&
+  MinMonthlySpendingReal >= floor does not qualify, asserting that row's status span reads
+  exactly "Below target".
+
+(c) change the 100.00 comparison to 99.99 — SURVIVES. FAIL.
+  Mutation: web/templates/components/whatif/guardrail_optimizer.html:179 `{{if eq $cut "100.00"}}` → `{{if eq $cut "99.99"}}`
+  cd <scratch>/gv3/mutc && go test -count=1 -v -run TestGuardrailOptimizerWorstAnnualCutSaturationExplained ./internal/handlers/whatif/
+    --- PASS: TestGuardrailOptimizerWorstAnnualCutSaturationExplained (0.01s)
+  cd <scratch>/gv3/mutc && go test -count=1 ./internal/handlers/whatif/
+    ok  	budget2/internal/handlers/whatif	55.067s      ← ENTIRE package still green
+  The mutation moves the explanation to the WRONG row. Probe on the mutated tree:
+      CUT CELL: "100.00%"
+      CUT CELL: "99.99% (no funded living spending for a full year in at least 5% of futures — usually portfolio depletion; see Portfolio depletion below)"
+  WHY THE TEST MISSES IT — two independent defects in guardrail_plan_floor_test.go:
+    1. `strings.Count(body, explanation) != 1` is invariant under moving the explanation
+       from the 100.00 row to the 99.99 row: the count stays 1 either way.
+    2. The second guard is vacuous by construction:
+         if idx := strings.Index(body, "99.99%"); idx < 0 || strings.Contains(body[idx:idx+len("99.99%")+5], "no funded")
+       the window is 6+5 = 11 bytes, i.e. exactly "99.99% (no ", which can never contain the
+       9-byte needle "no funded" (it would have to start at offset 8 of an 11-byte window).
+       This is the "guard one element away" failure mode: it is anchored 5 bytes short of
+       where the artifact sits.
+  REQUIRED: assert on the RENDERED cell strings — e.g. that the cell whose text starts
+  "100.00%" contains the explanation AND the cell whose text starts "99.99%" does not
+  (a widened/unbounded window, or a per-<td> extraction).
+
+────────────────────────────────────────────────────────────────────────
+CROSS-SURFACE IDENTITY (real handler search, fixture (a), 3-year horizon): PASS
+  cd <scratch>/gv3/probe && go test -count=1 -v -run TestZZCrossSurfaceIdentity ./internal/handlers/whatif/
+    SURFACE 1 HINT (GET /whatif page data):
+      "Your plan's lowest planned living spending is $5,000.00/mo in today's dollars (No-Go, year 1)..."
+    SURFACE 2 NOTICE (POST /whatif/guardrails/optimize):
+      "Your plan itself schedules living spending down to $5,000.00/mo from year 1 (No-Go)... Lower your minimum to $5,000.00 or below..."
+    SURFACE 3 ROWS (both tagged rows):
+      status="Below target — planned spending is below your minimum from year 1"  (x2)
+      the other six rows: "Meets target"
+  Every rendered string carries the SAME $5,000.00 and the SAME year 1.
+  Additional adversarial case — guardrails ENABLED in the saved plan (so the cached
+  page analysis carries guardrail multipliers and cuts fire) while the optimizer runs its
+  own base projection; the two independent call sites must still agree:
+  TestZZGuardrailsEnabledCrossSurface (portfolio 300k, 5y, FloorDrop 20/FloorCut 10/
+  MinSpendingPct 50, MinMonthlySpendingReal 1000):
+      HINT:   ...$5,000.00/mo in today's dollars (No-Go, year 1)...
+      NOTICE: ...down to $5,000.00/mo from year 1 (No-Go)...
+  → one source (analysis.LowestPlannedLivingReal) genuinely drives both, and
+  PlannedLivingExpenses is pre-multiplier as documented.
+
+────────────────────────────────────────────────────────────────────────
+SCOPE: clean.
+  diff -rq base(5fae968) vs work, excluding .git/data, lists exactly:
+   GV3 manifest: internal/handlers/whatif/guardrail_plan_floor_test.go (new),
+     internal/handlers/whatif/handlers.go, internal/handlers/whatif/handlers_guardrail_optimizer.go,
+     internal/services/retirement/analysis/planned_living.go (new),
+     internal/services/retirement/analysis/planned_living_test.go (new),
+     web/templates/components/whatif/guardrail_optimizer.html
+   FOREIGN, attributed, not failed:
+     GV1 — the `in.Hooks = retirement.DefaultHooks()` line in handlers_guardrail_optimizer.go,
+           internal/handlers/whatif/guardrail_optimizer_hooks_test.go
+     GV2 — internal/models/whatif.go, engine/stepper.go, engine/month.go,
+           engine/guardrail_triggers_test.go, gv2_chart_test.go, guardrail_graph_test.go,
+           web/templates/components/whatif/projection-chart.html, web/static/css/styles.css,
+           and in handlers.go the buildGuardrailChartSummary/GuardrailChartSummary and
+           buildProjectionChartData hunks.
+   In handlers.go the GV3 footprint is exactly what the manifest authorizes: the aliased
+   `retanalysis` import and the guardrailPlanFloor block + "GuardrailPlanFloor" key inside
+   handleWhatIf. Nothing else.
+  Nothing in .swarm/critical.globs (internal/services/retirement/settings.go, scripts/deploy*,
+  Makefile) was touched.
+  Untracked/ignored artifacts only: `tmp/` (gitignored; tailwind binary + css-verify scratch)
+  and the `data` symlink — both pre-existing in the snapshot, neither written by me.
+  NOTE for the lead: the SHARED snapshot /tmp/budget2-gv3-snap has since acquired
+  `a11y-out/` and `internal/handlers/whatif/zzgv3_a11y_dump_test.go`, which appeared AFTER
+  my cp -a and belong to checker-a11y, not to the worker. My copy predates them, so they
+  do not affect this scope reading — but the snapshot is no longer pristine.
+
+FINDINGS FOR THE BACKLOG (observations, not failures):
+  F1. guardrail_optimizer.html: the {{/* Deferred wiring ... absent today, so nothing
+      renders yet */}} comment above the hint, and the guardrailPlanFloorNotice doc
+      comment "see the doc comment on that field's intended wiring in NOTES / the task
+      record", are now stale — handleWhatIf populates the field in this same attempt.
+  F2. guardrail_plan_floor_test.go: TestHandleWhatIfGuardrailPlanFloorHint_AbsentWithoutValue's
+      comment says "before GV2's handlers.go landed"; it means GV3.
+  F3. planned_living_test.go has no fixture in which the CPI divisor changes the answer
+      (see mutation (a) observation) — a real-dollar-sensitive case would let the helper's
+      own package guard its contract instead of relying on the handler tests.

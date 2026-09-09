@@ -1,0 +1,20 @@
+== criterion 1: build, vet, package tests
+ok  	budget2/internal/handlers/whatif	23.745s
+ok  	budget2/internal/services/retirement	33.039s
+ok  	budget2/internal/services/retirement/analysis	24.656s
+ok  	budget2/internal/services/retirement/completeness	0.003s
+ok  	budget2/internal/services/retirement/engine	0.028s
+ok  	budget2/internal/services/retirement/history	0.003s
+ok  	budget2/internal/services/retirement/overrides	0.005s
+ok  	budget2/internal/services/retirement/prepare	0.003s
+== criteria 2+3: oracle tests (overlay-injected)
+=== RUN   TestGV1OracleSearchUsesPlanHooks
+    gv1_acceptance_external_test.go:107: validation runs=1000 seed=-3934195323849232129; optimizer current-row depletion=1000; direct MC with hooks=172; without hooks=1000
+    gv1_acceptance_external_test.go:116: CRITERION 2 FAIL: optimizer 'Current guardrails' depletion paths = 1000, direct Monte Carlo with the plan's hooks = 172 (without hooks = 1000). The search is not simulating with the plan's engine hooks.
+--- FAIL: TestGV1OracleSearchUsesPlanHooks (1.76s)
+=== RUN   TestGV1OracleGraphAndSearchAgree
+    gv1_acceptance_external_test.go:156: CRITERION 3 FAIL: no-guardrails baseline depletion 1000 != hooked direct run 168
+--- FAIL: TestGV1OracleGraphAndSearchAgree (1.80s)
+FAIL
+FAIL	budget2/internal/handlers/whatif	3.559s
+FAIL

@@ -1,0 +1,109 @@
+VERDICT: PASS
+CHECKER: checker-second
+FAMILY: adversarial
+TASK: GV3
+ATTEMPT: 2
+---
+Worked in my own cp -a copies of both snapshots under scratch (kept .git), never
+touched /home/darrell/bin/ai/budget2 or its .worktrees. No git checkout/stash/
+reset/commit run. No binary run directly.
+
+PREMISE CHECK (production-code-unchanged claim): CONFIRMED.
+  diff attempt1 vs final:
+    internal/handlers/whatif/handlers_guardrail_optimizer.go  -> byte-identical
+    internal/services/retirement/analysis/planned_living.go   -> byte-identical
+    internal/handlers/whatif/handlers.go -> diff is entirely GV2 (tone metadata,
+      light-theme colour swaps #ef4444->#dc2626 etc., "meta" keys, height-key
+      comment) and GV4 (buildGuardrailAnchors + its call sites) -- none of it in
+      GV3's territory (no touch to guardrailPlanFloorNotice / PlanDesignBelowTarget
+      / LowestPlannedLivingReal wiring).
+    web/templates/components/whatif/guardrail_optimizer.html -> ONE hunk, doc
+      comment only (was "Deferred wiring... absent today"; now "Renders only
+      once page data carries GuardrailPlanFloor; handleWhatIf populates it
+      unconditionally..."). No non-comment bytes changed (confirmed by full diff
+      output showing only the {{/* ... */}} block differs).
+  So attempt 2 is test-only + comment-only, as claimed.
+
+ATTACK 1 -- flake probability of TestGuardrailOptimizerRowWording_PlanDesignVsFundingRisk:
+  Fixture: PortfolioValue 150000, MonthlyLivingExpenses 10000 (Go-Go 1.00, No-Go
+  0.50 from age 66/year 1), floor_monthly_real=7500, target_success_pct=50.
+  Ran the test 20x total (-count=1, separate invocations): 20/20 PASS, 0 failures.
+  Seam check: handleGuardrailOptimizer (handlers_guardrail_optimizer.go:90-131)
+  parses ONLY floor_monthly_real/target_success_pct/request_id from the form and
+  builds models.GuardrailOptimizerRequest{FloorMonthlyReal, TargetSuccessPct} --
+  Seed is left zero even though the model has a Seed field, so
+  analysis.EffectiveSeed always auto-seeds from time.Now().UnixNano() at this
+  call site. This is PRE-EXISTING, unchanged production behaviour (confirmed
+  identical in attempt 1) -- every other MC-driven test in this file
+  (TestGuardrailOptimizerPlanFloorNoticeBelow/Above, both already accepted at
+  attempt 1) already relies on the same auto-seed path, so this is not a new
+  risk class introduced by attempt 2, and there is no deterministic seed knob
+  the handler-level test could have used instead.
+  Economic sanity check on why the margin is wide rather than borderline:
+  HorizonMinYears/MaxYears = max(10, ProjectionYears +/- LongevityVariation) =
+  max(10, 3+/-5) = 10 in both directions (DefaultMonteCarloConfig().LongevityVariation
+  = 5), so every validation run spans >=10 years. Withdrawing $90k-120k/yr
+  (Go-Go $10000/mo, later No-Go $5000/mo, plus the $7500 floor clamp) against a
+  $150000 starting portfolio for >=10 years is economically indistinguishable
+  from certain depletion under any realistic Monte Carlo return distribution --
+  reaching even a 50% success rate is not a near-miss, it is off by orders of
+  magnitude. This matches the test author's own framing (comment: "verified
+  empirically stable (0.00% for every row across repeated runs)"; "NOT
+  mathematically airtight" but "the same standard the optimizer's existing
+  MC-driven tests already rely on"). Verdict: real but negligible flake risk,
+  consistent with pre-existing test design in this same file; not a new defect
+  class introduced by attempt 2.
+
+ATTACK 2 -- mutation kills (own mutations, not reused from checker-tests):
+  (a) handlers_guardrail_optimizer.go:172 `MinMonthlySpendingReal < floor` ->
+      `<= floor` (attempt-1's finding (b), the exact boundary the new
+      row-wording test targets): re-ran TestGuardrailOptimizerRowWording_
+      PlanDesignVsFundingRisk against the mutant -> FAILED with 6 explicit
+      row-level errors (every grid row wrongly carrying the plan-design
+      wording). Restored; diff confirms byte-identical restore. KILLED.
+  (b) guardrail_optimizer.html:181 `{{if eq $cut "100.00"}}` ->
+      `{{if eq $cut "99.99"}}` (attempt-1's finding (c)): re-ran
+      TestGuardrailOptimizerWorstAnnualCutSaturationExplained against the
+      mutant -> FAILED (explanation now expected on "not-saturated"/"rounds-up"
+      rows, absent from "saturated" -- test correctly flags all three).
+      Restored; diff confirms byte-identical restore. KILLED.
+  (c) planned_living.go: dropped `/ m.CumulativeInflation` (this drops the
+      real-dollar conversion; attempt-1's backlog finding F3, "no fixture
+      where the divisor changes the answer"): re-ran
+      TestLowestPlannedLivingReal_DivisorSensitive against the mutant ->
+      FAILED at its own fixture-invariant guard ("amount = 4900 looks like a
+      NOMINAL value, not a real one"). Restored; diff confirms byte-identical
+      restore. KILLED.
+  All three of attempt 1's checker-tests FAIL findings (mutations b, c) plus
+  its backlog observation F3 are now closed by real, independently-verified
+  mutation kills -- not just test additions that happen to pass on the
+  unmutated tree.
+  Also confirmed F1 (stale "deferred wiring" comment) and F2 (wrong task-name
+  reference "before GV2's handlers.go landed") from the attempt-1 verdict are
+  both fixed: template comment now says "Renders only once... handleWhatIf
+  populates it unconditionally"; test comment now says "before GV3's
+  handlers.go wiring landed".
+
+ATTACK 3 -- comment-only template change: confirmed above (diff shows one
+  {{/* ... */}} hunk only, no rendered-output bytes touched). Not independently
+  re-rendered since the diff itself proves no non-comment byte changed.
+
+ATTACK 4 -- shared test-data / stray files: ran the full whatif + analysis
+  packages (`go test ./internal/handlers/whatif/... ./internal/services/
+  retirement/analysis/... -count=1`, both ok, 107.4s / 66.7s) and diffed
+  `git status --porcelain` before and after in my working copy -- byte-for-byte
+  identical (same set of pre-existing modified/untracked files from GV1/GV2/GV4
+  foreign territory and prior checker artifacts; nothing new appeared, nothing
+  under `data` touched). No stray files left by the new tests.
+
+OBSERVATIONS (not failures, in-scope items already closed by this attempt):
+  - The row-wording test's flake risk, while negligible by the economic
+    argument above, is inherent to the handler's lack of a seed override --
+    worth a backlog note if this pattern is reused with a tighter margin in a
+    future task, but out of GV3's scope to fix (handleGuardrailOptimizer's
+    form parsing is untouched production code, byte-identical since attempt 1).
+
+VERDICT: attempt 2 does exactly what it claims -- test-only + comment-only,
+closes every named checker-tests FAIL and backlog finding from attempt 1 with
+verified mutation kills, introduces no new production-code risk, and leaves no
+stray artifacts. PASS.

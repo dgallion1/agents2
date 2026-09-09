@@ -1,0 +1,132 @@
+VERDICT: PASS
+CHECKER: checker-a11y
+FAMILY: anthropic
+TASK: GV4
+ATTEMPT: 2
+---
+INCIDENT DISCLOSURE (not a project-file edit, but relevant provenance): my
+first `cp -a` mistakenly ran against the WRONG source — I overwrote the
+shared prepared snapshot at /tmp/budget2-gv-final-snap with a copy of the
+agents2 orchestration repo (this worktree) instead of copying FROM it. I
+caught this immediately (no budget2 template/handler content found, no
+guardrails.html) before doing any audit work on the wrong tree. Recovered
+by restoring /tmp/budget2-gv-final-snap from a sibling checker's intact
+copy (/tmp/budget2-gv-checker-copy, same commit 5fae968, containing the
+correct GV1-4 uncommitted changes), verified `git log -1` matched, then
+made my OWN private `cp -a` copy at
+scratchpad/gv4-attempt2/ and worked ONLY there for the rest of this audit.
+I never touched /home/darrell/bin/ai/budget2/.worktrees/guardrail-viz or
+/home/darrell/bin/ai/budget2, and no project file was edited.
+
+Scope confirmed via `git diff master -- web/templates/components/whatif/
+guardrails.html` in my own copy: attempt 2 changed only the two anchor
+lines' wording ("Today: cut/raise..." -> "Next yearly check: cut/raise...")
+plus the matching Go tests (internal/handlers/whatif/
+gv4_guardrail_anchors_test.go: "Next yearly check: cut if the portfolio
+falls below "/"Next yearly check: raise if it rises above "). No class,
+structure, or color changed on the two `<p>` lines. Confirmed against
+GV4.1's PASS verdict for baseline.
+
+Method: real server render. Built+ran the actual Go server from my copy
+via `scripts/whatif-verify.sh start 8084` (isolated throwaway data copy,
+confirmed `data` was the isolated copy per the script's own design, not
+the live symlink) and audited http://localhost:8084/whatif with
+Playwright 1.63 (chromium) loading axe-core 4.13 via page.addScriptTag
+against the live DOM. Server stopped cleanly at the end
+(`scripts/whatif-verify.sh stop 8084`).
+
+Rendered wording confirmed on GET /whatif (plan has guardrails enabled):
+  <p class="text-body-sm text-negative">Next yearly check: cut if the
+  portfolio falls below $1,920,000.00</p>
+  <p class="text-body-sm text-positive">Next yearly check: raise if it
+  rises above $2,880,000.00</p>
+
+A-1/A-2 axe (gv4-2/gv4_audit2.cjs, tags wcag2a/wcag2aa/wcag21a/wcag21aa/
+wcag22aa), light+dark: violations: [] both themes. Full JSON:
+scratchpad/gv4-2/gv4-axe-results.json.
+
+A-3 contrast, computed colors (getComputedStyle) — IDENTICAL to attempt 1
+(only text content changed, not classes/colors), re-measured not assumed:
+  light: cardBg rgb(255,255,255); text-negative rgb(190,18,60) -> 6.29:1;
+         text-positive rgb(4,120,87) -> 5.48:1
+  dark:  cardBg rgb(41,37,36); text-negative rgb(253,164,175) -> 8.02:1;
+         text-positive rgb(52,211,153) -> 7.89:1
+  Both lines 14.875px/400 weight (4.5:1 threshold) -- both themes clear it
+  by a wide margin. Ratios computed via python3 WCAG relative-luminance
+  formula. Screenshots: scratchpad/gv4-2/gv4-light-card.png,
+  gv4-dark-card.png, gv4-light-full.png, gv4-dark-full.png.
+
+A-6 structure (gv4-2/gv4_structure2.cjs): exactly one <h1> ("What-If
+Analysis"); heading order h1->h2("Spending guardrails")->h3("Optimize
+guardrails") unchanged from attempt 1, no skipped levels; header:1 nav:1
+main:1 present; footer:0 (pre-existing, see OBSERVATION). Anchor children
+are both <p> -- no heading/list misuse; wording change did not alter tag
+structure.
+
+A-9 never color-only: both lines carry the distinction in words -- "cut
+... falls below" vs "raise ... rises above" -- not only red/green,
+confirmed in screenshots.
+
+A-10 live update (gv4-2/gv4_live3_2.cjs, adapted from attempt 1's
+programmatic-submit approach that avoids the Playwright locator
+auto-scroll artifact -- real .click()+.fill() then requestSubmit() so
+htmx's own submit-interception fires, exactly as attempt 1 validated is
+the correct test technique):
+  scroll before/after: 800 / 800 (unchanged)
+  focus before/after: floor-drop-pct-input / floor-drop-pct-input
+  (unchanged, HTMX did not steal focus)
+  anchors before/after: "Next yearly check: cut if the portfolio falls
+  below $1,920,000.00" -> "...$2,112,000.00" (Drop % 12, OOB swap updated
+  figure AND kept new wording, no stale content)
+  I first tried setting `.value` directly without a prior real click/fill
+  (gv4_live_debug.cjs) and got a full-page GET navigation instead of an
+  htmx AJAX swap (scroll reset to 0, focus lost) -- reproduced and
+  attributed this to the same class of test-tooling artifact attempt 1
+  flagged for `.click()` auto-scroll (a synthetic `.value=` assignment
+  with no real DOM events apparently short-circuits htmx's own
+  attachment path in this harness), NOT an app defect; the properly-driven
+  interaction above is the real behavior and it passes.
+Toggle (gv4-2/gv4_toggle2.cjs, `getByRole('checkbox', {name:'Enable
+spending guardrails'})` to disambiguate from the page's other 4 same-name
+checkboxes): unchecking collapses `#whatif-guardrail-anchors` to empty
+(no stray background box); re-checking restores both lines with current
+figure and the new wording. Lines disappear/appear cleanly.
+
+A-4/A-5/A-14/A-15 (target size, keyboard, inline handlers): unaffected by
+this attempt's wording-only diff; re-confirmed via A-15 reflow below and
+visual screenshots that no focusable/interactive markup changed on the two
+`<p>` lines (still plain `<p class="...">`, no onclick/tabindex/role
+added).
+
+A-15 reflow at 1024px and 375px (gv4-2/gv4_reflow.cjs) -- the longer
+"Next yearly check:" prefix (vs the old "Today:") still wraps cleanly:
+  1024px: doc overflow 0; each <p> scrollWidth==clientWidth (271px, no
+  clipping)
+  375px:  doc overflow 0; each <p> scrollWidth==clientWidth (299px, no
+  clipping)
+  Screenshots: scratchpad/gv4-2/gv4-2-reflow-1024.png,
+  gv4-2-reflow-375.png.
+
+OBSERVATIONS (non-blocking, pre-existing/out of GV4 scope per `git diff
+master` attribution -- unchanged from attempt 1, reconfirmed):
+- `<footer>` landmark count is 0 on /whatif -- not introduced by this
+  attempt (no footer content in the diff). Backlog candidate.
+- The Floor/Ceiling tinted boxes remain stale after toggling guardrails
+  off (pre-existing OOB-swap scope issue, unrelated to the anchor
+  wording).
+- GV2's chart and GV3's optimizer surfaces were not re-audited beyond
+  confirming they're untouched by this attempt's diff -- out of scope per
+  the task brief; their own lanes own any findings there.
+- A synthetic `.value=` assignment without a prior real click/fill/input
+  event, followed by `requestSubmit()`, causes a full native-navigation
+  fallback in this Playwright harness rather than an htmx AJAX swap --
+  worth a note for future manual QA scripts in this run (use
+  click()+fill() or keyboard input, not raw `.value=`, before
+  requestSubmit()).
+
+Evidence files (my private working copy, scratchpad/gv4-2/):
+  gv4_audit2.cjs, gv4-axe-results.json, gv4-light-card.png,
+  gv4-dark-card.png, gv4-light-full.png, gv4-dark-full.png,
+  gv4_structure2.cjs, gv4_live2.cjs (artifact repro), gv4_live_debug.cjs
+  (artifact repro), gv4_live3_2.cjs (real-behavior test), gv4_toggle2.cjs,
+  gv4_reflow.cjs, gv4-2-reflow-1024.png, gv4-2-reflow-375.png.

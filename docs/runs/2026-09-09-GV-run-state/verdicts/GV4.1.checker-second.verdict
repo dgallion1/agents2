@@ -1,0 +1,118 @@
+VERDICT: PASS
+CHECKER: checker-second
+FAMILY: adversarial
+TASK: GV4
+ATTEMPT: 1
+---
+Environment: cp -a of /tmp/budget2-gv4-snap into /tmp/gv4-check/src (base 5fae968
+plus GV1/GV2/GV3/GV4 WIP changes already present, per manifest). `go build ./...`
+clean; `go test ./internal/handlers/whatif/...` green (40s, includes GV4's own
+gv4_guardrail_anchors_test.go, all 5 subtests PASS).
+
+1. STALENESS ENUMERATION. Read internal/handlers/whatif/handlers.go: every
+   mutating handler funnels through recalcAndRender/saveAndRecalc ->
+   renderRecalc -> renderRecalcWithExtra, which unconditionally renders
+   "whatif-results-with-oob" (line 195) — the template that carries the
+   `#whatif-guardrail-anchors` OOB div (web/templates/pages/whatif.html:255).
+   This is the SAME shared tail used by portfolio settings, rate assumptions,
+   spending phases, SS config, guardrail save/toggle, sync-apply
+   (renderRecalc via saveAndRecalcIfScenario), scenario switch, and the
+   optimizer's Apply — no mutating handler bypasses it. Only
+   renderWhatIfResultsOnly (background poll, "whatif-results", no OOB)
+   skips the refresh, by explicit design ("must not rewrite a control the
+   user is currently holding").
+   Poll-staleness probe: confirmed engine.Run(in) is called identically by
+   both RunFast (orchestrator.go:41-44, `fastAnalysis(in, eng.Run(in))`) and
+   RunFull (runFullWithSeed, `proj := eng.Run(in); a := fastAnalysis(in, proj)`)
+   with the SAME Input — the code's own comment calls engine.Run "a pure
+   function of its Input". buildGuardrailAnchors reads only
+   projection.YearlySummaries[0], which is produced by that shared eng.Run
+   call, so the fast-path anchors already equal the eventual full-path
+   anchors for the same settings hash — the poll's lack of OOB refresh
+   cannot leave the anchors stale. (This does not generalize to every other
+   OOB card; only checked the field GV4 touches.)
+
+2. DISABLE/ENABLE TRANSITIONS. Wrote a throwaway probe (removed after
+   running) POSTing /whatif/guardrails with the checkbox omitted (disable)
+   then re-added (enable), asserting on the raw OOB snippet text via
+   oobGuardrailAnchorsSnippet (the test file's own helper, isolates the OOB
+   copy from the in-card copy). Disable -> snippet == "" (no "Today:", no
+   "$0.00"); re-enable -> snippet contains both "Today: cut..." /
+   "Today: raise..." lines with correct figures. Matches spec exactly.
+
+3. NIL-SAFETY / depleted-at-month-0 / empty YearlySummaries: covered by
+   TestBuildGuardrailAnchors_NilCases (nil settings, nil Guardrails,
+   disabled, nil projection, zero-value YearlySummaries, zero triggers ->
+   all nil, no panic). buildGuardrailAnchors's own guards
+   (settings==nil || Guardrails==nil || !Enabled; projection==nil ||
+   len(YearlySummaries)==0; triggers<=0) cover every case a chained
+   scenario or a pending/absent analysis could produce.
+
+4. RENDERED-STRING IDENTITY vs GV2's "next cut/raise ... today:" chart
+   summary line. Built a probe fixture (1-year projection, $1,000,000
+   portfolio, 3% inflation, FloorDropPct 15): GV4's anchor renders
+   "$850,000.00" (year0.GuardrailCutTrigger, undeflated, exactly matching
+   GV4's own written acceptance criterion — "rendered strings equal
+   templates.FormatMoney of the year-0 GuardrailCutTrigger/
+   GuardrailRaiseTrigger"). GV2's buildGuardrailChartSummary computes its
+   "today" figure as last.GuardrailCutTrigger / last.CumulativeInflation;
+   for this same fixture last.CumulativeInflation = 1.0275 (measured at the
+   LAST month of year 0, i.e. after 12 monthly inflation compounds, even
+   though the trigger itself is fixed at month 0), so GV2's rendered "today"
+   figure is "$827,277.99" — NOT character-identical to GV4's "$850,000.00"
+   for a genuine one-year, nonzero-inflation projection. Re-verified the
+   premise numerically (not eyeballed) before treating this as a finding.
+   SCOPE: buildGuardrailChartSummary / GuardrailChartSummary is explicitly
+   named FOREIGN in the dispatch ("GV2 under rework ... GuardrailChartSummary
+   in handlers.go"). GV4's own code does exactly what SPEC.md's GV4
+   acceptance criterion specifies (nominal year-0 trigger, no deflation).
+   The inconsistency is GV2's "today" deflation formula applying a
+   full-year's inflation to a trigger that is actually fixed at month 0 —
+   a defect (if it is one) in code this worker did not touch and could not
+   have fixed within GV4's task block. FINDING for the lead's backlog, not
+   a FAIL on GV4 (rule 5: a real defect outside the written scope is a
+   finding, not grounds for FAIL).
+
+5. `<=0` GUARD. No validation clamps GuardrailConfig fields on load (only
+   the form's clampedFloatField applies min/max on submit), so a
+   hand-edited whatif.json could set e.g. CeilingRisePct=0. That yields
+   RaiseTrigger = Baseline*(1+0/100) = Baseline > 0 for any normal positive
+   portfolio, so the <=0 guard does not spuriously fire from realistic
+   percentage edge cases; it functions as documented, catching only "no
+   base projection yet" / zero-value-struct cases. Hiding both lines
+   together (rather than one) is a reasonable, spec-consistent choice
+   (SPEC.md GV4: "hidden ... otherwise", no per-line partial-hide
+   requirement). Not a functional defect.
+
+6. COPY DIFF. `git diff -- web/templates/components/whatif/guardrails.html`
+   shows exactly: heading "Drop/rise guardrails (simple)" ->
+   "Spending guardrails"; the Guyton-Klinger sentence moved from the
+   trailing text-gray-500 <p> into the first help <p> (per SPEC.md GV4:
+   "move the Guyton-Klinger disclaimer sentence into the existing help
+   text"); the new `<div id="whatif-guardrail-anchors">` insertion; and the
+   new `{{define "whatif-guardrail-anchors"}}` block. No other word changed.
+
+7. TEST WEAKENING. `grep -rn "Drop/rise guardrails (simple)"` across
+   internal/handlers/whatif/*_test.go returns nothing — no prior test
+   pinned the old heading, so nothing was weakened rather than updated.
+
+8. OPTIMIZER ISOLATION. `#guardrail-optimizer` (guardrail_optimizer.html)
+   is rendered via {{template "whatif-guardrail-optimizer" .}} AFTER the
+   guardrails <form> closes (guardrails.html:86, outside the </form> at
+   line 85) — a sibling of the anchors div, not a descendant, and not
+   inside the `<div id="whatif-guardrail-anchors">` the OOB swap targets.
+   The OOB outerHTML swap by id="whatif-guardrail-anchors" cannot reach or
+   disturb #guardrail-optimizer's results/tokens/focus.
+
+9. FORMATTER. Both anchor lines and both call sites (buildResultsPartialData
+   line 436, handleWhatIf page data line 1330) use the single
+   internal/templates formatMoney/FormatMoney pure-wrapper pair (render.go)
+   — no second formatter introduced; fractional-cent fixture in the
+   worker's own test (987654.32 x 0.85/1.15) already exercises non-round
+   cents and passes.
+
+No in-scope defect found. GV4's own files conform to SPEC.md's GV4
+acceptance criteria exactly; the one real cross-surface money
+inconsistency found (point 4) sits entirely in FOREIGN GV2 code already
+flagged as "under rework" and is reported as a backlog finding, not a
+FAIL on this task.

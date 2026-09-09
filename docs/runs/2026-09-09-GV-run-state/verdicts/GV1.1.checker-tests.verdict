@@ -1,0 +1,126 @@
+VERDICT: PASS
+CHECKER: checker-tests
+FAMILY: anthropic
+TASK: GV1
+ATTEMPT: 1
+---
+Method: worked only in `cp -a` copies of the frozen snapshot /tmp/budget2-gv1-snap
+(scratchpad/gv1-verify = clean copy, gv1-mutate = fix removed, gv1-tmut = test-guard
+mutations). Live worktree /home/darrell/bin/ai/budget2/.worktrees/guardrail-viz never
+touched; no server binary run; git used read-only only (`git --no-optional-locks
+rev-parse/status/diff/ls-files`), no checkout/stash/reset/commit; nothing written under
+`data` (all handler tests use t.TempDir(), handlers_test.go:64-65).
+
+ORACLE (authoritative)
+  cmd: bash .swarm/tier3/GV1/accept.sh <scratchpad>/gv1-verify
+  exit: 0; last line: `ORACLE PASS`
+  key log lines:
+    TestGV1OracleSearchUsesPlanHooks: "validation runs=1000 seed=-3934194556473721724;
+      optimizer current-row depletion=140; direct MC with hooks=140; without hooks=1000"
+      --- PASS
+    TestGV1OracleEveryCandidateUsesPlanHooks: 8 candidates each "optimizer depletion=N
+      hooked direct=N" (current 166/166, no-guardrails 597/597, grid-* 92/92, 258/258,
+      258/258, 194/194, 194/194, 92/92) --- PASS
+
+CRITERION 1 — build/vet/tests green
+  `go build ./...` (inside accept.sh, set -e, no error) ; `go vet ./internal/handlers/whatif/`
+  run standalone -> printed VET_OK (exit 0).
+  `go test -count=1 -timeout=600s ./internal/handlers/whatif/ ./internal/services/retirement/...`
+  ->
+    ok budget2/internal/handlers/whatif 33.051s
+    ok budget2/internal/services/retirement 33.631s
+    ok budget2/internal/services/retirement/analysis 24.723s
+    ok .../completeness .../engine .../history .../overrides .../prepare (all ok)
+  MET.
+
+CRITERION 2 — regression test: current baseline == direct hooked MonteCarloWithResults,
+and same for every retained candidate
+  Worker tests read at
+  /tmp/budget2-gv1-snap/internal/handlers/whatif/guardrail_optimizer_hooks_test.go:
+    - L59 `analysis.MonteCarloWithResults(getEngine(), in, runs, seed)` after L58
+      `in.Hooks = hooks`; counts !r.Survives.
+    - TestGuardrailOptimizerSearchUsesPlanHooks L115 asserts
+      current.Metrics.DepletionPaths == withHooks (exact ==, not tolerance), plus L103
+      Metrics.Runs == p.validationRuns and L119 DepletionRiskPct identity within 1e-9.
+    - TestGuardrailOptimizerEveryCandidateUsesPlanHooks L151-163 iterates ALL p.graphs,
+      clones `clone := *s; clone.Guardrails = nil; if c.Guardrails != nil {cfg := *c.Guardrails;
+      clone.Guardrails = &cfg}` — byte-for-byte the graph endpoint's rule
+      (handlers_guardrail_graph.go:47-52) — and asserts exact ==; L164 requires both
+      baselines ("current","no-guardrails") retained.
+  cmd: `go test -count=1 -timeout=600s ./internal/handlers/whatif/ -run
+        '^TestGuardrailOptimizer(SearchUsesPlanHooks|EveryCandidateUsesPlanHooks)$' -v`
+  out: --- PASS: TestGuardrailOptimizerSearchUsesPlanHooks (5.47s)
+       --- PASS: TestGuardrailOptimizerEveryCandidateUsesPlanHooks (9.42s)
+       ok budget2/internal/handlers/whatif 14.900s
+  MET.
+
+CRITERION 3 — fixture discriminates and SS is active, asserted by the worker's test
+  Assertions present: L107/L108 compute withHooks (DefaultHooks) and noHooks
+  (engine.Hooks{}); L109-111 `if withHooks == noHooks { t.Fatal("fixture defect: hooks
+  make no difference...") }`; L112-114 guards withHooks < runs/2; helper L43-45
+  `if !retirement.SocialSecurityProjectionActive(loaded) { t.Fatal("fixture defect: SS
+  projection is not active") }`.
+  Both guards PROVED live (not vacuous), in gv1-tmut:
+   a) line 35 -> `s.SocialSecurity = nil`:
+      out: "guardrail_optimizer_hooks_test.go:75: fixture defect: SS projection is not
+      active" / --- FAIL.
+   b) line 107 DefaultHooks() -> engine.Hooks{} (fixture restored):
+      out: "guardrail_optimizer_hooks_test.go:110: fixture defect: hooks make no
+      difference on this plan, the regression cannot discriminate" / --- FAIL.
+  Magnitude of discrimination observed in the worker's own failure text on the mutant
+  build: "direct Monte Carlo with the plan's hooks = 167 (without hooks = 1000)".
+  MET.
+
+CRITERION 4 — existing GO-run tests pass unchanged
+  Unchanged: `git --no-optional-locks diff --stat 5fae968 -- <file>` returns 0 lines for
+  guardrail_optimizer_test.go, guardrail_graph_test.go, guardrail_ranges_test.go
+  (6 + 3 + 1 = 10 Test funcs).
+  cmd: `go test -count=1 -timeout=900s ./internal/handlers/whatif/ -run '^(<all 10 names>)$' -v`
+  out: 10 lines matching '^--- PASS'; summary `ok budget2/internal/handlers/whatif 4.695s`.
+  MET.
+
+MUTATION PROOF (fix removed: line 90 `in.Hooks = retirement.DefaultHooks()` deleted in
+gv1-mutate, restoring master's body)
+  worker tests: `go test -count=1 ... -run '^TestGuardrailOptimizer(SearchUsesPlanHooks|
+  EveryCandidateUsesPlanHooks)$' -v` ->
+    "optimizer 'current' depletion paths = 1000, direct Monte Carlo with the plan's hooks
+     = 167 (without hooks = 1000); the search is not simulating with the plan's engine hooks"
+    --- FAIL: TestGuardrailOptimizerSearchUsesPlanHooks
+    "candidate grid-10-10-15-10-150 depletion 1000 != hooked direct run 124"
+    --- FAIL: TestGuardrailOptimizerEveryCandidateUsesPlanHooks   (exit 1)
+  oracle: accept.sh on gv1-mutate exited 1, no ORACLE PASS; oracle tests run alone via the
+  same overlay ->
+    "CRITERION 2 FAIL: optimizer 'Current guardrails' depletion paths = 1000, direct Monte
+     Carlo with the plan's hooks = 161 (without hooks = 1000)." --- FAIL
+    "CRITERION 3 FAIL: candidate grid-10-5-15-10-150 depletion 1000 != hooked direct run 246"
+     --- FAIL
+  Both new tests mutation-kill.
+
+COMPOSITE CHECK
+  `make check` (= vet static vuln css-verify test) in gv1-verify -> "✓ all checks passed",
+  MAKE_CHECK_EXIT=0; includes staticcheck ./..., govulncheck ("Your code is affected by 0
+  vulnerabilities"), css-verify ("tailwind.css is up to date" — tailwind binary downloaded,
+  network available), and the full `go test ./...`.
+  Cache disclosure: the Makefile `test` target runs `go test ./...` WITHOUT -count=1 (only
+  the fixed accounts rerun is -count=1). The cache was defeated independently: every
+  criterion above was run with -count=1, including the whatif and retirement package suites
+  inside accept.sh. `make check` also left the tree unmodified (status after: same 3 entries).
+
+SCOPE
+  `git --no-optional-locks diff --stat 5fae968 --` ->
+    internal/handlers/whatif/handlers_guardrail_optimizer.go | 1 +   (1 file changed, 1 insertion)
+  `git --no-optional-locks ls-files --others --exclude-standard` ->
+    data (the live-data symlink, excluded by the brief),
+    internal/handlers/whatif/guardrail_optimizer_hooks_test.go
+  Exactly the manifest; nothing else. The single inserted line is
+  `+	in.Hooks = retirement.DefaultHooks()` at handlers_guardrail_optimizer.go:90, directly
+  after the buildEngineInput error check and before analysis.OptimizeGuardrails — no
+  engine/analysis changes. No path in .swarm/critical.globs
+  (internal/services/retirement/settings.go, scripts/deploy*, Makefile) touched.
+  gofmt -l internal/handlers/whatif/ -> empty (clean).
+
+OBSERVATION (not a defect, no criterion affected): the worker's test file is near-identical
+in fixture and assertions to the lead's oracle_test.go (same 60000/4000/4yr SS fixture,
+same clone rule). Independent convergence is expected given how precisely the brief
+specified the fixture, but it means the committed regression is not an independent
+second construction of the check.

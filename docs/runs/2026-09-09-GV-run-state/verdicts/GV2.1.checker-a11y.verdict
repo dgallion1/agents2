@@ -1,0 +1,168 @@
+VERDICT: FAIL
+CHECKER: checker-a11y
+FAMILY: anthropic
+TASK: GV2
+ATTEMPT: 1
+---
+Method: scratch copy of frozen snapshot at /tmp/budget2-gv2-snap, copied via
+`cp -a` to
+/tmp/claude-1000/.../scratchpad/gv2-check (kept .git). Server started with
+`scripts/whatif-verify.sh start 8094` (isolated data copy, real :8080/live
+app untouched), audited http://localhost:8094/whatif with the guardrails
+plan (guardrails enabled -> traces + summary line render), stopped with
+`scripts/whatif-verify.sh stop 8094` when done. Diff scope confirmed with
+`git diff master -- internal/handlers/whatif/handlers.go
+web/templates/components/whatif/projection-chart.html web/static/css/styles.css`.
+All Playwright/axe work run from a Node with NODE_PATH pointed at a cached
+`playwright` install; screenshots/JSON under
+/tmp/claude-1000/.../scratchpad/gv2-check/gv2-audit/.
+
+A-1 (automated audit, zero violations), A-2 (both themes):
+- `npx @axe-core/cli http://localhost:8094/whatif --tags
+  wcag2a,wcag2aa,wcag21a,wcag21aa,wcag22aa --exit` -> "0 violations found!"
+  (real server-rendered light-theme HTML, real stylesheet).
+- Playwright + injected real axe-core 4.13.0 engine (axe.run with the same
+  tag set) against the SAME server render, once with colorScheme:'light'
+  and once with colorScheme:'dark' (the app's own `prefers-color-scheme`
+  detection in base.html picks up the emulated scheme on cold load, no
+  synthetic class injection) -> results.json: light axeViolations=[],
+  dark axeViolations=[]. Screenshots: gv2-audit/whatif-light-full.png,
+  gv2-audit/whatif-dark-full.png.
+- Axe is necessary but not sufficient here: axe's color-contrast rule only
+  checks DOM text, not Plotly SVG line/marker strokes, which is exactly
+  where the failure below lives (found by the manual walk, not axe).
+
+A-3 (contrast), manual walk, computed colors (verified independently with a
+plain-Python WCAG contrast function, matches the in-page getComputedStyle
+readings):
+- Summary line (#projection-guardrail-summary, NEW in GV2): light
+  color rgb(87,83,78) on bg rgb(255,255,255) = 7.63:1; dark color
+  rgb(214,211,209) on bg rgb(41,37,36) = 10.18:1. Both pass 4.5:1 body text.
+- Chart legend/axis text (existing getThemeColors() theming, applied to the
+  new y2 axis too via axisKeys covering xaxis2/yaxis2): light
+  rgb(68,64,60) on white; dark rgb(231,229,228) on rgb(41,37,36). Both pass.
+- Chart line/marker colors carrying meaning (WCAG 1.4.11 / A-3 "icons/
+  borders that carry meaning", >=3:1), measured against the card's real
+  background (white in light, rgb(41,37,36) in dark; plot/paper bgcolor is
+  transparent, confirmed in charts.js buildDefaultLayout, so the card bg is
+  what's behind every stroke):
+    "Cut trigger"   #ef4444 vs white = 3.76:1  PASS
+    "Cut trigger"   #ef4444 vs dark  = 4.03:1  PASS
+    "Raise trigger" #22c55e vs white = 2.28:1  FAIL (< 3:1)
+    "Raise trigger" #22c55e vs dark  = 6.66:1  PASS
+    "Guardrail cuts / raises" raise markers (triangle-up) reuse the same
+      #22c55e: 2.28:1 white / 6.66:1 dark -> same FAIL in light only.
+  Screenshots gv2-audit/whatif-light-card.png vs whatif-dark-card.png show
+  it visually: the raise-trigger dashed line and the green triangle markers
+  are visibly washed out against white in light mode and clearly legible
+  in dark mode -- readable in one theme, not meeting AA contrast in the
+  other (A-2's own framing).
+
+Attribution (git diff master, per the checker's rule):
+- The "Raise trigger" trace and its `"color": "#22c55e"` are new code added
+  by this task (internal/handlers/whatif/handlers.go, the new
+  `guardrailsEnabled` block appending "Cut trigger"/"Raise trigger" traces).
+  This is an in-scope, newly-introduced contrast failure, not inherited.
+- The raise-marker hex `#22c55e` itself is pre-existing (present at the same
+  line in `git show master:internal/handlers/whatif/handlers.go`, used by
+  the "Guardrail cuts / raises" trace before GV2). BUT GV2 is what moves
+  that trace onto the new `yaxis: "y2"` panel
+  (`if guardrailsEnabled { guardrailTrace["yaxis"] = "y2" }`, new in this
+  diff) -- a panel with no area fill behind it, unlike the old placement
+  which sat over the "Portfolio Balance" trace's `fill:"tozeroy"` light-green
+  fill (a materially different, non-white background the color was
+  presumably picked against). Per the checker's own rule ("replicated into
+  new content" is in scope, not just literal new bytes), this is GV2's
+  failure: it re-hosted a marginal pre-existing color choice onto a plain
+  white/transparent panel where it now measurably fails 3:1. The
+  "Portfolio Balance" line's own #22c55e stroke is untouched by this task
+  and is OBSERVATION-only (see below).
+- The "Cut trigger" counterpart uses #ef4444 and passes in both themes, so
+  the asymmetry is specific to the green choice, not a systemic panel issue.
+
+A-8/A-9 (never color-only): PASS. Cut vs raise are distinguishable by
+legend text ("Cut trigger"/"Raise trigger"), by dash style (both dashed,
+shared with each other but distinct from the solid/dotted budget lines),
+and markers by shape (triangle-down vs triangle-up) plus hover text
+(`hoverinfo:"text"`, e.g. "Year 9: raise 10% (110% of plan)<br>$9,707.97/mo
+-> $10,678.77/mo"). The summary <p> under the chart restates the same facts
+as plain text, and the pre-existing (out-of-scope) Guardrail Events list on
+the Risk tab (web/templates/components/whatif/guardrails.html) also carries
+cut/raise as text + icon, not color alone.
+
+A-4/A-5 (keyboard, visible focus): PASS. Tab from the "Nominal" button
+walks Nominal -> Today's Dollars -> "+ Compare without guardrails" -> "Full
+cash flow ->" -> "Quick Adjust" in both themes (results.json focusOrder),
+logical order, no trap. Visible focus ring confirmed on
+"+ Compare without guardrails" (the one control whose visibility now
+depends on `.Settings.Guardrails.Enabled`, unchanged condition from before
+GV2) via computed outline (2px solid, indigo-600 rgb(79,70,229) light /
+indigo-300 rgb(165,180,252) dark) and screenshots
+gv2-audit/whatif-{light,dark}-focus-compare.png and -focus-real.png; ring
+is clearly visible against both card backgrounds. A-14: `grep -n
+"onclick=" web/templates/components/whatif/projection-chart.html` -> no
+matches; no inline handlers were added.
+
+A-6 (structure): PASS. h1Count=1 in both themes (structure.h1Count),
+heading levels present with no skips seen in the walked tree, header/main/
+footer landmarks all present, and the new summary line renders as
+`<p id="projection-guardrail-summary">` (structure.summaryTag = "P"), not a
+heading -- confirmed via `document.getElementById(...).tagName`.
+
+A-10/A-11 (chart doesn't collapse / theme+tab stability, reduced motion):
+PASS. #chart-projection height measured at 540px on initial load, after
+clicking the app's own #theme-toggle (light->dark->light), and after
+switching Overview -> Risk -> Overview, in BOTH starting themes (all four
+`heightInitial` / `heightAfterThemeToggle` / `heightAfterTabSwitch` values
+in results.json read 540, matching the new `.chart-container-tall`
+min-height: 540px and the server's `layout.height: 520` -- the DI3.2/TH-run
+collapse regression class from prior runs does not reproduce here).
+`getComputedStyle` on the new summary line and the chart container show
+transitionDuration/animationDuration = "0s" -- no new motion was added by
+this task for prefers-reduced-motion to need to suppress.
+
+A-15 (target size): N/A for this task's diff -- GV2 added a CSS min-height
+rule and a static `<p>`, no new interactive targets. The pre-existing
+"+ Compare without guardrails" button measured 206x32 CSS px (well over
+24x24), unaffected by this diff.
+
+Reflow: 1024px and 375px viewports both show `scrollWidth === clientWidth`
+(no horizontal page scroll) via `document.documentElement`. At 375px the
+two-panel chart and the summary line remain readable and the legend
+re-stacks vertically (gv2-audit/whatif-375-card.png,
+gv2-audit/whatif-reflow-375.png/-1024.png).
+
+OBSERVATIONS (non-blocking, out of GV2's scope per manifest):
+- The pre-existing "Portfolio Balance" line and "Key events" markers
+  (#22c55e over a green fill, #f59e0b diamonds) were not touched by this
+  diff (`git show master:...handlers.go` has the identical
+  `lineColor := "#22c55e"` / marker code at the same lines) -- any contrast
+  question there is pre-existing and outside GV2.
+- GV1/GV3 changes (guardrail_optimizer.html, handlers_guardrail_optimizer.go,
+  analysis/) were present in the same working tree snapshot but are outside
+  this verdict's scope per the task instructions; not audited here.
+- The "RMD starts" / "Medicare: Christine" key-event annotation labels
+  visually overlap at narrow widths (375px, see screenshot) -- this is the
+  pre-existing "Key events" trace (unchanged by GV2), noted for the backlog
+  only.
+
+FAILURES:
+1. A-3 / WCAG 1.4.11 (Non-text Contrast, AA). File:
+   internal/handlers/whatif/handlers.go, the new `guardrailsEnabled` trace
+   block in buildProjectionChartData (~line 860, the "Raise trigger" trace
+   `"color": "#22c55e"`) and the adjoining `guardrailTrace["yaxis"] = "y2"`
+   reassignment (~line 970) that re-hosts the pre-existing raise-marker
+   color onto the new unfilled panel. Observed: in light theme, the
+   "Raise trigger" dashed line and the raise (triangle-up) markers render
+   at 2.28:1 contrast against the white card background -- below the 3:1
+   AA minimum for a graphical element that carries meaning (the guardrail
+   raise threshold and raise events). Dark theme is fine (6.66:1). Evidence:
+   gv2-audit/results.json (`light.traceContrast`, `dark.traceContrast`),
+   gv2-audit/whatif-light-card.png vs whatif-dark-card.png (visual
+   confirmation), independent Python WCAG-formula recomputation in this
+   session's transcript. Fix direction: pick a raise-trigger/marker green
+   with >=3:1 against white (e.g. a darker green such as #16a34a or
+   #15803d), verified in both themes, OR give the raise elements a second
+   visual weight cue (thicker stroke / larger marker) that still meets the
+   graphical-contrast bar -- shape/text differentiation (A-8/A-9) is
+   already fine, this is purely a contrast-value fix.

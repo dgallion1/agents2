@@ -1,0 +1,208 @@
+VERDICT: PASS
+CHECKER: checker-tests
+FAMILY: anthropic
+TASK: GV2
+ATTEMPT: 3
+---
+Worked in my own `cp -a` of the read-only snapshot /tmp/budget2-gv-a3-snap at
+.../scratchpad/gv2a3 (mutations in a second copy .../scratchpad/gv2mut).
+The real worktrees /home/darrell/bin/ai/budget2{,/.worktrees/guardrail-viz}
+were never touched; no git checkout/stash/reset/commit; the only write to the
+repo tree is this verdict file. `data` never written.
+
+=== BUILD / VET / TESTS ===
+$ go build ./...            -> BUILD_RC=0 (no output)
+$ go vet ./...              -> VET_RC=0 (no output)
+$ PLAYWRIGHT_MODULE=... CHROMIUM_EXECUTABLE=... go test -count=1 -timeout=1800s \
+    ./internal/models/ ./internal/services/... ./internal/handlers/... ./cmd/...
+  -> exit code 0; every package `ok`, including:
+     ok  budget2/internal/handlers/whatif  53.897s
+     ok  budget2/cmd/server                15.378s
+     ok  budget2/internal/services/retirement/engine  0.058s
+  (-count=1 defeats the test cache; no "(cached)" line appears anywhere.)
+
+$ make check   -> exit code 0, final lines:
+     ok  budget2/internal/handlers/accounts  0.819s
+     ✓ all checks passed
+$ make css-verify -> CSS_VERIFY_RC=0, "tailwind.css is up to date"
+
+=== GOFMT (set difference vs base 5fae968) ===
+$ gofmt -l ./cmd ./internal ./web   (attempt-3 tree)  -> 22 files
+$ git archive 5fae968 cmd internal web | tar -x -C <tmp>; gofmt -l ./cmd ./internal ./web -> 22 files
+$ comm -13 base.txt a3.txt          -> EMPTY
+The two lists are byte-identical (accounts/handlers.go, http_test.go,
+models/healthcare_test.go, models_tax_optimizer_test.go, user_profile.go,
+anomalies_test.go, backup/{meta,retention,service}_test.go, dataloader/loader_test.go,
+majorexpenses/engine_test.go, mcpsvc/plan/register.go, analysis/{budget_fit_shares_test,
+perturb,rmd_calendar_year_test,tax_optimizer_strategies}.go, engine/{expense,rmd_edges_test,
+tax_test}.go, retirement/{projection_planned_test,roth_five_year_integration_test}.go,
+storage/edge_cases_test.go). NO GV2 manifest .go file appears in either list:
+$ grep -F -f <(grep '\.go$' .swarm/manifests/GV2.3.files) gofmt_a3.txt -> no matches.
+
+=== CONTRACT ITEM 1 — shared palette by meta.tone/meta.tones ===
+guardrail_optimizer.html:49-51 now reads
+  const dark=...,chart=structuredClone(payload.chart);
+  applyTonePalette(chart.data,getTonePalette());
+  chart.data.forEach((trace,index)=>{if(trace.meta)return;const color=index===0?...});
+charts.js:64-78 applyTonePalette sets marker.color to an ARRAY for meta.tones.
+Demonstrated by the new permanent test (below): all four tone traces get the
+charts.js palette in BOTH themes and the four colours are distinct
+(`seen.size === 4`); "Portfolio Balance"/"Key events" (no meta) keep
+index green/amber. MUTATION (a) and MUTATION (g) below prove it.
+
+=== CONTRACT ITEM 2 — height 520/340, yaxis2 axis treatment, server domains ===
+Line 52-54: `const hasBudgetPanel=!!chart.layout.yaxis2;` ... `height:hasBudgetPanel?520:340`
+and `(hasBudgetPanel?['xaxis','yaxis','yaxis2']:['xaxis','yaxis']).forEach(...gridcolor,automargin)`.
+Test asserts height 520 + yaxis2 present + yaxis2.gridcolor === yaxis.gridcolor +
+yaxis2.automargin === true + deepEqual(chart.layout.yaxis2.domain, payload...domain)
+for the guardrailed candidate, and height 340 + !yaxis2 for the no-guardrails one.
+The domain assertion is NON-VACUOUS: handlers.go:1084 sets "domain": []float64{0, 0.30}.
+MUTATION (c) and MUTATION (f) below prove it.
+
+=== CONTRACT ITEM 3 — graphTable value-column labels ===
+Line 64: `const valueLabel=trace.yaxis==='y2'?'Monthly living budget':'Portfolio balance';`
+Test asserts Planned + After guardrails + markers tables => "Monthly living budget";
+Portfolio Balance + Cut trigger tables => "Portfolio balance"; markers table
+headers[2] === "Event". MUTATION (d) below proves it.
+
+=== CONTRACT ITEM 4 — permanent test, real template + real charts.js, node RAN ===
+File: internal/handlers/whatif/gv2_optimizer_theme_test.go
+  - reads the template from web.EmbeddedFS ("templates/components/whatif/
+    guardrail_optimizer.html") and extracts graphTheme/graphTable by brace
+    counting at test time (gv2ExtractFunction) — NOT a pasted copy;
+  - reads static/js/charts.js from web.EmbeddedFS unmodified and runs it in the
+    SAME vm context so getTonePalette/applyTonePalette resolve as globals;
+  - payload comes from the REAL handler: it calls handleGuardrailOptimizerGraph
+    via httptest and asserts w.Code==200 before decoding;
+  - both themes (assertToneTheming(enabled,false) and (enabled,true)) and both
+    candidate kinds (guardrails enabled, guardrails nil).
+$ sed -n '41,68p' guardrail_optimizer.html | grep -c '{{'  -> 0
+  (no Go-template actions inside the two functions, so the raw embedded source
+   the test extracts is byte-identical to what html/template renders.)
+$ web/embed.go:5 -> //go:embed templates static  (so a template edit re-embeds on rebuild)
+
+RAN, not skipped:
+$ go test -count=1 -v -timeout=300s ./internal/handlers/whatif/ \
+    -run TestGuardrailOptimizerGraphThemeAndTableUseSharedPaletteAndAxisLabels
+  === RUN   TestGuardrailOptimizerGraphThemeAndTableUseSharedPaletteAndAxisLabels
+  --- PASS: TestGuardrailOptimizerGraphThemeAndTableUseSharedPaletteAndAxisLabels (0.04s)
+  PASS
+  ok  	budget2/internal/handlers/whatif	0.047s
+node present: /home/darrell/.config/nvm/versions/node/v24.12.0/bin/node (v24.12.0).
+
+Skips cleanly WITHOUT node (PATH stripped to a dir containing only `go`):
+$ env PATH=<no-node>:/usr/bin:/bin go test -count=1 -v ... -run TestGuardrail...
+  node NOT on PATH
+      gv2_optimizer_theme_test.go:138: node not available; skipping graphTheme/graphTable regression test
+  --- SKIP: TestGuardrailOptimizerGraphThemeAndTableUseSharedPaletteAndAxisLabels (0.00s)
+  ok  	budget2/internal/handlers/whatif	0.003s
+
+=== MUTATION PROOFS (scratch copy .../scratchpad/gv2mut, restored after each) ===
+Permanent test killed in every case is
+TestGuardrailOptimizerGraphThemeAndTableUseSharedPaletteAndAxisLabels
+(internal/handlers/whatif/gv2_optimizer_theme_test.go) except (e).
+
+(a) TEMPLATE mutated: removed `applyTonePalette(chart.data,getTonePalette());`
+    and the `if(trace.meta)return;` guard -> index-only colouring.
+    --- FAIL: TestGuardrailOptimizerGraphThemeAndTableUseSharedPaletteAndAxisLabels (0.05s)
+        AssertionError [ERR_ASSERTION]: enabled/light: Cut trigger color
+    (Killing this by editing the TEMPLATE is the proof the test extracts the
+     live template source rather than a pasted copy.)
+
+(b) TEMPLATE mutated: markers' colour ARRAY collapsed to a scalar
+    (added `chart.data.forEach(t=>{if(t.marker&&Array.isArray(t.marker.color))t.marker.color=t.marker.color[0];});`)
+    --- FAIL: ...  AssertionError: enabled/light: markers marker.color must stay an array, not a scalar
+
+(c) TEMPLATE mutated: `height:hasBudgetPanel?520:340` -> `height:340`
+    --- FAIL: ...  AssertionError: enabled/light: layout.height
+
+(d) TEMPLATE mutated: `const valueLabel=...` -> `const valueLabel='Portfolio balance';`
+    --- FAIL: ...  AssertionError: graphTable: Planned column label
+
+(e) ATTEMPT-2 REGRESSION RE-RUN, handlers.go:851 `idx := (i+1)*12 - 1` -> `(i+1)*12`
+    $ go test -count=1 ./internal/handlers/whatif/
+    --- FAIL: TestBuildProjectionChartDataGuardrailExactValues (0.00s)
+        gv2_chart_test.go:325: mode real: "Cut trigger" y[0]=390243.902439, want 391047.740983
+        (mutation i: off-by-one CPI index would read month 12 instead of 11)
+    -> attempt-2's evidence is intact.
+
+Two extra probes I ran beyond the five requested:
+(f) TEMPLATE: `(hasBudgetPanel?['xaxis','yaxis','yaxis2']:...)` -> `['xaxis','yaxis']`
+    --- FAIL: ...  AssertionError: enabled/light: yaxis2 gridcolor matches yaxis
+(g) REAL charts.js mutated: getTonePalette light negative '#dc2626' -> '#ff00ff'
+    --- FAIL: ...  AssertionError: enabled/light: Cut trigger color
+    -> proves the harness loads the REAL charts.js, not a stub palette.
+Both files byte-restored afterwards (cmp against the clean copy: identical).
+
+=== ATTEMPT-2 BROWSER PROBE (run for real) ===
+$ PLAYWRIGHT_MODULE=/home/darrell/.npm/_npx/9833c18b2d85bc59/node_modules/playwright \
+  CHROMIUM_EXECUTABLE=/home/darrell/.cache/ms-playwright/chromium-1243/chrome-linux64/chrome \
+  go test -count=1 -v -timeout=600s ./cmd/server/ -run TestGuardrailChartToneContrastBrowser
+  --- PASS: TestGuardrailChartToneContrastBrowser (3.49s)
+  PASS
+  ok  	budget2/cmd/server	3.493s
+Ran against real Chromium (server log shows the page fetching
+/static/vendor/plotly.min.js 1350487B and /whatif/chart/projection 200), i.e.
+not a skip — the skip branches at lines 114/119/123 were not taken.
+
+=== ORACLE (authoritative) ===
+$ .swarm/tier3/GV2/accept.sh <my copy root>
+  ...
+  == criteria 2+3: oracle tests (overlay-injected)
+  --- PASS: TestGV2OracleEngineThresholdsAreExact
+  --- PASS: TestGV2OracleChartTracesBothModes
+  --- PASS: TestGV2OracleNoEventsStillShowsTriggers
+  --- PASS: TestGV2OracleDisabledGuardrailsEmitNothing
+  == GM-run marker contract still holds
+  ok  	budget2/internal/handlers/whatif	25.166s
+  ORACLE PASS
+  ORACLE_RC=0
+Last line is exactly `ORACLE PASS`.
+
+=== CONTRACT ITEM 5 / SCOPE ===
+Attempt-3 delta vs the attempt-2 state (baseline: /tmp/budget2-gv-checker-copy,
+09:13, which carries attempt-2's cmd/server/gv2_tone_contrast_browser_test.go and
+lacks attempt-3's new test):
+$ diff -rq -x .git -x data -x tmp -x bin -x node_modules \
+    /tmp/budget2-gv-checker-copy /tmp/budget2-gv-a3-snap
+  Only in /tmp/budget2-gv-checker-copy: .checker-shots
+  Only in .../internal/handlers/whatif: gv2_optimizer_theme_test.go
+  Files .../web/templates/components/whatif/guardrail_optimizer.html ... differ
+=> EXACTLY the new test file + guardrail_optimizer.html. Nothing else moved.
+
+The guardrail_optimizer.html delta (python3 difflib, n=1) is confined to two
+hunks: the graphTheme body (lines 41-55) and the graphTable value-label line
+(lines 60-65). No other part of that file (GV3's territory) changed.
+
+Whole tree vs base 5fae968 (`git archive 5fae968 | tar -x` then diff -rq):
+  GV2 manifest (all 15 accounted for): internal/models/whatif.go;
+  engine/{stepper.go,month.go,guardrail_triggers_test.go};
+  handlers/whatif/{handlers.go,handlers_test.go,gv2_chart_test.go,
+  guardrail_graph_test.go,gv2_optimizer_theme_test.go};
+  web/templates/components/whatif/{projection-chart.html,guardrail_optimizer.html};
+  web/static/css/styles.css; web/static/js/charts.js;
+  cmd/server/gv2_tone_contrast_browser_test.go; cmd/server/testdata/.
+  FOREIGN, attributed not failed: handlers_guardrail_optimizer.go +
+  guardrail_plan_floor_test.go + analysis/planned_living*.go (GV3);
+  guardrail_optimizer_hooks_test.go (GV1); gv4_guardrail_anchors_test.go +
+  guardrails.html + pages/whatif.html (GV4).
+  Nothing else changed.
+critical.globs: Makefile and internal/services/retirement/settings.go both
+`cmp`-identical to 5fae968; scripts/deploy* does not exist and scripts/ is
+identical to the attempt-2 state. No critical glob touched.
+
+=== OBSERVATIONS (not failures, for the backlog) ===
+1. Coverage gap, contract item 4: the no-guardrails candidate is exercised in
+   LIGHT theme only. Dark index-based green IS asserted (Portfolio Balance
+   '#86efac' in enabled/dark), but dark index-amber ('#fcd34d' for "Key
+   events") is asserted nowhere. The literal contract ("both themes,
+   guardrailed and no-guardrails candidates") is met — both themes and both
+   candidate kinds are exercised — but not the full cross product.
+2. The browser probe's server log contains
+   `"GET /whatif/results-full?hash=7696718ca387a132" ... 500 320B` during the
+   run. The test still passes and this is incidental to what it asserts; I did
+   not attribute it to GV2 (it is a poll race in the page, present in the
+   attempt-2 harness too).
+3. An empty untracked directory `testdata/uploads` exists in the snapshot (and
+   in the attempt-2 copy) — a test-run artifact, not git-trackable, not a
+   change.

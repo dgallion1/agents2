@@ -1,0 +1,56 @@
+== criterion 1: build, vet, every consumer package green
+ok  	budget2/internal/models	0.012s
+ok  	budget2/internal/services/accounts	0.046s
+ok  	budget2/internal/services/amazon	0.008s
+ok  	budget2/internal/services/anomalies	0.046s
+ok  	budget2/internal/services/backup	0.579s
+ok  	budget2/internal/services/classifier	0.008s
+ok  	budget2/internal/services/dataloader	1.899s
+ok  	budget2/internal/services/insights	0.025s
+ok  	budget2/internal/services/majorexpenses	0.008s
+ok  	budget2/internal/services/mcpsvc	0.092s
+ok  	budget2/internal/services/mcpsvc/admin	4.717s
+ok  	budget2/internal/services/mcpsvc/confirm	0.046s
+ok  	budget2/internal/services/mcpsvc/curate	0.740s
+ok  	budget2/internal/services/mcpsvc/ledger	0.702s
+ok  	budget2/internal/services/mcpsvc/plan	11.099s
+ok  	budget2/internal/services/mcpsvc/snapshot	0.008s
+ok  	budget2/internal/services/mcpsvc/spend	1.365s
+ok  	budget2/internal/services/merchants	0.005s
+ok  	budget2/internal/services/metrics	0.009s
+ok  	budget2/internal/services/pricecreep	0.006s
+ok  	budget2/internal/services/restore	1.135s
+ok  	budget2/internal/services/retirement	40.731s
+ok  	budget2/internal/services/retirement/analysis	31.008s
+ok  	budget2/internal/services/retirement/completeness	0.008s
+ok  	budget2/internal/services/retirement/engine	0.056s
+ok  	budget2/internal/services/retirement/history	0.004s
+ok  	budget2/internal/services/retirement/overrides	0.009s
+ok  	budget2/internal/services/retirement/prepare	0.007s
+ok  	budget2/internal/services/storage	85.162s
+ok  	budget2/internal/services/transfers	0.008s
+ok  	budget2/internal/services/uirefresh	0.006s
+ok  	budget2/internal/handlers/accounts	1.754s
+ok  	budget2/internal/handlers/approval	0.006s
+ok  	budget2/internal/handlers/backup	44.852s
+ok  	budget2/internal/handlers/dashboard	2.455s
+ok  	budget2/internal/handlers/duplicates	0.036s
+ok  	budget2/internal/handlers/explorer	1.247s
+ok  	budget2/internal/handlers/insights	2.486s
+ok  	budget2/internal/handlers/majorexpenses	0.709s
+ok  	budget2/internal/handlers/transfers	0.563s
+ok  	budget2/internal/handlers/whatif	48.935s
+== criteria 2+3: oracle tests (overlay-injected)
+=== RUN   TestGV2OracleEngineThresholdsAreExact
+--- PASS: TestGV2OracleEngineThresholdsAreExact (0.00s)
+=== RUN   TestGV2OracleChartTracesBothModes
+--- PASS: TestGV2OracleChartTracesBothModes (0.00s)
+=== RUN   TestGV2OracleNoEventsStillShowsTriggers
+--- PASS: TestGV2OracleNoEventsStillShowsTriggers (0.00s)
+=== RUN   TestGV2OracleDisabledGuardrailsEmitNothing
+--- PASS: TestGV2OracleDisabledGuardrailsEmitNothing (0.00s)
+PASS
+ok  	budget2/internal/handlers/whatif	0.009s
+== GM-run marker contract still holds
+ok  	budget2/internal/handlers/whatif	47.999s
+ORACLE PASS

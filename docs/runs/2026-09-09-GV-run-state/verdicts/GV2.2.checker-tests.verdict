@@ -1,0 +1,230 @@
+VERDICT: PASS
+CHECKER: checker-tests
+FAMILY: anthropic
+TASK: GV2
+ATTEMPT: 2
+---
+Work copy: cp -a of the frozen snapshot /tmp/budget2-gv-final-snap into
+<scratch>/gv2copy (plus <scratch>/mut for mutations, <scratch>/basecopy for
+attribution). Base tree for scope diffing extracted read-only with
+`git -C /home/darrell/bin/ai/budget2 archive 5fae968 | tar -x -C base`.
+No writes to /home/darrell/bin/ai/budget2, to its worktrees, to the shared
+snapshot, or through the `data` symlink (verified:
+`find /home/darrell/bin/ai/budget2/data -maxdepth 2 -newermt '2026-09-09 09:04'`
+-> no output). No git checkout/stash/reset/commit.
+
+CRITERION 1 — build/vet/test/make check/gofmt/css-verify: PASS
+- `go build ./...` exit 0; `go vet ./...` exit 0 (<scratch>/c1.log).
+- `rtk proxy go test -count=1 -timeout=1200s ./internal/models/
+  ./internal/services/... ./internal/handlers/... ./cmd/...` -> EXIT=0,
+  44 lines all `ok`, none FAIL (<scratch>/c1raw.log), incl.
+  `ok budget2/internal/handlers/whatif 101.329s`,
+  `ok budget2/internal/services/retirement/engine 0.075s`,
+  `ok budget2/cmd/server 12.415s`.
+- `rtk proxy make check` -> MAKE_CHECK_EXIT=0; log lines
+  `tailwind.css is up to date` (css-verify) and `✓ all checks passed`.
+  (`make check` = vet static vuln css-verify test; govulncheck line
+  "Your code is affected by 0 vulnerabilities.")
+- gofmt set difference: `gofmt -l gv2copy` = 25 files, `gofmt -l base` = 25
+  files, `comm -23`/`comm -13` of the two sorted lists BOTH empty — i.e. GV2
+  introduced zero new gofmt-dirty files. Explicit per-file check over all
+  nine GV2 .go manifest paths against the dirty list: none present.
+
+CRITERION 2 — engine exactness, three permanent tests + omitempty JSON: PASS
+`internal/services/retirement/engine/guardrail_triggers_test.go`:
+- cut+raise fixture: TestGuardrailTriggerLevelsMatchEvaluate (asserts >=1 cut
+  AND >=1 raise exist, then per-year Cut==Peak*(1-FloorDropPct/100),
+  Raise==Baseline*(1+CeilingRisePct/100), year-0 peak/baseline==PortfolioValue,
+  and per-event peak/baseline reset semantics vs the check-month balance).
+- no-event fixture: TestGuardrailTriggerLevelsNoEventFixture (asserts
+  len(GuardrailEvents)==0 then thresholds > 0 every year).
+- disabled -> zero: TestGuardrailTriggerLevelsZeroWhenDisabled.
+- omitempty JSON keys: TestGuardrailFieldsOmittedFromJSONWhenDisabled
+  (gv2_chart_test.go:407) json.Marshal's every YearlySummary and asserts none
+  of "guardrail_peak"/"guardrail_baseline"/"guardrail_cut_trigger"/
+  "guardrail_raise_trigger" appears.
+Command: `go test -count=1 -v -run TestGuardrailTriggerLevels
+./internal/services/retirement/engine/` -> 3 `--- PASS`.
+
+CRITERION 3 — chart JSON both modes, value-level PERMANENT tests: PASS
+`internal/handlers/whatif/gv2_chart_test.go`
+TestBuildProjectionChartDataGuardrailExactValues loops mode in
+{"nominal","real"} and asserts, per point:
+- trigger y[i] == YearlySummaries[i].Cut|RaiseTrigger / divisor where
+  divisor = 1 (nominal) or Months[min((i+1)*12-1,last)].CumulativeInflation
+  (real) — gv2_chart_test.go:315-326;
+- x[i] == float64(i) (line 312) and the trailing point
+  x[n]==Months[last].Year, y[n]==y[n-1] (lines 337-342);
+- hover strings verbatim at i==0 and i==n-1:
+  fmt.Sprintf("%s if balance %s %s at the year %d check", verb, ≤/≥,
+  templates.FormatMoney(want), i+1) (lines 329-332);
+- Planned y[i] == Months[i].PlannedLivingExpenses/divisor and After
+  y[i] == Months[i].AdjustedLivingExpenses/divisor, x[i]==Months[i].Year
+  (lines 367-379), plus an anti-vacuity guard that the two traces actually
+  DIFFER somewhere (lines 389-398).
+TestBuildProjectionChartDataGuardrailTriggerTraces adds: markers trace on
+yaxis "y2", one point per GuardrailEvents entry, and
+my[i] == afterY[e.Year*12] (lines 112-125).
+Marker text == guardrailEventHoverText is asserted verbatim by the
+pre-existing TestBuildProjectionChartData_GuardrailMarkers_CutAndRaise
+(handlers_test.go:569-579, exact strings incl. the <br> money line); I
+mutation-killed it: replacing the append with a literal "MUTATED" fails
+TestBuildProjectionChartData_GuardrailMarkers_CutAndRaise and
+TestBuildProjectionChartData_GuardrailMarker_NoPreviousMultiplier_NoMoneyLine.
+Disabled side: TestBuildProjectionChartDataGuardrailDisabledOmitsTraces.
+All 25 tests under the GV2 -run set PASS on the unmutated tree (verbatim
+`--- PASS` list captured).
+
+CRITERION 4 — summary rendered strings, fractional-cent fixture: PASS
+TestBuildGuardrailChartSummary uses MonthlySpendingBefore=13821.494999,
+After=12439.345001, CutTrigger=1_720_000.4949, RaiseTrigger=2_880_000.5051,
+CumulativeInflation=1.333333, and asserts EventsLine/NextLine as whole
+strings built through templates.FormatMoney, then re-derives EventsLine a
+second time from the Guardrail-Events-list arithmetic and requires equality.
+Plus TestBuildGuardrailChartSummaryNoEvents and
+TestBuildGuardrailChartSummaryNilWhenDisabled (nil settings / nil Guardrails /
+Enabled:false / nil projection / no yearly summaries).
+End-to-end render evidence (throwaway harness, isolated :0 server, copied
+testdata): GET /whatif returns
+  <p id="projection-guardrail-summary" ...>
+  Guardrails: 3 cuts (year 13: -10%, $5,874.13/mo → $5,286.72/mo; year 16:
+  -10%, $5,776.94/mo → $5,199.25/mo; year 18: -7%, $5,515.88/mo →
+  $5,107.30/mo). Next cut if the balance falls below $45,776.82; next raise
+  if it rises above $625,000.00 (future dollars; today: $24,067.78 /
+  $328,602.13). See Guardrail Events on the Risk tab.</p>
+— i.e. the assertion is on the RENDERED string, arrows unescaped, no ZgotmplZ.
+
+CRITERION 5 — optimizer base-case preview shows/omits the traces: PASS
+guardrail_graph_test.go TestGuardrailGraphExactPolicyAndNoMutation now runs
+the real POST /whatif/guardrails/optimize/graph handler for policies
+{selected, current, no-guardrails} x modes {real, nominal} and asserts
+gv2GraphHasTrace(chart, name) == (cfg != nil && cfg.Enabled) for all four of
+Cut trigger / Raise trigger / Planned / After guardrails — so the
+no-guardrails baseline candidate is proved to omit them.
+`go test -count=1 -v -run TestGuardrailGraphExactPolicyAndNoMutation` -> PASS.
+
+CRITERION 6 — rework contract (ruling GV-2026-09-09d): PASS
+(a) meta.tone / meta.tones: handlers.go emits meta.tone "negative" (Cut
+    trigger), "positive" (Raise trigger), "planned", "after" on the four line
+    traces and a single markers trace with meta.tones parallel to
+    x/y/marker.color. Asserted per mode by
+    TestBuildProjectionChartDataTraceTonesAndContrast (gv2_chart_test.go:479),
+    which also requires len(tones)==len(GuardrailEvents), tones[i] matching
+    the event type, and len(marker.color)==len(tones) — one trace, one point
+    per event.
+(b) >=3:1 vs #ffffff: the same test computes the WCAG 2.x relative-luminance
+    contrast numerically (not a hex-literal match) for every line colour and
+    every marker colour. Mutation (vi) below produces the exact numeric
+    failure line.
+(c) charts.js applies the palette by tone on render AND on themechange:
+    proved by EXECUTION in a real Chromium (see PROBE below), both paths
+    mutation-killed.
+(d) layout.height and .chart-container-tall only when enabled:
+    TestBuildProjectionChartDataTraceTonesAndContrast asserts height==520 when
+    enabled; TestBuildProjectionChartDataGuardrailDisabledOmitsTraces asserts
+    the "height" key is ABSENT when disabled (and no yaxis2, no traces);
+    TestProjectionChartTemplateChartContainerTall renders the template with
+    guardrails enabled/disabled and asserts the class presence both ways.
+    Bonus mutation: making the class unconditional in projection-chart.html
+    fails TestProjectionChartTemplateChartContainerTall/disabled.
+
+MUTATION PROOFS (all in <scratch>/mut, reverted after each; tree verified
+byte-identical to the snapshot afterwards via `diff -rq gv2copy mut`)
+(i)   handlers.go:851 `idx := (i+1)*12 - 1` -> `(i+1)*12`
+      => FAIL: TestBuildProjectionChartDataGuardrailExactValues
+(ii)  handlers.go:922 Planned reads `mo.AdjustedLivingExpenses`
+      => FAIL: TestBuildProjectionChartDataGuardrailExactValues
+(iii) models/whatif.go: `,omitempty` stripped from all four guardrail_* tags
+      => FAIL: TestGuardrailFieldsOmittedFromJSONWhenDisabled
+(iv)  stepper.go:323 `FloorDropPct/100` -> `/200`
+      => FAIL: TestGuardrailTriggerLevelsMatchEvaluate
+      (the other two engine tests still PASS, so the failure is specific)
+(v)   handlers.go:597 `%s%.0f%%` -> `%s%.1f%%`
+      => FAIL: TestBuildGuardrailChartSummary
+(vi)  handlers.go: both GV2 `#15803d` sites -> `#22c55e`
+      => FAIL: TestBuildProjectionChartDataTraceTonesAndContrast with
+         "Raise trigger color #22c55e contrast vs #ffffff = 2.28:1, want >= 3:1"
+         (also FAIL: TestBuildProjectionChartData_GuardrailMarkers_CutAndRaise)
+(vii) `layout["height"] = 520` hoisted out of `if guardrailsEnabled`
+      => FAIL: TestBuildProjectionChartDataGuardrailDisabledOmitsTraces with
+         "guardrails disabled but layout has a height key: 520"
+Extra (not required): markers hover text -> "MUTATED" fails
+TestBuildProjectionChartData_GuardrailMarkers_CutAndRaise; unconditional
+chart-container-tall fails TestProjectionChartTemplateChartContainerTall/disabled;
+charts.js themechange tone restyle disabled fails the browser probe (below).
+
+ORACLE
+`bash .swarm/tier3/GV2/accept.sh <my copy root>` -> exit 0; last line
+`ORACLE PASS`. Verbose section shows 4/4:
+TestGV2OracleEngineThresholdsAreExact, TestGV2OracleChartTracesBothModes,
+TestGV2OracleNoEventsStillShowsTriggers,
+TestGV2OracleDisabledGuardrailsEmitNothing — all `--- PASS`.
+
+BROWSER PROBE — RAN FOR REAL, PASSED
+The repo has no Makefile/CI wiring for PLAYWRIGHT_MODULE; the convention is
+standalone .cjs probes run with env vars (internal/handlers/whatif/testdata/
+guardrail_ranges_browser.cjs, roth_apply_browser.cjs). I resolved a real
+toolchain and ran it:
+  PLAYWRIGHT_MODULE=/home/darrell/.npm/_npx/9833c18b2d85bc59/node_modules/playwright
+  CHROMIUM_EXECUTABLE=/home/darrell/.cache/ms-playwright/chromium-1243/chrome-linux64/chrome
+  go test -count=1 -v -timeout=300s -run TestGuardrailChartToneContrastBrowser ./cmd/server/
+Result: `--- PASS: TestGuardrailChartToneContrastBrowser (16.63s)` /
+`ok budget2/cmd/server 16.641s` / EXIT=0. NOT a skip — the log shows a real
+Chromium session against an isolated :0 server (port 34059), a live plotly
+fetch, GET /whatif/chart/projection 200, theme toggle and tab switches.
+Mutation-kill of the probe itself:
+- charts.js themechange tone restyle disabled -> probe FAILS with
+  'dark: "Planned" contrast 1.99:1 vs card bg rgb(41,37,36) — want >= 3:1'.
+- run against BASE 5fae968 (probe files copied in, no GV2 code) -> FAILS with
+  'guardrails were not enabled on the seeded test settings — fixture defect',
+  i.e. the probe cannot pass on a featureless tree.
+Additional throwaway probe (mine, discarded): loading /whatif with
+localStorage theme=dark set BEFORE navigation renders the legend swatches
+already in the dark palette (rgb(248,113,113) etc.); with the on-render
+`applyTonePalette(data.data, getTonePalette())` call removed the swatch is
+rgb(220,38,38) — so criterion 6(c)'s on-render half is proved to execute.
+Harness gaps disclosed: this is a real Chromium, so no jsdom caveats apply;
+prefers-color-scheme is not exercised (theme comes from localStorage), and
+the probe reads legend swatches rather than the plotted strokes themselves.
+
+SCOPE
+`diff -rq base gv2copy` (base = git archive of 5fae968) lists exactly 13
+modified files + 8 new paths. Attribution:
+- GV2 manifest (all 13 entries accounted for): internal/models/whatif.go;
+  engine/stepper.go, engine/month.go, engine/guardrail_triggers_test.go;
+  whatif/handlers.go, handlers_test.go, gv2_chart_test.go,
+  guardrail_graph_test.go; web/templates/components/whatif/
+  projection-chart.html; web/static/css/styles.css; web/static/js/charts.js;
+  cmd/server/gv2_tone_contrast_browser_test.go;
+  cmd/server/testdata/guardrail_tone_contrast_browser.cjs.
+- FOREIGN, attributed not failed: handlers_guardrail_optimizer.go (GV1 hooks
+  line + GV3 notice), guardrail_optimizer_hooks_test.go (GV1),
+  guardrail_optimizer.html + analysis/planned_living{,_test}.go +
+  guardrail_plan_floor_test.go + the `retanalysis` import and
+  GuardrailPlanFloor block in handlers.go (GV3), guardrails.html +
+  whatif.html + GuardrailAnchors/buildGuardrailAnchors and its two map
+  entries in handlers.go + gv4_guardrail_anchors_test.go (GV4).
+- engine/guardrails.go: UNTOUCHED (absent from the diff) — constitution held.
+- .swarm/critical.globs (retirement/settings.go, scripts/deploy*, Makefile):
+  none touched.
+- Constitution spot-checks: the four new model fields are additive with
+  `,omitempty`; every money figure goes through templates.FormatMoney; the
+  NextLine real-dollar conversion divides by the SAME summary's
+  CumulativeInflation as the triggers it converts.
+
+FINDINGS (backlog, not GV2 defects)
+F1. GET /whatif/results-full returns 500 (320B error fragment) during the
+    browser probe on the isolated synthetic fixture. Reproduced IDENTICALLY on
+    BASE 5fae968 with no GV2 code (same hash 7696718ca387a132, same 320B) —
+    pre-existing, out of scope.
+F2. `testdata/uploads/` (empty directory) exists in the snapshot but is not in
+    manifest GV2.2 — a test-run artifact, zero content.
+F3. Another lane wrote `/tmp/budget2-gv-final-snap/.checker-shots/*.png` into
+    the shared frozen snapshot after 09:05; my copy predates it and is
+    unaffected. Process observation only.
+F4. Coverage gap (candidate for V3-pattern promotion): removing the on-render
+    `applyTonePalette` call in charts.js does NOT fail the permanent browser
+    probe (it loads light-first, and the light palette equals the server
+    defaults) — verified: probe still PASSes with that call mutated out. The
+    behaviour is present and I proved it with a throwaway dark-first probe,
+    but it is not permanently guarded. Criterion 6 is met; the guard is not.

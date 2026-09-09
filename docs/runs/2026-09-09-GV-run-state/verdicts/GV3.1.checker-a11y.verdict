@@ -1,0 +1,227 @@
+VERDICT: PASS
+CHECKER: checker-a11y
+FAMILY: anthropic
+TASK: GV3
+ATTEMPT: 1
+---
+Scope confirmed via `git diff master --stat` in the snapshot: GV3 touched
+web/templates/components/whatif/guardrail_optimizer.html (+25/-? lines),
+internal/handlers/whatif/handlers_guardrail_optimizer.go, handlers.go,
+internal/models/whatif.go, plus tests. web/static/css/styles.css,
+projection-chart.html, engine/month.go, engine/stepper.go, htmx.min.js are
+GV2/vendor changes in the same tree — excluded from this verdict, noted as
+OBSERVATION only per instructions.
+
+Method: cp -a snapshot at /tmp/budget2-gv3-snap (kept .git). Server started
+isolated via `scripts/whatif-verify.sh start 8093` (own data/backups copy,
+LIVE data never written), stopped cleanly at the end
+(`scripts/whatif-verify.sh stop 8093`). Real server render only — no
+hand-built HTML. Playwright (npx-cached `playwright` 1.63.0 module) +
+axe-core 4.13.0 (from the globally-installed @axe-core/cli package) driving
+Chrome 152 (/opt/google/chrome/chrome). Screenshots and axe JSON under
+/tmp/budget2-gv3-snap/a11y-out/.
+
+A-1 Automated audit (npx @axe-core/cli-equivalent axe.run, tags
+wcag2a/wcag2aa/wcag21a/wcag21aa/wcag22aa):
+  - axe-light-before (CLI, /whatif before running optimizer): 0 violations
+    (a11y-out/axe-light-before/, log in audit.log)
+  - light-before (Playwright+axe, pre-optimizer): 0 violations, 1 incomplete
+    (color-contrast on Plotly SVG axis-title text — projection chart, GV2
+    scope, pre-existing bgOverlap axe limitation, not a GV3 surface)
+  - dark-before: 0 violations, 1 incomplete (same Plotly cause)
+  - light-after (optimizer run + results rendered): 0 violations, 1
+    incomplete (color-contrast "incomplete" on site-nav `.md:text-2xl` /
+    nav links — header nav from base.html, byte-identical to master, NOT
+    touched by GV3; confirmed via `git diff master --stat` showing
+    base.html absent from the changed-file list)
+  - dark-after: 0 violations, 1 incomplete (same nav cause)
+  - axe-dump-light / axe-dump-dark (isolated real-template render, see
+    below): 0 violations, 0 incomplete — the cleanest evidence, since it
+    isolates the GV3 partial from the pre-existing nav/chart noise.
+  Full JSON: a11y-out/axe-{light,dark}-{before,after}.json,
+  a11y-out/axe-dump-{light,dark}.json.
+
+  To reach every GV3 wording surface (plan-floor notice, the plan-design
+  "Below target — planned spending is below your minimum from year N" row
+  wording, and the 100.00% worst-annual-cut saturation explanation) I wrote
+  a throwaway Go test,
+  internal/handlers/whatif/zzgv3_a11y_dump_test.go (deleted after the run,
+  never committed), that calls the SAME renderer.RenderPartial the real
+  handler uses on "whatif-guardrail-optimizer" and
+  "whatif-guardrail-optimizer-results" with a fixture combining: a
+  PlanFloor notice, one Qualifies row, one PlanDesignBelowTarget row, and
+  one P95WorstAnnualCutPct=100.0 row (mirrors the pattern in the worker's
+  own guardrail_plan_floor_test.go, `renderer.RenderPartial` call at line
+  150). Output dumped to /tmp/budget2-gv3-a11y-dump.html, then wrapped in
+  <html class=""> / <html class="dark"> pages loading the REAL, currently
+  running server's built stylesheets (http://localhost:8093/static/css/
+  tailwind.css and styles.css) — a11y-out/dump-light.html,
+  dump-dark.html, screenshots dump-light.png / dump-dark.png. This is a
+  real server-render byte source (html/template execution), not
+  hand-built markup or guessed CSS. I also confirmed the real backend
+  reaches the plan-design row wording live (no synthetic data needed for
+  that one): POST /whatif/guardrails/optimize with floor=7500/8500 against
+  the isolated data copy returned "Below target — planned spending is
+  below your minimum from year 18" for the Current-guardrails /
+  Guardrails-disabled baselines (/tmp/opt-response.html,
+  /tmp/opt-response2.html) — real requests take 41–70s each (curl -w
+  time_total), which is why I raised the Playwright timeouts to 150s (the
+  task's "15-30s" estimate was short for this environment; verified with a
+  raw curl POST timing first before trusting any Playwright timeout).
+
+A-2 Both themes: light and dark audited at every stage above via
+  playwright colorScheme context (`prefers-color-scheme` toggle, matches
+  the site's own base.html media-query default-theme logic — no
+  localStorage override needed since neither test set one) and via the
+  `dark` class on <html> for the isolated dump. Screenshots:
+  a11y-out/light-before.png, dark-before.png, light-after.png,
+  dark-after.png, dump-light.png, dump-dark.png.
+
+A-3 Contrast — computed from actual getComputedStyle() color/
+  backgroundColor pairs captured by Playwright (WCAG relative-luminance
+  formula, python3 script inline above):
+  LIGHT: hint/plan-floor form note (text-gray-600 on white) 7.63:1;
+    results notice (text-warning #92400e on bg-warning-soft #fffbeb)
+    6.84:1; row wording / 100% explanation (plain body text, no color
+    override — text-gray-900-ish on white) 17.49:1.
+  DARK: hint/plan-floor form note (dark:text-gray-300 on gray-900)
+    11.74:1; results notice (text-warning #fbbf24 on bg-warning-soft-dark
+    #261e22) 9.74:1; row wording / 100% explanation (dark body text on
+    gray-900) 16.03:1.
+  All ratios exceed the 4.5:1 AA body-text threshold in both themes with
+  wide margin. Source: a11y-out/dump_audit.log.
+
+A-4/A-5 Keyboard + visible focus:
+  - Floor field aria-describedby (live server, plan-floor fixture already
+    present in the shipped data): "guardrail-optimizer-floor-help
+    guardrail-optimizer-status guardrail-optimizer-floor-plan-note";
+    describedbyText resolved all three ids to real paragraph text
+    including the new plan-floor hint (a11y-out/audit.log, "FLOOR
+    aria-describedby:" line). ARIA snapshot of the field:
+    `- spinbutton "Minimum monthly living spending (today's dollars,
+    required)": "7500"` (a11y-out/floor-field-axtree.txt) — accessible
+    name/value correct; the description is not part of ariaSnapshot's
+    terse output but is independently confirmed by the id-resolution dump
+    above, which is the load-bearing check per A-4.
+  - Field is keyboard-focusable (page.locator(...).focus() +
+    activeElement.id check, both true).
+  - Visible focus ring measured via getComputedStyle: light
+    outline:"rgb(79,70,229) solid 2px" + matching box-shadow; dark
+    outline:"rgb(165,180,252) solid 2px" — both well over 3:1 against
+    their background (indigo-600 on white; indigo-300 on gray-900).
+  - After the real optimizer run, focus lands on the outcome <h4
+    data-guardrail-outcome tabindex="-1">: confirmed with a dedicated
+    check (a11y-out/focus_check.cjs) — `document.activeElement === outcome`
+    is true, activeTag "H4", activeText "No options met your
+    minimum-spending target" (the element carries no `id`, so the
+    id-based check in the main audit script printed an empty string —
+    a harness false-negative, not a real defect; corrected with the
+    element-identity check). No keyboard trap observed in either flow.
+
+A-6 Structure: H1 count = 1 (a11y-out/audit.log "H1 count: 1", full-page
+  check). Heading order in the optimizer surface: h3 "Optimize
+  guardrails" -> h4 "Options meet your minimum-spending target" (outcome)
+  -> h4 (empty, #guardrail-graph-heading inside the `hidden`
+  #guardrail-graph-preview panel — GV2 scope, unpopulated/hidden until a
+  graph loads, so not exposed to AT; confirmed via source at
+  a11y-out/dump-light.html line ~259). No skipped levels. The plan-floor
+  notice renders as `<p data-guardrail-plan-floor-notice>` (confirmed in
+  rendered HTML), not a heading — matches spec.
+
+A-7 Table: `<table>` with `<th scope="col">` for all 5 columns (Policy /
+  Chance of maintaining minimum / Lifetime living spending (median) /
+  Worst annual cut / Actions) — unchanged by GV3's diff (only `<td>`
+  cell content changed).
+
+A-8 Icons: no new icons in the GV3 diff (text-only additions); N/A.
+
+A-9 Never color-only: the plan-design "Below target" wording carries its
+  full meaning in text ("Below target — planned spending is below your
+  minimum from year N", verified live: /tmp/opt-response.html rows) not
+  via color alone; the notice's text-warning/bg-warning-soft styling is
+  accompanied by full explanatory sentences, not a bare color cue; the
+  100.00% cell's saturation explanation is plain appended text, same body
+  color as the rest of the cell (no color-only signal).
+
+A-10 Live updates: #guardrail-optimizer-status has role="status"
+  aria-live="polite". After a real optimizer run its textContent equals
+  the outcome heading text + " " + the plan-floor-notice text, joined
+  once (a11y-out/audit.log "STATUS REGION:" — statusText exactly equals
+  `outcomeText + ' ' + noticeText`), matching the GV3 script's single
+  `status.textContent=...` assignment (guardrail_optimizer.html diff, the
+  `outcomeText=[outcome?.textContent.trim(),planFloorNotice?.textContent
+  .trim()].filter(Boolean).join(' ')` line) — one assignment, one
+  announcement, not two. Focus moves to the outcome heading as
+  established under A-4/A-5, preserving the "focus/scroll preserved"
+  half of A-10 (this endpoint is a fetch+innerHTML swap, not the SSE
+  refresh A-10 primarily targets, but the same single-update contract
+  holds).
+  OBSERVATION (pre-existing, not GV3): the visible #guardrail-optimizer-
+  status paragraph duplicates the outcome heading's text on screen (once
+  in the status line, once as the h4 below) — this pattern predates GV3
+  (the status paragraph already echoed the outcome text before this task;
+  GV3 only appended the notice text into that same single assignment).
+  Not a WCAG failure (a status message repeating subsequent visible
+  content is not itself a criterion violation), but flagged for the
+  backlog as a possible future de-dup.
+
+A-11 Reduced motion: ran the full optimizer flow under
+  `reducedMotion:'reduce'` context emulation. One `.animate-spin`
+  loading-spinner element retained animationDuration:"1s" — traced to
+  web/static/css/styles.css's documented RF1 ruling (lines 287-294:
+  "animate-spin (loading spinners) is intentionally excluded — that
+  motion conveys essential in-progress state, not decoration"), confirmed
+  PRE-EXISTING via `git diff master -- web/static/css/styles.css`: the
+  ONLY change to that file in this tree is a GV2 `#chart-projection.
+  chart-container-tall` rule (12 lines, unrelated to RF1/spinners) — GV3
+  did not touch styles.css at all. OBSERVATION, not a GV3 FAIL. No other
+  transition/animation was added by GV3's own diff (text-only template
+  changes).
+
+A-12 N/A — no new evidence blocks in this diff.
+
+A-13 Empty states: the GuardrailPlanFloor-absent path renders nothing (no
+  hint paragraph, aria-describedby omits the id) — confirmed by the
+  worker's own TestHandleWhatIfGuardrailPlanFloorHint_AbsentWithoutValue
+  (read, not re-authored) and independently by my dump harness's
+  "FORM_HALF" render with GuardrailPlanFloor unset producing no
+  #guardrail-optimizer-floor-plan-note element. No stack trace / raw
+  exception path introduced.
+
+A-14 Self-contained/CSP-clean: `grep -noE ' on[a-z]+=' guardrail_optimizer
+  .html` → no matches (no inline event-handler attributes). Both audited
+  pages load only http://localhost:8093/static/... assets (same-origin,
+  the running server itself) — no external origin requests observed
+  during any Playwright run (page.on('pageerror') collected zero errors
+  across all flows: a11y-out/audit.log "CONSOLE/PAGE ERRORS: []").
+
+A-15 Target size: "View graph" buttons measured 105.5x40.25 CSS px (well
+  over 24x24); Run optimizer / Apply / Cancel search buttons are
+  full-height text buttons of similar size in the screenshots. Unchanged
+  by GV3's diff.
+
+Reflow: at both 1024px and 375px viewports, document.documentElement.
+  scrollWidth === clientWidth (no page-level horizontal scroll) —
+  a11y-out/audit.log "Reflow @1024px:... horizontalOverflow=false",
+  "Reflow @375px:... horizontalOverflow=false". The table's own
+  `role="region"` scroll container (aria-label "Guardrail comparison;
+  scroll horizontally for all measures", tabindex="0") legitimately
+  overflows internally at 375px (scrollWidth 529 vs clientWidth 299,
+  a11y-out/crop_375.cjs output) — that is its documented, intended
+  behavior, not a page-reflow defect. Cropped screenshot:
+  a11y-out/optimizer-section-375.png confirms readable text and no
+  clipped content at narrow width.
+
+OBSERVATIONS (non-blocking, out of GV3's scope per the task's own
+carve-out):
+  - GV2's projection-chart / #chart-projection.chart-container-tall CSS
+    and htmx.min.js vendor bump are in the same tree; not audited here
+    per instructions.
+  - Pre-existing incomplete axe color-contrast findings on the site nav
+    (base.html, untouched) and on Plotly SVG chart axis titles
+    (projection-chart, GV2 scope) — both attributable to master/GV2, not
+    GV3.
+  - Status-paragraph text duplication with the outcome heading (see A-10)
+    predates GV3; worth a future de-dup but not a WCAG failure today.
+
+No FAILURES found within GV3's scope. VERDICT: PASS.

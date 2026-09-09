@@ -1,0 +1,89 @@
+VERDICT: PASS
+CHECKER: checker-second
+FAMILY: adversarial
+TASK: GV4
+ATTEMPT: 2
+---
+Scope confirmed (byte-diff against /tmp/budget2-gv4-snap, the attempt-1 snapshot):
+- internal/handlers/whatif/handlers.go: buildGuardrailAnchors (lines ~632-660)
+  and its comment block are byte-identical to attempt 1. The only diff vs
+  attempt-1 snap in that file is GV2's foreign meta.tone/color additions
+  (unrelated function, expected per dispatch note).
+- web/templates/pages/whatif.html: zero diff vs attempt-1 snap.
+- git diff 5fae968 -- guardrails.html: exactly the h2 rename ("Drop/rise
+  guardrails (simple)" -> "Spending guardrails"), one sentence moved between
+  the two intro paragraphs, and the whatif-guardrail-anchors block/container
+  (introduced across GV4's attempts). Diffing attempt-1-snap vs now isolates
+  attempt 2's actual change to exactly the two anchor <p> lines: "Today:" ->
+  "Next yearly check:" on both. Nothing else touched.
+- gv4_guardrail_anchors_test.go diff vs attempt-1 snap: adds exactly
+  TestBuildGuardrailAnchors_UsesEngineTriggersNotPercentages and
+  TestRenderGuardrailsCard_AnchorsInsideCard, plus updates the two "Today:"
+  string literals to "Next yearly check:" in the two existing render
+  assertions. No other lines changed.
+
+Wording attack (engine trace, engine/stepper.go + engine/month.go):
+Guardrails.Evaluate runs only at monthInYear==0, including m=0 (the very
+first month). At m=0, CumulativeInflation is still 1.0 (compounding is
+gated `if m>0`), and NewGuardrailState seeds PeakPortfolio=InitialPortfolio
+=starting PortfolioValue, so year-0's GuardrailCutTrigger/RaiseTrigger are
+literally starting_portfolio*(1-drop%) / *(1+rise%) — computed at t=0, in
+today's dollars by construction (nominal==real at that exact instant).
+month.go's finalizeCurrentYear/currentYearSummary assignment (with the
+comment "constant within a year ... last month's assignment wins") confirms
+year-0's stored trigger is this same value throughout the year. So "Next
+yearly check: cut if the portfolio falls below $X" is accurate: X is
+established today and is what the NEXT yearly boundary (month 12) tests
+against. This does not collide with GV2's chart-summary "Next cut if..."
+line (projection-chart.html, sourced from the LAST year's summary, always
+qualified "(future dollars; today: ...)") — different card, different year,
+explicit disambiguation.
+
+Re the specific instructed premise ("the worker left a template comment
+saying 'today's-dollar figures' which is factually wrong"): grepped the
+whole tree for that exact phrase and close variants — not found anywhere.
+The nearest text is the GV4 doc-comments in guardrails.html and handlers.go
+that call these "'Today' dollar anchors" — per the trace above that IS
+factually accurate for year 0, not wrong. No "Today:" prefix survives
+anywhere tied to these anchors (grepped web/ and internal/ for `Today:
+cut`/`Today: raise`/`"Today:` — zero hits). I could not confirm this
+premise against the real code (rule 6) so I am not filing it as a FAIL or
+even an OBSERVATION beyond noting the premise didn't hold.
+
+Mutation kills, verified directly (build clean: go build ./...; go vet
+clean):
+(a) recompute-from-percentages: patched buildGuardrailAnchors's return to
+    `settings.PortfolioValue*(1-FloorDropPct/100)` /
+    `*(1+CeilingRisePct/100)` instead of copying year0's engine fields.
+    `go test ./internal/handlers/whatif/...` (full package, no -run filter):
+    exactly one failure —
+    --- FAIL: TestBuildGuardrailAnchors_UsesEngineTriggersNotPercentages
+    All other tests in the package, including
+    TestBuildGuardrailAnchors_YearZeroTriggers, passed (that test's fixture
+    has zero elapsed time so the engine value and the percentage product
+    coincide — exactly why the new test's hand-set 100000/200000 vs.
+    900000/1200000 divergent fixture is needed, and it is the only one that
+    reacts). Reverted; diff against backup empty afterward.
+(b) container deleted from card: removed
+    `<div id="whatif-guardrail-anchors">{{template "whatif-guardrail-anchors" .}}</div>`
+    from guardrails.html. Full package run: exactly one failure —
+    --- FAIL: TestRenderGuardrailsCard_AnchorsInsideCard
+    No other test failed. Reverted; diff against backup empty afterward.
+Both kills are attributable to the two new tests claimed; no collateral
+failures, no collateral passes-by-luck observed.
+
+Test isolation (GV2 worker's once-observed failure):
+- `grep -rn "t.Parallel()" internal/handlers/whatif/*.go` → zero hits; no
+  test in the package parallelizes, so package-level globals set by
+  setupTestEnvWithRenderer (Initialize(dl, rend, rm) -> renderer,
+  retirementMgr; cache reset) cannot race against a concurrently-running
+  sibling test within this binary.
+- `go test -count=3 ./internal/handlers/whatif/ -run 'GuardrailAnchor|OOB_GuardrailAnchors'` -v:
+  18/18 PASS across 3 repeats.
+- `go test -count=1 ./internal/handlers/whatif/`: ok, 63.155s.
+- Broader sweep: `go test ./internal/handlers/whatif/... ./internal/services/...`
+  (29 packages incl. retirement/engine, retirement/analysis, storage): all ok.
+No isolation defect reproduced in this run; the GV2 worker's "once" report
+did not recur across 3+1+1 repetitions here.
+
+No defects found. VERDICT: PASS.

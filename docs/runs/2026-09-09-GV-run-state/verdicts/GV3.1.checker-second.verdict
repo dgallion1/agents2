@@ -1,0 +1,141 @@
+VERDICT: PASS
+CHECKER: checker-second
+FAMILY: adversarial
+TASK: GV3
+ATTEMPT: 1
+---
+Worked in a cp -a scratch copy (kept .git); never touched the real worktrees.
+All three surfaces confirmed to derive from the single helper
+analysis.LowestPlannedLivingReal (internal/services/retirement/analysis/planned_living.go).
+
+1. Pre-guardrail/pre-floor premise (attack: does an absolute floor already
+   saved on the plan raise PlannedLivingExpenses before the helper sees it?)
+   - Traced engine/month.go:194 PlannedLivingExpenses = out.LivingExpenses
+     -> engine/stepper.go:428 LivingExpenses = st.CurrentLivingExpenses,
+     which is set at stepper.go:284 (MonthlyLivingExpenses * multiplier *
+     CumulativeInflation) BEFORE floorAdjustedLiving (stepper.go:297-298,326)
+     computes the separate adjustedLivingExpenses. st.CurrentLivingExpenses is
+     never overwritten by floorAdjustedLiving's output. CONFIRMED: figure is
+     genuinely pre-floor and pre-guardrail-multiplier, as documented.
+   - "from year N" wording precision: LowestPlannedLivingReal reports the
+     first month attaining the GLOBAL minimum over the whole horizon, not
+     necessarily a phase start; on a non-monotonic custom schedule spending
+     could rise back above the floor after year N while the wording implies
+     an ongoing state. OBSERVATION only (wording, not a wrong figure) per
+     task instructions — Amount/Year/Phase are still exactly correct.
+
+2. Real-dollar arithmetic + rounding (fixture: 0.65 x 10,900 = 7,085.00;
+   fractional-cent case 5000.005/1.0 -> 5000.01 half-away-from-zero):
+   - internal/services/retirement/analysis/planned_living_test.go already
+     encodes exactly this fixture (TestLowestPlannedLivingReal_PhaseDecline:
+     10900/8720/7085 across Go-Go/Slow-Go/No-Go; TestLowestPlannedLivingReal_Flat:
+     5000.005 -> 5000.01, CumulativeInflation<=0 skip, first-occurrence tie
+     rule). Ran: `go test ./internal/services/retirement/analysis/... -run
+     LowestPlannedLivingReal -v` -> all PASS.
+   - Verified formatMoney (internal/templates/render.go:432, fmt.Sprintf
+     "%.2f") and RoundLivingCents (engine/spending_floor.go:9, math.Round)
+     agree on these values with a throwaway Go program (5000.005->5000.01,
+     7085->7085.00) — no double-rounding drift since RoundLivingCents already
+     snaps to a cent multiple before formatMoney re-renders it.
+
+3. getEngine().Run(in) purity / no cross-call mutation (attack: does the new
+   extra Run(in) at handlers_guardrail_optimizer.go:123 change the
+   subsequent OptimizeGuardrails(ctx, in, req) search output?):
+   - engine.Engine.Run is documented pure/stateless (engine.go). Wrote and
+     ran a throwaway test in internal/services/retirement/engine asserting
+     JSON(*prepared.Settings()) is byte-identical before/after two calls to
+     Run(in) with the same Input -- PASS, then deleted the scratch file.
+   - Wrote and ran a throwaway test in internal/services/retirement/analysis
+     calling OptimizeGuardrails with a FIXED seed (424242) twice: once
+     straight, once with engine.New().Run(in) inserted first exactly as the
+     handler now does. Result: `go test -run
+     TestScratchExtraRunDoesNotAffectOptimizeGuardrails -v` -> PASS, JSON
+     outputs byte-identical. Deleted the scratch file afterward
+     (git status confirms no zzz_scratch* files remain).
+   - This matches the ALREADY-EXISTING TestGuardrailOptimizerEveryCandidateUsesPlanHooks,
+     which independently reproduces each candidate's DepletionPaths via a
+     hooked direct run and asserts equality — a stronger, pre-existing check
+     of the same invariant. PASS in the full suite run.
+
+4. Row-tagging boundary conditions (exact-equal floor; baseline row with its
+   own saved floor >= request; qualifying row never tagged):
+   - Read guardrailOptimizerPolicies (analysis/guardrail_optimizer.go:165):
+     every one of the 64 grid candidates is constructed with
+     Guardrails.MinMonthlySpendingReal == the REQUESTED floor exactly and
+     Enabled=true, so the handler's disjunction (Guardrails==nil ||
+     !Enabled || MinMonthlySpendingReal < floor) is structurally FALSE for
+     every grid candidate — confirmed with an httptest probe on the "below"
+     fixture (guardrailPlanFloorFixture): all 64 grid rows render "Meets
+     target" (100.00%) and ONLY the two Baseline rows ("current" with
+     Guardrails=nil per the fixture, and "no-guardrails" with Enabled=false)
+     get "Below target — planned spending is below your minimum from year
+     1". Re-verified this isn't a coincidence: floorAdjustedLiving
+     (engine/spending_floor.go:18) computes
+     adjusted = max(planned*multiplier, MinMonthlySpendingReal*cpi), so a
+     candidate whose floor equals the request structurally cannot dip below
+     it from plan design alone — any non-qualification for such a candidate
+     is genuine funding/market risk, exactly matching the notice's own text
+     ("Policies without an absolute floor at or above your minimum..."). The
+     strict "< floor" (not "<=") in the handler condition is therefore
+     correct by construction, not merely untested. Deleted the probe test
+     afterward.
+   - Qualifying rows: the condition requires !c.Qualifies first, so a
+     qualifying row is never tagged regardless of its Guardrails — visible
+     directly in the code (handlers_guardrail_optimizer.go:172).
+
+5. Notice vs hint same figure: TestGuardrailOptimizerPlanFloorNoticeBelow
+   ("$5,000.00/mo from year 1 (No-Go)") and
+   TestHandleWhatIfGuardrailPlanFloorHint_Present ("$5,000.00/mo ... (No-Go,
+   year 1)") use the identical fixture and assert the identical figures —
+   both PASS. Traced why they must agree even though computed via different
+   call paths: RunFast (used by handleWhatIf's fast analysis) is literally
+   eng.Run(in) (orchestrator.go:41-43) with hooks filled by fillDefaultHooks,
+   which is equivalent to the explicit retirement.DefaultHooks() the
+   optimizer handler sets — same deterministic pure function, same on-disk
+   settings at request time, so byte-identical output when the plan hasn't
+   changed between GET /whatif and POST /whatif/guardrails/optimize (as in
+   both tests, no settings mutation occurs in between).
+
+6. "100.00" saturation cell: template computes {{$cut:=printf "%.2f"
+   $m.P95WorstAnnualCutPct}} ONCE and reuses $cut in {{eq $cut "100.00"}} —
+   applied once, not recomputed. Verified with a throwaway Go program that
+   99.995 formats to "100.00" under Go's %.2f (so it WOULD get tagged, per
+   the rule being on the rendered string) and 99.994999999 formats to
+   "99.99" (not tagged). TestGuardrailOptimizerWorstAnnualCutSaturationExplained
+   (100.0 tagged exactly once, 99.99 not tagged) -> PASS.
+
+7. Status announcement / a11y: the inline JS
+   (guardrail_optimizer.html:126) builds outcomeText from
+   [outcome.textContent, planFloorNotice.textContent] in that order, so the
+   outcome heading text always precedes the floor notice, never replaces it.
+   TestGuardrailOptimizerOutcomeHasMeaningfulFocusTarget -> PASS (full suite
+   run). Full a11y sweep is checker-a11y's lane; not re-litigated here.
+
+8. Full regression: `go build ./...` clean; `go vet ./internal/...` clean;
+   `go test ./internal/handlers/whatif/... ./internal/services/retirement/...`
+   -> ok for all 8 packages (whatif, retirement, analysis, completeness,
+   engine, history, overrides, prepare), including
+   TestGuardrailOptimizerInvalidInputsDoNotSave,
+   TestGuardrailOptimizerCardAndResultsRender,
+   TestGuardrailOptimizerApplyAndCancellation,
+   TestGuardrailOptimizerOrdinaryFormPreservesFloor,
+   TestGuardrailOptimizerPreviewThenExplicitApply (search/apply/token
+   replay-style tests referenced as "GO6/GO9" in the brief — no tests
+   literally named GO6/GO9 exist; these are the closest matches and are all
+   green).
+
+No in-scope defect found. Working tree left clean of all scratch/probe test
+files (git status --porcelain in the scratch copy shows none remain).
+
+OBSERVATIONS (not FAIL — wording precision, not a wrong figure; backlog
+candidates only):
+- "from year N" could read as an ongoing/permanent condition on a
+  non-monotonic custom spending schedule where spending later recovers
+  above the floor; the reported Amount/Year/Phase remain exactly correct.
+- The "current" baseline row's plan-design tag fires whenever the PLAN'S
+  OWN saved guardrail floor is below the requested floor (or absent/
+  disabled), even if the actual non-qualification is partly attributable to
+  simulated depletion below that lower saved floor rather than purely
+  "plan design." The reported figure (LowestPlannedLivingReal) is still
+  correct; only the causal framing in that one row's wording is a shade
+  imprecise. In-scope wording nuance, not a figure defect.

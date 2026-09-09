@@ -1,0 +1,6 @@
+internal/handlers/whatif/guardrail_plan_floor_test.go
+internal/handlers/whatif/handlers.go
+internal/handlers/whatif/handlers_guardrail_optimizer.go
+internal/services/retirement/analysis/planned_living.go
+internal/services/retirement/analysis/planned_living_test.go
+web/templates/components/whatif/guardrail_optimizer.html
