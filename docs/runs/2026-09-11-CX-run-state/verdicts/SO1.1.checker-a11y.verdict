@@ -1,0 +1,200 @@
+VERDICT: PASS
+CHECKER: checker-a11y
+FAMILY: anthropic
+TASK: SO1
+ATTEMPT: 1
+---
+SCOPE (per brief): worktree /home/darrell/bin/ai/budget2/.worktrees/spending-first-optimizer,
+branch codex/spending-first-optimizer, HEAD verified at 424224a (git rev-parse HEAD). Working
+tree shows uncommitted `M internal/handlers/whatif/spending_optimizer_test.go` and
+`M testdata/settings/whatif.json` at audit time — reported here as OBSERVATION per brief
+instruction ("that is a pre-existing suite defect: report it, don't FAIL on it"); not touched.
+Files in scope: web/templates/components/whatif/spending_optimizer.html,
+web/templates/components/whatif/spending_optimizer_results.html,
+web/static/js/whatif-spending-optimizer.js (chartLayout ~line 253-277), and the whatif page
+region hosting them (web/templates/components/whatif/guardrails.html,
+web/templates/pages/whatif.html — for heading/landmark context only).
+Per brief this check is a SCOPED OBSERVATION, not a gate for SO1; PASS reflects the finding
+that this run introduces no new violations against ACCESSIBILITY.md or WCAG 2.2 AA.
+
+METHOD — real render, not template source or guessed CSS
+1. Private read-only copy (never touched original worktree/data):
+   `rsync -a --exclude='.git' --exclude='data' --exclude='tmp' --exclude='.superpowers'
+   /home/darrell/bin/ai/budget2/.worktrees/spending-first-optimizer/ <scratch>/repo/`
+   data/ (real, non-symlinked in this worktree, contains live-looking CSVs) was never copied,
+   read, or run against — the audit never starts the real server or touches data/.
+2. Generated the REAL handler-rendered fixture bytes (form/results/graph markup — the same
+   bytes the production handler emits) via the repo's own oracle:
+   `SPENDING_BROWSER_FIXTURE=/tmp/spending-fixture.json go test ./internal/handlers/whatif
+   -run '^TestSpendingOptimizerBrowserFixture$' -count=1 -v` → PASS (0.03s), wrote
+   /tmp/spending-fixture.json (66,720 bytes: form/graph/results/nil_results/no_results).
+3. Loaded that real markup in Playwright/Chromium (v153.0.8010.12, cached, not a fresh
+   download) with the REAL built stylesheets (`web/static/css/tailwind.css`,
+   `web/static/css/styles.css`), the real vendored Plotly (`web/static/vendor/plotly.min.js`),
+   the real `web/static/js/charts.js`, and the REAL, unmodified production controller
+   `web/static/js/whatif-spending-optimizer.js`. Only `fetch` was mocked (to avoid needing a
+   live server/data dir), matching the shape of the repo's own
+   `spending_optimizer_browser.cjs` harness (which does the same thing for the same reason).
+   Script: <scratch>/tools/audit.cjs (custom, built for this check, adds axe-core + sampled
+   contrast on top of the repo's own probe pattern).
+4. `npx @axe-core/cli`-equivalent: injected axe-core 4.x (`require.resolve('axe-core')`) and
+   ran `axe.run(document, {runOnly:['wcag2a','wcag2aa','wcag21a','wcag21aa','wcag22aa']})`
+   at two points per theme: (a) initial form render, (b) after a full comparison run renders
+   the results partial (headline cards + frontier tables).
+
+AUTOMATED RESULTS (axe, both themes, both render states)
+- light / initial:  0 violations
+- light / results:  0 violations
+- dark  / initial:  0 violations
+- dark  / results:  0 violations
+(First pass without `lang="en"` on the harness's own `<html>` wrapper surfaced
+`html-has-lang` and, in dark, a `color-contrast` hit on a `<nav>` string I had injected into
+the harness page itself for landmark padding — both were HARNESS artifacts, not app markup;
+confirmed against `web/templates/layouts/base.html:3` (`<html lang="en" class="light">`,
+pre-existing, real site layout). Removed the harness-only nav copy and added lang="en" to the
+harness shell; re-ran → 0/0/0/0 as above. Not counted as findings.)
+
+MANUAL CHECKS (constitution point numbers cited)
+
+#1 Structure — full-page heading context: `grep -n "<h[1-6]" web/templates/pages/whatif.html
+web/templates/components/whatif/guardrails.html` → h1 (whatif.html:5, page title) → h2
+(guardrails.html:4, "Spending...") → h3 (spending_optimizer.html:8,
+"How much can I spend?") → h4 (results outcome / "Complete tested frontier") → h5 (per-option
+name / per-frontier "planned"/"flexible" heading) → h4 (spending-graph-heading). No skipped
+levels; de-nesting h5→h4 between sibling sections is normal document structure, not a skip.
+PASS.
+
+#2 Data tables — server-rendered frontier table
+(spending_optimizer_results.html:40-51) uses `<th scope="col">` for all seven columns plus
+`<th scope="row">` on the Base-budget column; `<caption>` present. JS-built tables
+(`makeTable()`, whatif-spending-optimizer.js:279-304) use `<th scope="col">` for the header
+row only (no `scope="row"` on the leading Plan-year/Calendar-month column) — simple tables
+with column headers are sufficient under 1.3.1/1.3.2 for this shape of data (no
+cross-referenced row+column identification needed) so this is not a FAIL; flagged as an
+OBSERVATION for parity with the server table's convention. No layout tables found.
+
+#3 Buttons/links — every actionable control in scope is a native `<button>` (Inspect, Apply,
+Compare, Cancel, Close evidence, view/dollars are native `<select>`) inside real `<form>`
+elements where the action is a submission (data-spending-apply-form). No `<div onclick>`.
+
+#4/#6 Labels & stated requirements — every input has an associated `<label for=...>`; the
+boost checkbox's required-state is stated in VISIBLE text
+(`#spending-boost-required`, unhidden only while `boostEnabled.checked`) and wired via
+`aria-describedby` on both dependent fields; advanced-search fields share visible help text
+stating "today's US dollars per month" via `aria-describedby="spending-search-money-help"`.
+Verified live: `boostRequiredVisible: true` after keyboard-enabling the boost checkbox.
+
+#5 Validation announcement — native `reportValidity()`/`.focus()` on the first invalid field
+(prepare()/submit handler); server/apply errors are written into
+`#spending-optimizer-status[role=status][aria-live=polite]` and the error or outcome node is
+explicitly focused after swap (`handleHTMXAfterSwap`, JS lines 599-606; submit handler lines
+542-548). Traced in source, consistent with prior verdict's trace.
+
+#7/#12 Contrast, both themes — sampled via real computed styles in the browser (page.evaluate
+getComputedStyle), function documented in audit.cjs:
+  light: help-text 7.63:1, rule-text 15.17:1, run-button (white/indigo-700) 6.29:1,
+         cancel-button-disabled 15.17:1, range-box 9.42:1, boost-help 7.63:1,
+         frontier-caption 7.63:1, apply-button 6.29:1
+  dark:  help-text 10.18:1, rule-text 13.9:1, run-button 6.29:1, cancel-button-disabled 13.9:1,
+         range-box 8.18:1, boost-help 10.18:1, frontier-caption 10.18:1, apply-button 6.29:1
+  All ≥ 4.5:1 (text) and the 3:1 UI/large-text floor. Plotly gridline stroke vs. actual
+  transparent-composited background: light 4.34:1 (`rgb(107,114,128)` on white), dark 8.33:1
+  (`rgb(168,162,158)` on `rgb(41,37,36)`) — both clear the constitution's 3:1 chart-stroke
+  floor (this is the exact defect class attempt-1's checker-a11y verdict FAILed at 1.49/1.99:1;
+  current code — `grid: dark ? '#a8a29e' : '#6b7280'`, whatif-spending-optimizer.js:243 — is
+  fixed and re-verified independently here, not just taken on the prior verdict's word).
+  Dark-mode chart re-theme is LIVE, not just CSS: toggled `document.documentElement.classList
+  .add('dark')` on an already-rendered chart and re-read `data[2].line.color`:
+  light `#1d4ed8` → dark `#93c5fd` (theme() + MutationObserver-driven refreshTheme()).
+
+#8 Color alone — "Qualifies"/"Did not qualify" rendered as literal text (not color-only);
+warning/positive banners pair color classes with full sentence text. PASS.
+
+#9 Keyboard — full keyboard-only path exercised and passing in the harness: focus
+`#spending-boost-details > summary` → Enter (opens disclosure) → check boost checkbox → fill
+required fields → fill minimum → focus `#spending-optimizer-run` → Enter → results render and
+`[data-spending-outcome]` receives focus (`outcomeFocused: true`) → focus first Inspect
+button → Enter → graph opens and `#spending-graph-heading` receives focus
+(`graphHeadingFocused: true`) → focus "Chart values, samples, and events" summary → Enter →
+table becomes visible (`chartTableVisible: 1`). No `outline:none` found; every interactive
+element in scope carries `focus:outline focus:outline-2 focus:outline-accent` (or
+`-offset-2` variant).
+
+#10 Focus after swap — confirmed above (#5); "Evidence closed. Nothing was saved." /
+"Comparison cancelled. Nothing was saved." / "Spending option saved..." are all routed through
+the single `role=status aria-live=polite` region; destructive/state actions (cancel, apply,
+close) each set a distinct, non-empty status message.
+
+#11 Chart text alternative — every Plotly host div is `role="img"` with a descriptive
+`aria-label` naming the adjacent table (e.g. "Spending evidence chart; exact values are in the
+adjacent chart values table"), immediately followed by a `<p>` takeaway summary and a
+`<details>`-collapsed data table built from the SAME series the chart plots
+(`makeTable`/`simulatedView`/`worstView`/`timelineView`/`baseView`, whatif-spending-optimizer.js
+:306-434). Verified the tick-thinning change does NOT drop table rows: `chartLayout`'s
+`maxYearTicks`/`yearStep` only feed `xaxis.dtick` (axis labels); every renderer builds its table
+from `series.years`/`timeline.annual_averages`/`timeline.months` directly, independent of the
+axis math. Isolated the tick formula at both extremes: 375px width → maxYearTicks=4,
+yearStep=10 (3 ticks shown for a 30-year span); 1440px → maxYearTicks=10, yearStep=4 (8 ticks
+shown) — both respect the documented `Math.min(10, ...)` bound and neither collapses to 0/degenerate
+step.
+
+#13 Sign semantics — no bare-signed currency values found rendered by the JS controller
+(money.format() targets are funded-living/withdrawal/tax figures, all non-negative in every
+fixture path exercised); no violation surface identified in scope.
+
+#14 Dismissible banners — the new banners in scope (chained-scenario alert, range-limited
+notice, boost-boundary notes, applied-announcement) are static informational text with no
+dismiss affordance, not the "unassigned files/staleness" dismissible-banner pattern point 14
+targets. Not applicable; not a violation.
+
+#15 Motion — `transition: {duration: 0}` is unconditional in `chartLayout()`
+(whatif-spending-optimizer.js:275); no CSS keyframe/transition added for this feature. PASS
+(no motion-only feedback, nothing to gate on `prefers-reduced-motion`).
+
+#16 Client-side suppression parity — traced `purgeGraph()` (JS:86-107): on close/invalidate it
+synchronously clears panel heading/summary/note/table text, sets `hidden=true`, resets every
+`aria-pressed` to false, AND purges the Plotly instance — visual and AT state clear together,
+no orphaned live-region claim. Confirmed live: clicking "Close evidence" hides the panel and
+sets status to "Evidence closed. Nothing was saved." in the same tick.
+
+Point 17 (modal dialogs) — not applicable; `#spending-graph-preview` is an inline
+expand-in-place section (no backdrop, no `aria-modal`, page remains interactive), not a
+blocking overlay.
+
+Target size (WCAG 2.2 2.5.8) — measured real rendered frontier-table button boxes:
+Inspect 63.1×42.5px, Apply 50.6×29.75px — both well above the 24×24 CSS-px minimum.
+
+Reflow at 375px, both themes — after a full run + opening a graph:
+`document.documentElement.scrollWidth - clientWidth === 0` (no page-level horizontal scroll)
+in both light and dark; every `[data-spending-scroll]` named region reports
+`scrollWidth >= clientWidth` (i.e., only the intentionally-scrollable, keyboard-focusable,
+labeled regions carry overflow, not the page).
+
+Page errors — zero `pageerror` events across every render state exercised (initial, boost
+open, results, graph open, table open, theme toggle, viewport resize).
+
+OBSERVATIONS (non-blocking)
+- `internal/handlers/whatif/spending_optimizer_test.go` and `testdata/settings/whatif.json`
+  are modified in the working tree at audit time (git status on the original worktree, not
+  touched by this check). Per the brief this is a known pre-existing suite artifact to report,
+  not FAIL on.
+- JS-built tables (`makeTable`) mark only column headers with `scope="col"`, unlike the
+  server-rendered frontier table which also marks its first column `scope="row"`. Not a
+  violation (simple tables, 0 axe hits), but worth aligning for consistency in a future pass.
+- `data/` in this worktree is a real (non-symlinked) directory containing live-looking CSVs;
+  this check never opened, copied, or ran against it — confirmed via `stat`/`ls -la` before
+  any copy step.
+- Landmarks (`header`/`nav`/`main`/`footer`) live in the page-level base layout
+  (`web/templates/layouts/base.html`) untouched by this task; not re-verified here beyond
+  confirming the heading hierarchy this task's h3 slots into is unbroken.
+
+EVIDENCE ARTIFACTS
+- Fixture: /tmp/spending-fixture.json (from `go test -run
+  ^TestSpendingOptimizerBrowserFixture$`, exit 0)
+- Harness: <scratch>/tools/audit.cjs (Playwright 1.5x + axe-core 4.x, installed fresh but
+  reused the machine's cached Chromium build at ~/.cache/ms-playwright, no live network fetch
+  of browser binaries needed)
+- Raw axe/contrast dumps: <scratch>/audit-out2.json
+- Scratch root: /tmp/claude-1000/-home-darrell-work-agents2--claude-worktrees-budget2-debugging-ee1f37/922e5f74-086e-4d1f-91eb-a2b5a29cca98/scratchpad/so1-a11y/
+
+No task-introduced ACCESSIBILITY.md or WCAG 2.2 AA failures found in the scoped surfaces.

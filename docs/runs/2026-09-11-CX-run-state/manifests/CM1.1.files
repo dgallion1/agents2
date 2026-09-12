@@ -1,0 +1,10 @@
+internal/handlers/whatif/handlers_rates.go
+internal/models/whatif.go
+internal/services/retirement/coverage_gaps3_test.go
+internal/services/retirement/settings.go
+internal/services/retirement/settings_test.go
+web/templates/components/whatif/rate-assumptions.html
+internal/handlers/whatif/current_month_test.go
+internal/services/retirement/settings_current_month.go
+internal/services/retirement/settings_current_month_test.go
+internal/services/retirement/settings_month_rollover_test.go

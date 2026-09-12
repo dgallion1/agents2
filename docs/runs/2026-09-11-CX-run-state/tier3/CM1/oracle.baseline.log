@@ -1,0 +1,31 @@
+== 1 build
+== 2 oracle probes (live-shaped copies; live data untouched)
+    oracle_test.go:101: A1 start_date = "2025-01", want current month "2026-09"
+--- FAIL: TestOracleA_LivePlanFollowsCurrentMonth (0.00s)
+    oracle_test.go:193: B1 scenario start_date = "2025-01", want "2026-09"
+--- FAIL: TestOracleB_ScenarioFileFollowsCurrentMonth (0.00s)
+    oracle_test.go:218: C2 fixed plan drifted on save: 2020-01 <nil>
+--- FAIL: TestOracleC_ExplicitFixedDateStays (0.01s)
+    oracle_test.go:234: D2 legacy plan not advanced: start=2020-01 ages=60/58
+--- FAIL: TestOracleD_LegacyAgesMigrateAgainstOriginalDate (0.00s)
+--- PASS: TestOracleE_NoFalseHealthcareLinks (0.00s)
+    oracle_test.go:307: F1 start_date = "2025-01", want "2026-09"
+--- FAIL: TestOracleF_NoWriteOnLoadWithoutMigration (0.00s)
+FAIL
+FAIL	budget2/internal/zzoracle_cm1	0.014s
+FAIL
+== 3 permanent unit tests present and green
+  MISSING/FAIL TestCurrentMonthLoadRefreshesCachedAges
+  MISSING/FAIL TestCurrentMonthLegacyPlanMigration
+  MISSING/FAIL TestCurrentMonthBirthdayAndYearRollover
+  MISSING/FAIL TestCurrentMonthExplicitFixedDateSurvivesLoad
+  MISSING/FAIL TestCurrentMonthLegacyBirthMonthPreserved
+  MISSING/FAIL TestCurrentMonthFormToggleAndRender
+== 4 tracked testdata untouched (focused runs, then cmd/server)
+  clean after focused runs
+  clean after cmd/server
+== 5 form exposes the toggle and locks the date input
+  absent
+== 6 gofmt on touched Go files
+  clean
+ORACLE FAIL (8 step(s))

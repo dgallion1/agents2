@@ -1,0 +1,27 @@
+== 1 build
+== 2 oracle probes (live-shaped copies; live data untouched)
+    oracle_test.go:116: A4 healthcare ages [54 67] do not follow person ages [55 67] at 2026-09
+    oracle_test.go:122: A11 healthcare person "Darrell Gallion" still unlinked after load
+    oracle_test.go:122: A11 healthcare person "Christine" still unlinked after load
+--- FAIL: TestOracleA_LivePlanFollowsCurrentMonth (0.01s)
+--- PASS: TestOracleB_ScenarioFileFollowsCurrentMonth (0.00s)
+--- PASS: TestOracleC_ExplicitFixedDateStays (0.00s)
+--- PASS: TestOracleD_LegacyAgesMigrateAgainstOriginalDate (0.00s)
+--- PASS: TestOracleE_NoFalseHealthcareLinks (0.01s)
+FAIL
+FAIL	budget2/internal/zzoracle_cm1	0.023s
+FAIL
+== 3 permanent unit tests present and green
+  PASS TestCurrentMonthLoadRefreshesCachedAges
+  PASS TestCurrentMonthLegacyPlanMigration
+  PASS TestCurrentMonthBirthdayAndYearRollover
+  PASS TestCurrentMonthExplicitFixedDateSurvivesLoad
+  PASS TestCurrentMonthLegacyBirthMonthPreserved
+  PASS TestCurrentMonthFormToggleAndRender
+== 4 tracked testdata untouched
+  clean
+== 5 form exposes the toggle and locks the date input
+  present
+== 6 gofmt on touched Go files
+  clean
+ORACLE FAIL (1 step(s))

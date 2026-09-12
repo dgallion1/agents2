@@ -1,0 +1,190 @@
+VERDICT: PASS
+CHECKER: checker-second
+FAMILY: adversarial
+TASK: CM1
+ATTEMPT: 4
+---
+Setup: target repo /home/darrell/bin/ai/budget2, branch feat/use-current-month.
+`rtk proxy git log --oneline -5` at start showed HEAD=9f775fe with 5 files
+modified in the working tree (matching CM1.4.files manifest) plus a `make
+check`/`go test ./...` process (pid 216379/217727) already running, exactly
+as the brief warned. Took a private `cp -a` snapshot immediately
+(scratchpad/cm1-4/budget2-copy) before probing. Partway through my probes
+that background process finished and auto-committed the working tree as
+e80c679 "fix(whatif): only link name-compatible healthcare entries; no write
+on load" (author darrell, Co-Authored-By trailer) — not an action I took;
+confirmed via `rtk proxy git log`. Verified `diff <(git show
+e80c679:internal/services/retirement/settings.go) <my-private-copy>` is
+byte-identical, so every probe below was run against the exact code that is
+now committed. No writes, commits, checkouts, stashes, or pulls performed by
+me; no data/ touched; ./budget2 never run. Real tree left exactly as the
+worker's own process left it (`rtk proxy git status` clean except two
+pre-existing untracked docs files unrelated to CM1).
+
+## Re-attack #1: attempt-3's FAIL (real-name clobber) — FIXED, verified
+
+The fix adds a name-compatibility guard to inferPositionalHealthcareLinks
+(internal/services/retirement/settings.go): a pair links only if the
+person's name is a placeholder OR normalizePersonName(person.Name) ==
+normalizePersonName(hc.Name); the all-or-nothing per-pair loop already in
+place now also fails the whole batch on any name mismatch.
+
+$ go test ./internal/services/retirement/... -run 'TestPositionalHealthcareLinkInference_RealNameMismatchStaysUnlinked' -v
+--- PASS: TestPositionalHealthcareLinkInference_RealNameMismatchStaysUnlinked (0.01s)
+(persons "Robert"/"Susan", healthcare "Bob"/"Sue", exact age match — stays
+unlinked, all four names/ages unchanged — this is literally last attempt's
+regression fixture, now green.)
+
+Mutation-kill (re-applied myself, m7): removed the name-compat guard block
+from inferPositionalHealthcareLinks in the private copy —
+$ go test ./internal/services/retirement/... -run 'TestPositionalHealthcareLinkInference_RealNameMismatchStaysUnlinked' -v
+FAIL	budget2/internal/services/retirement	0.011s
+Restored the file; `diff /tmp/settings.go.orig internal/services/retirement/settings.go` empty (private copy only — verified the real tree file was never touched by this: `diff /tmp/settings.go.orig <real-tree>/internal/services/retirement/settings.go` also empty).
+
+## Re-attack #2: no-write-on-load rule — FIXED, verified
+
+`if _, present := rawFields["use_current_month"]; !present { settings.UseCurrentMonth = true }` no longer sets `changed = true`; the comment explains this explicitly (previously forced a write-back on every legacy plan's first load).
+
+$ go test ./internal/services/retirement/... -run 'TestLoadDoesNotWriteFullyLinkedLegacyPlan' -v
+--- PASS: TestLoadDoesNotWriteFullyLinkedLegacyPlan (0.00s)
+(fully-linked legacy fixture with no use_current_month key: first Load
+returns current-month StartDate/UseCurrentMonth=true in memory but the file
+on disk is byte-identical to the seed; a second Load after InvalidateCache
+also leaves it byte-identical.)
+
+Mutation-kill (m8): restored `changed = true` in that branch in the private
+copy —
+$ go test ./internal/services/retirement/... -run 'TestLoadDoesNotWriteFullyLinkedLegacyPlan' -v
+FAIL	budget2/internal/services/retirement	0.010s
+Restored the file; re-diffed clean.
+
+Also re-applied m10 (saveInternal must still resolve a stale StartDate on
+save — the flip side of the no-write-on-load rule, so a fixed-date plan
+whose flag flips true still gets a correct on-disk date on the next real
+save): removed `resolveCurrentMonth(settings, time.Now())` from the top of
+saveInternal —
+$ go test ./internal/services/retirement/... -run 'TestSaveInternalResolvesCurrentMonth' -v
+FAIL	budget2/internal/services/retirement	0.007s
+Restored; re-diffed clean (`restore verified identical`).
+
+## Does any load path still write, or read the stale on-disk date?
+
+Enumerated every function that reads whatif.json/scenario files
+(grep -n "func.*Load" internal/services/retirement/settings.go):
+- `loadInternalContext` — the ONLY write-on-load path (`if changed {
+  sm.saveInternal(...) }`); `changed` no longer fires for the bare absent-key
+  case, confirmed above.
+- `LoadContext`/`LoadContextWithRevision` — cache-hit path calls
+  `cloneForCurrentMonth` (prepare.Clone + resolveCurrentMonth on the CLONE
+  only; `sm.cache` itself is never mutated or written), so a long-running
+  process serves the current month across a cache hit without ever writing
+  disk. This clone-on-read mechanism is unchanged from prior attempts (not
+  new to attempt 4) but re-verified present and correct.
+- `LoadScenarioSettings` — explicit code comment: "intentionally read-only
+  — chained-scenario loading during analysis must not rewrite unrelated
+  scenario files as a side effect"; calls decodeSettings and discards the
+  `changed` flag. Never writes. Confirmed unchanged.
+- `reconcileActiveScenarioLocked` (self-heal on missing active-scenario
+  file) only flips in-memory `sm.filename`/`sm.cache`/revision; never writes
+  a file.
+
+Grepped every non-test .go file referencing "whatif.json"
+(`grep -rln "whatif.json" --include="*.go" internal/ cmd/ | grep -v _test.go`):
+only settings.go (the manager itself), handlers.go (a doc comment) and
+main.go (a doc comment) — no direct file reads anywhere else.
+
+MCP plan tools (`internal/services/mcpsvc/plan`): no direct StartDate/file
+handling outside tests; grepped for "StartDate"/"start_date" — only in
+*_test.go fixtures. They route through SettingsManager like every other
+consumer (confirmed identically to attempt 3's finding, re-verified this
+attempt).
+
+sync.go / verdict.go: `internal/handlers/whatif/sync.go` calls
+`retirementMgr.LoadContext`/`LoadContextWithRevision` (resolved, not raw).
+`internal/handlers/whatif/verdict.go`'s `BuildVerdict` takes an
+already-resolved `*models.WhatIfSettings` as a parameter — it does not load
+anything itself, so it cannot see a stale date independently of its caller.
+
+Backups (`internal/services/backup`, `internal/services/mcpsvc/admin/{backup,restore}.go`):
+copy/restore raw files wholesale; they do not parse StartDate or compute
+ages themselves, so the no-write-on-load change cannot introduce a stale
+DISPLAYED date there — the next real Load (via SettingsManager, post
+BeginExternalRewrite/InvalidateCache) always resolves it. Pre-existing
+design, unaffected by this attempt's diff.
+
+## `use_current_month:false` survives every save path
+`grep -n "saveInternal\b" internal/services/retirement/settings.go` shows
+every mutating method (UpdateSettingsWithPersons, guardrails saves, etc.,
+~25 call sites) funnels through `saveInternalAndBump` → `saveInternal`,
+which unconditionally starts with `resolveCurrentMonth(settings,
+time.Now())` — a no-op for `UseCurrentMonth=false`. Single chokepoint,
+unchanged from attempt 3's already-verified finding; re-confirmed present
+this attempt.
+
+## cmd/server test isolation (attempt-4 addition #3)
+`cmd/server/main_test.go`'s `setupTestServer` now `cp -r`'s testdata/ into
+`t.TempDir()` instead of pointing at the tracked fixture directly (doc
+comment explains why: a load-time migration write, or any handler save,
+would otherwise dirty testdata/settings/whatif.json), and
+`gv2_tone_contrast_browser_test.go`'s `setupIsolatedTestServer` is now a
+thin alias for the same function. Verified via the oracle rerun (below) and
+directly:
+$ rtk proxy git status --short testdata/    → (empty, after go test ./cmd/server)
+
+## Oracle rerun (attempt 4), private copy
+$ bash .swarm/tier3/CM1/accept.sh <private-copy>
+  == 1 build
+  == 2 all 6 TestOracle* PASS (A/B/C/D/E/F — F is new: no-write-without-migration)
+  == 3 all 6 permanent unit tests PASS
+  == 4 tracked testdata untouched: clean after focused runs AND after cmd/server
+  == 5 form toggle: present
+  == 6 gofmt: clean
+  ORACLE PASS
+Reproduces cleanly.
+
+## Build/vet/race (private copy, exact committed code confirmed above)
+$ go build ./...          → exit 0, no output
+$ go vet ./...             → exit 0, no output
+$ go test -race ./internal/services/retirement ./internal/handlers/whatif -count=1
+  ok  	budget2/internal/services/retirement	111.933s
+  ok  	budget2/internal/handlers/whatif	161.706s
+$ gofmt -l <5 touched files>   → empty
+
+## Other attack surfaces re-checked (no new finding, per attempt-3 groundwork)
+- Age-guard exact equality, twins/reordering inherent limitation, migration
+  hard-fail-on-write-error blast radius (pre-existing on master 895d509,
+  already flagged as backlog in attempt 3): unchanged this attempt, not
+  re-litigated as FAIL grounds.
+- normalizePersonName is case/whitespace-insensitive only (no nickname
+  matching), so "Robert"/"Bob" correctly stay mismatched (m7); only true
+  case/whitespace variants of the SAME name are treated compatible, and any
+  cosmetic name-sync in that narrow case is the same ComputeAges
+  person_id-linked sync behavior that already existed pre-CM1 for any
+  explicitly person_id-linked entry (confirmed: prepare/normalize.go line 36,
+  unchanged, not in this task's diff) — not a new regression.
+- Double-empty-name positional match (both person.Name and hc.Name == ""):
+  age-only linking possible, but no name is lost since both are already
+  empty; unrealistic fixture shape, not the class of defect the claim
+  addresses, and pre-existing linking-without-a-name-guard was already the
+  behavior for this specific empty/empty shape before this fix (the guard
+  only closes the REAL-name mismatch case). Reporting as backlog
+  observation only, not a FAIL.
+
+## Backlog observations (not FAIL grounds)
+- Empty-name positional pairs (persons/healthcare both named "") can still
+  link on age alone; harmless (nothing to lose) but arguably should be
+  treated as name-incompatible too for defense in depth. Narrow, unlikely
+  real-world fixture shape.
+- (Carried from attempt 3, still true) migration-write-on-load hard failure
+  in loadInternalContext is pre-existing master behavior and out of this
+  task's writeable scope; CM1 attempt 4 actually REDUCES its blast radius
+  (fewer plans now trigger `changed` on load), so this backlog item is
+  smaller than it was at attempt 3, not larger.
+
+## Conclusion
+Both re-attacked findings (name clobber, no-write rule) are fixed with
+mutation-killed permanent tests (m7, m8, m10 all reproduced RED on
+reapplication). No load path writes without a real migration; no consumer
+reads a stale on-disk date; use_current_month:false survives every save
+path through the single saveInternal chokepoint. Oracle, build, vet, race,
+gofmt all clean on the exact committed code (e80c679). PASS.

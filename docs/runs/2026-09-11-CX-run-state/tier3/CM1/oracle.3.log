@@ -1,0 +1,22 @@
+== 1 build
+== 2 oracle probes (live-shaped copies; live data untouched)
+--- PASS: TestOracleA_LivePlanFollowsCurrentMonth (0.01s)
+--- PASS: TestOracleB_ScenarioFileFollowsCurrentMonth (0.00s)
+--- PASS: TestOracleC_ExplicitFixedDateStays (0.00s)
+--- PASS: TestOracleD_LegacyAgesMigrateAgainstOriginalDate (0.00s)
+--- PASS: TestOracleE_NoFalseHealthcareLinks (0.01s)
+ok  	budget2/internal/zzoracle_cm1	0.025s
+== 3 permanent unit tests present and green
+  PASS TestCurrentMonthLoadRefreshesCachedAges
+  PASS TestCurrentMonthLegacyPlanMigration
+  PASS TestCurrentMonthBirthdayAndYearRollover
+  PASS TestCurrentMonthExplicitFixedDateSurvivesLoad
+  PASS TestCurrentMonthLegacyBirthMonthPreserved
+  PASS TestCurrentMonthFormToggleAndRender
+== 4 tracked testdata untouched
+  clean
+== 5 form exposes the toggle and locks the date input
+  present
+== 6 gofmt on touched Go files
+  clean
+ORACLE PASS

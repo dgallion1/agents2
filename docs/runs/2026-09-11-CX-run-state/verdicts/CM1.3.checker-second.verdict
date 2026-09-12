@@ -1,0 +1,143 @@
+VERDICT: FAIL
+CHECKER: checker-second
+FAMILY: adversarial
+TASK: CM1
+ATTEMPT: 3
+---
+Setup: target repo /home/darrell/bin/ai/budget2, branch feat/use-current-month.
+NOTE: plain `git status`/`git diff` in this shell are rewritten by the rtk
+hook (per prior memory) and showed phantom staged/unstaged changes; `rtk
+proxy git status`/`git log` show the true state: HEAD = 9f775fe "fix(whatif):
+link unlinked healthcare persons so their ages follow the plan", on top of
+1425b16, on top of master 895d509. Tree is clean except two unrelated
+untracked docs files. All probing below used a `cp -a` private copy at
+/tmp/claude-1000/.../scratchpad/cm1/budget2-copy (byte-identical to HEAD,
+confirmed by direct Read of the source files) plus a second `cp -a` of the
+detached baseline worktree (master 895d509) for A/B comparison. No writes to
+the real tree; no data/, no ./budget2.
+
+## Oracle rerun (attempt 3)
+$ bash .swarm/tier3/CM1/accept.sh /home/darrell/bin/ai/budget2
+  == 2 oracle probes: all 5 TestOracle* PASS (A/B/C/D/E)
+  == 3 permanent unit tests: all 6 PASS
+  == 4 tracked testdata untouched: clean
+  == 5 form toggle: present
+  == 6 gofmt: clean
+  ORACLE PASS
+Reproduces cleanly; tree left clean afterward (`internal/zzoracle_cm1`
+removed, `rtk proxy git status --short` clean).
+
+## Adversarial finding (FAIL basis): healthcare-entry names are NOT
+preserved in general — only in the placeholder-person subcase the fix's own
+tests exercise.
+
+inferPositionalHealthcareLinks (internal/services/retirement/settings.go)
+links an unlinked healthcare entry to an unlinked person by position+exact
+age match, then a documented follow-up only copies the healthcare entry's
+name onto the PERSON when the person's name is a placeholder
+("you"/"spouse"/"user"/"primary"). But prepare.ComputeAges — called
+unconditionally on every load/save, unchanged pre-existing code — then does
+`s.HealthcarePersons[i].Name = person.Name` for every LINKED entry,
+regardless of whether the name-adoption step ran. So whenever the matched
+person's name is NOT a placeholder (i.e. already a real, distinct name), the
+healthcare entry's own real name is silently overwritten by the person's
+name and the original is lost. This is a genuine regression the positional
+linker introduces, not a pre-existing defect: on master, an entry with no
+person_id simply stays unlinked and keeps its own name untouched.
+
+Probe (added as a throwaway test in the private copy, mirroring the
+worker's own settings_healthcare_link_test.go fixture style):
+persons "Robert" (primary, non-placeholder) / "Susan" (spouse,
+non-placeholder), healthcare entries "Bob" (age matches Robert) / "Sue" (age
+matches Susan), no person_id on either healthcare entry — exactly the shape
+inferPositionalHealthcareLinks is designed to catch (1:1 count, exact age
+match at the original start date).
+
+$ go test ./internal/services/retirement/ -run TestProbe_NonPlaceholderPersonName_HealthcareNameSurvives -v
+    bob: PersonID="p1" Name="Robert" CurrentAge=70   (want Name="Bob", was linked)
+    sue: PersonID="p2" Name="Susan" CurrentAge=68    (want Name="Sue", was linked)
+    REGRESSION: healthcare entry hc1 linked and its real name was clobbered: got "Robert", want "Bob" preserved
+    REGRESSION: healthcare entry hc2 linked and its real name was clobbered: got "Susan", want "Sue" preserved
+--- FAIL: TestProbe_NonPlaceholderPersonName_HealthcareNameSurvives (0.01s)
+
+A/B against master (baseline worktree .worktrees/cm1-baseline, 895d509,
+copied to a private dir), SAME fixture shape, no positional-link code path
+exists:
+$ go test ./internal/services/retirement/ -run TestProbe_Baseline_UnlinkedHealthcareStaysUnlinkedAndNamed -v
+    hc hc1: PersonID="" Name="Bob" Age=69
+    hc hc2: PersonID="" Name="Sue" Age=67
+--- PASS
+
+Confirmed this field is genuinely user-visible and user-editable, not an
+internal bookkeeping field: web/templates/components/whatif/
+healthcare-person.html renders `{{.Name}}` as the card label (line 10) and
+exposes it as an editable text input `name="name" value="{{.Name}}"` (lines
+57, 63). So the defect is a real, silent, on-save-persisted loss of a
+user-entered field — directly contradicting the claim under test: "Linked
+entries mirror BirthMonth; user-visible healthcare names survive." That
+guarantee only holds in the placeholder-person subcase the worker's own
+m5/m6 tests cover (settings_healthcare_link_test.go covers "You"/"Spouse" +
+"Darrell Gallion"/"Christine" — the live plan's actual shape — but never a
+case where the person already has a real, distinct name). This is squarely
+in-scope: inferPositionalHealthcareLinks is new code entirely authored for
+this task (CM1.3.files manifest), and the claim under test states the
+"names survive" property without the placeholder qualifier.
+
+## Other checker-second attack surfaces investigated (no separate FAIL)
+
+- Split-classification / dual-formatter risk: every save path
+  (UpdateSettingsWithPersons, guardrails saves, SaveWithRevision,
+  SaveWithRevisionIfScenario) funnels through the single
+  `saveInternal` → `resolveCurrentMonth` choke point (grepped: only
+  settings.go writes whatif.json; no other WriteFile/MarshalIndent site
+  touches WhatIfSettings). `use_current_month:false` is respected at every
+  call site because there is exactly one site. No split-classification
+  defect found here.
+- Migration write-on-first-load failure: `loadInternalContext` propagates a
+  `saveInternal` error straight back as the Load error (`if changed { if err
+  := sm.saveInternal(settings); err != nil { return nil, err } }`), so a
+  read-only settings file WOULD fail the entire page load rather than
+  serving the already-correctly-computed in-memory settings. Verified this
+  exact code shape is byte-identical on master 895d509
+  (.worktrees/cm1-baseline) — NOT a new defect. However CM1 substantially
+  widens the blast radius: previously `changed` fired only for rare legacy
+  shapes (no Persons, missing healthcare-person links); now it also fires
+  for EVERY plan saved before this feature shipped (`use_current_month`
+  absent from rawFields), i.e. most/all currently-live plans, on their next
+  load. Reporting as a backlog observation per scope rules, not a FAIL: the
+  hard-fail-on-migration-write-error mechanism itself is pre-existing and
+  out of this task's writeable scope, even though this task increases how
+  often it is hit.
+- use_current_month:false / stale-date surfaces: all templates that render
+  ages (budget-analysis, rmd, healthcare-person, quick-adjust,
+  rate-assumptions, scenario-chain-card, social-security, spending-phases)
+  read `.Settings.CurrentAge`/`.SpouseAge`/`.CurrentAge` fields populated by
+  prepare.ComputeAges post-resolve; none compute age independently. MCP
+  plan tools (internal/services/mcpsvc/plan) have no direct StartDate
+  handling — they route through the same SettingsManager Load/Save. No
+  stale-surface found.
+- Age-guard exact-equality: DeriveAgeAtStartDate (internal/models/whatif.go)
+  computes integer month difference and floors to years — exact,
+  no tolerance window; a person born in the current month ages up exactly
+  at that boundary, consistently for both settings.CurrentAge and the
+  healthcare-link guard's comparison (both compare against the same
+  "YYYY-MM"-granularity dates), so no month-boundary ambiguity distinct
+  from ordinary birthday handling was found. Worker's own m6 test
+  (TestPositionalHealthcareLinkInference_OffByOneStaysUnlinked) demonstrates
+  exact-match is enforced, not tolerant.
+- False-link risk from reordering: worker's own m3 test
+  (TestPositionalHealthcareLinkInference_CountMismatchStaysUnlinked) covers
+  count mismatch. A same-age "twins" case (two different real people who
+  happen to be the same age) cannot be distinguished from a correct
+  positional pairing by an age-only guard in either order — this is an
+  inherent limitation of position+age heuristics, not unique to this
+  implementation, and is a narrower risk than the name-clobbering defect
+  above (that one fires on ANY exact age match, twins or not).
+
+## Backlog observations (not FAIL grounds — outside this task's writeable scope)
+- Migration-write-on-load hard failure (loadInternalContext) is pre-existing
+  general behavior (confirmed identical on master 895d509) but this task
+  dramatically increases how often a legacy plan hits it (virtually every
+  plan saved before use_current_month shipped). Worth a follow-up hardening
+  task: on migration-write failure, log and still serve the in-memory
+  migrated settings rather than failing the whole load.

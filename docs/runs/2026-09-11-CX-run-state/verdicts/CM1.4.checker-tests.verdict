@@ -1,0 +1,328 @@
+VERDICT: PASS
+CHECKER: checker-tests
+FAMILY: anthropic
+TASK: CM1
+ATTEMPT: 4
+---
+TREE UNDER TEST
+  /home/darrell/bin/ai/budget2, branch feat/use-current-month.
+  Attempt-4 work is COMMITTED as a third commit on top of 1425b16 + 9f775fe:
+    $ /usr/bin/git --no-pager log --oneline -4
+      e80c679 fix(whatif): only link name-compatible healthcare entries; no write on load
+      9f775fe fix(whatif): link unlinked healthcare persons so their ages follow the plan
+      1425b16 feat(whatif): follow the current month for the projection start date
+      895d509 Merge pull request #104 from dgallion1/feat/guardrail-visualization
+    $ /usr/bin/git status --short      (real tree, working tree clean apart from two foreign untracked docs)
+      ?? docs/superpowers/plans/2026-09-10-spending-first-optimizer.md
+      ?? docs/superpowers/specs/2026-09-10-spending-first-optimizer-design.md
+  NOTE (methodology): `rtk proxy git status/log` returned FALSIFIED output in this
+  session (it reported the 5 files as staged-modified at HEAD=9f775fe and omitted
+  e80c679 entirely). Every git fact in this verdict was taken with /usr/bin/git,
+  and `make check` was re-run under `rtk proxy` because the hook truncated the log.
+
+  All work below was done in a private `cp -a` copy (.git preserved):
+    $ cp -a /home/darrell/bin/ai/budget2 <scratch>/work
+  Copy verified content-identical to the real tree on all 14 changed files
+  (cmp -s over `git diff master --name-only`: 14/14 "SAME"). The real tree was
+  never written to; final check: `ls -d internal/zzoracle_cm1` -> No such file,
+  `git status --short` unchanged from the start of the session.
+
+CRITERIA (numbered from the brief's "Claim under test" + "Attempt 4 additions")
+
+C1  use_current_month flag: default true for new plans and for saved plans that
+    predate the field; explicit false keeps a fixed date.            PASS
+  - New plan (missing settings file):
+    $ go test -count=1 -run TestNewPlanDefaultsUseCurrentMonth ./internal/services/retirement
+      ok (green); mutation proof under C9/m9 below.
+  - Absent key on a saved plan -> true in memory:
+    consumer probe TestConsumer01_Load logged
+      "SettingsManager.Load: StartDate=2026-09 CurrentAge=67 SpouseAge=55 ..."
+    from a fixture with no use_current_month key and start_date 2020-01.
+  - Explicit false: oracle TestOracleC_ExplicitFixedDateStays PASS, and my probe
+    TestConsumer09_ExplicitFalseNeverAdvances logged
+      "explicit false after UpdateSettingsWithPersons: start_date=2020-01 use_current_month=false".
+
+C2  On load AND on save StartDate resolves to the current calendar month, and
+    CurrentAge / SpouseAge / PersonAge / healthcare CurrentAge+BirthMonth follow
+    from birth months.                                               PASS
+  - Covered by the consumer enumeration under C12; every consumer probe asserted
+    StartDate == time.Now().Format("2006-01") AND every derived age ==
+    DeriveAgeAtStartDate(currentMonth, birthMonth) AND every linked healthcare
+    entry's BirthMonth == its person's. All 9 probes PASS (output quoted in C12).
+  - Save side additionally asserted on the ON-DISK JSON:
+      TestConsumer05: "SettingsManager.Save: on-disk start_date=2026-09 use_current_month=true"
+      TestConsumer06: "UpdateSettingsWithPersons: on-disk start_date=2026-09 use_current_month=true"
+  - Oracle A1/A2/A3/A4/A10 assert the same on live-shaped fixtures. ORACLE PASS.
+
+C3  Legacy current_age-only plans derive birth months against the ORIGINAL saved
+    date before it advances.                                         PASS
+  - $ bash .swarm/tier3/CM1/accept.sh <scratch>/work
+      --- PASS: TestOracleD_LegacyAgesMigrateAgainstOriginalDate (0.00s)
+    (asserts pr.BirthMonth=="1960-01"/sp.BirthMonth=="1962-01" from
+     start_date 2020-01 + current_age 60 / spouse_age 58, then current-month ages).
+  - Permanent guard: TestCurrentMonthLegacyBirthMonthPreserved -> PASS (oracle step 3).
+
+C4  Positional healthcare linking: all-or-nothing on count + exact age; otherwise
+    nothing links and ages are untouched; linked entries mirror BirthMonth;
+    user-visible healthcare names survive.                           PASS
+  - Oracle TestOracleE_NoFalseHealthcareLinks PASS (4 sub-cases: count mismatch,
+    age-inconsistent, off-by-one, real-names-differ).
+  - Oracle A11 (BirthMonth mirrors the linked person) and A12 (healthcare names
+    unchanged) PASS on the live-shaped fixture.
+  - My probes logged, for the live-shaped legacy fixture, names surviving through
+    every consumer: hcNames="Darrell Gallion"/"Christine" with hcAges=67/55.
+  - Mutation-killed: see C9 m3 (count guard) and m6 (exact-age guard).
+
+C5  The rate-assumptions form has a "Use current month" checkbox that persists the
+    flag and locks the date input.                                   PASS
+  - Oracle step 5: "present" (grep name="use_current_month" and UseCurrentMonth}}readonly).
+  - RENDERED-STRING evidence from my throwaway probe in package whatif
+    (POST /whatif/settings then renderer.RenderToString("whatif-rate-assumptions")):
+      after POST: StartDate=2026-09 UseCurrentMonth=true CurrentAge=66
+      RENDERED start_date input: <input type="month" name="start_date" id="projection-start-date" value="2026-09" readonly
+      RENDERED checkbox: <input type="checkbox" name="use_current_month" value="true" checked
+      explicit-false: StartDate=2020-01 ucm=false RENDERED: <input type="month" name="start_date" id="projection-start-date" value="2020-01"     (no readonly)
+    -> PASS. Permanent guard for the same behavior:
+       TestCurrentMonthFormToggleAndRender PASS (oracle step 3).
+
+C6  (A4) Name compatibility: a positional pair links only if the person's name is
+    a placeholder OR the normalized names are equal; any incompatible pair (age or
+    name) -> no pair links; Robert/Susan vs Bob/Sue with matching ages stay
+    unlinked with names and ages untouched.                          PASS
+  - Permanent test TestPositionalHealthcareLinkInference_RealNameMismatchStaysUnlinked
+    PASS; oracle sub-case "real-names-differ" PASS.
+  - Mutation proof (m7) below: removing the guard turns BOTH red and shows the
+    exact clobber the attempt-3 FAIL described.
+
+C7  (A4) Loading does NOT write the plan back when the only differences are the
+    absent use_current_month key and the resolved start date; two consecutive
+    loads leave the file byte-identical while the returned settings show the
+    current month; every explicit save path still persists flag + resolved date.
+                                                                     PASS
+  - Oracle TestOracleF_NoWriteOnLoadWithoutMigration PASS (F1 returned month,
+    F2 no write on first load, F3 byte-identical after a second load).
+  - Permanent test TestLoadDoesNotWriteFullyLinkedLegacyPlan PASS.
+  - I additionally proved the OTHER half of the contract (real migrations DO still
+    write) with a throwaway probe:
+      legacy current_age-only (real migration): file rewritten on load = true (on-disk start_date=2026-09 use_current_month=true)
+      positional healthcare link (real migration): file rewritten on load = true (on-disk start_date=2026-09 use_current_month=true)
+      fully linked, absent key only (no migration): file rewritten on load = false (on-disk start_date=2026-04 use_current_month=<nil>)
+  - Explicit save paths persisting flag+date: TestConsumer05 (Save) and
+    TestConsumer06 (UpdateSettingsWithPersons) on-disk assertions quoted in C2;
+    explicit-false survives UpdateSettingsWithPersons (TestConsumer09, C1).
+
+C8  (A4) cmd/server tests run against a temp copy of testdata/;
+    `go test -count=1 ./cmd/server` leaves `git status --short testdata/` empty.
+                                                                     PASS (with a finding, F1)
+  - In the pristine copy:
+      $ /usr/bin/git status --short testdata/   -> BEFORE: []
+      $ go test -count=1 ./cmd/server           -> rc=0, "ok budget2/cmd/server 5.724s"
+      $ /usr/bin/git status --short testdata/   -> AFTER:  []
+      $ git status --short --untracked-files=all testdata/ -> empty (no stray cache/ dir)
+  - Also clean after `go test -count=1 ./...` and after `go test -count=1 ./internal/...`.
+  - Oracle step 4 independently reports "clean after focused runs" / "clean after cmd/server".
+  - The refactored setupIsolatedTestServer (now a one-line delegate) still isolates
+    a REAL write: throwaway probe calling setupIsolatedTestServer + seedGuardrailFixture
+    (which POSTs guardrail settings through the real endpoint) logged
+      git status --short --untracked-files=all testdata/ after a guardrails SAVE: ""
+  - FINDING F1 (does not fail this criterion, see FINDINGS): the isolation is
+    NOT complete at package scope, and it is the settings.go no-write fix, not
+    the harness change, that currently makes this criterion hold.
+
+C9  (A4) New permanent tests m7/m8/m9/m10 exist and assert what their names claim
+    (m7, m8, m10 verified by re-applying the mutation).              PASS
+    All mutations applied with python3 exact-string replacement (assert count==1)
+    in the private copy; file restored and md5-verified (2cc54da2e3eb92aef7978350c755e5a6)
+    after each.  6 mutations run: m3, m6, m7, m8, m9, m10 — all KILLED.
+
+    m7  remove the name-compatibility guard from inferPositionalHealthcareLinks
+        ("if !isPlaceholderPersonName(person.Name) && normalize(...)!=normalize(...) { return false }")
+        $ go test -count=1 -run TestPositionalHealthcareLinkInference ./internal/services/retirement
+          --- FAIL: TestPositionalHealthcareLinkInference_RealNameMismatchStaysUnlinked (0.00s)
+              settings_healthcare_link_test.go:263: Bob got linked to a differently-named real person: PersonID = "robert"
+        Oracle re-run with m7 still applied:
+          --- FAIL: TestOracleE_NoFalseHealthcareLinks (0.00s)
+              oracle_test.go:278: E real-names-differ: "Robert" linked="p1" age=67, want unlinked "Bob" with age 67
+              oracle_test.go:278: E real-names-differ: "Susan" linked="p2" age=55, want unlinked "Sue" with age 54
+          ORACLE FAIL (1 step(s))   [rc=1]
+        -> the attempt-3 FAIL (name clobber AND age drift 54->55) is exactly what
+           the new test and the extended oracle now catch.
+
+    m8  restore "changed = true" in the absent-use_current_month branch
+        $ go test -count=1 -run 'TestLoadDoesNotWriteFullyLinkedLegacyPlan|TestCurrentMonthLegacyPlanMigration' ./internal/services/retirement
+          --- FAIL: TestCurrentMonthLegacyPlanMigration (0.00s)
+              settings_current_month_test.go:78: absent use_current_month key alone must not report changed (D2)
+          --- FAIL: TestLoadDoesNotWriteFullyLinkedLegacyPlan (0.01s)
+              settings_healthcare_link_test.go:331: load wrote the file when nothing real migrated:
+
+    m10 delete "resolveCurrentMonth(settings, time.Now())" from saveInternal
+        $ go test -count=1 -run TestSaveInternalResolvesCurrentMonth ./internal/services/retirement
+          --- FAIL: TestSaveInternalResolvesCurrentMonth (0.01s)
+              settings_current_month_test.go:135: on-disk start_date = 2000-01, want current month "2026-09" (stale StartDate was not resolved on save)
+
+    m9  drop "settings.UseCurrentMonth = true" from the missing-file branch of loadInternalContext
+        $ go test -count=1 -run TestNewPlanDefaultsUseCurrentMonth ./internal/services/retirement
+          --- FAIL: TestNewPlanDefaultsUseCurrentMonth (0.00s)
+              settings_current_month_test.go:98: new plan (missing settings file) must default UseCurrentMonth=true
+
+    m3  (from m1-m6) drop the 1:1 count guard (truncate to the shorter list)
+        $ go test -count=1 -run TestPositionalHealthcareLinkInference ./internal/services/retirement
+          --- FAIL: TestPositionalHealthcareLinkInference_CountMismatchStaysUnlinked (0.01s)
+              settings_healthcare_link_test.go:146: healthcare entry "hc1" got linked despite count mismatch: PersonID = "you"
+
+    m6  (from m1-m6) loosen the exact-age guard to +/-1
+        $ go test -count=1 -run TestPositionalHealthcareLinkInference ./internal/services/retirement
+          --- FAIL: TestPositionalHealthcareLinkInference_OffByOneStaysUnlinked (0.01s)
+              settings_healthcare_link_test.go:217: off-by-one entry got linked: PersonID = "you"
+
+    I also read the four new tests in full (not just their names): m7 asserts
+    PersonID=="" for BOTH entries AND that all four names and both ages are
+    unchanged; m8 asserts UseCurrentMonth true, StartDate==current month, and
+    bytes.Equal against the seeded fixture on load 1 AND load 2 (with an explicit
+    InvalidateCache between them); m9 asserts the missing-file branch; m10 reads
+    the on-disk JSON, not the in-memory struct.
+
+C10 Toolchain.                                                       PASS
+  $ go version                       -> go1.26.6 linux/amd64
+  $ go build ./...                   -> rc=0
+  $ go vet ./...                     -> rc=0, no output
+  $ staticcheck ./...                -> rc=0, no output   (/home/darrell/go/bin/staticcheck)
+  $ gofmt -l <the 13 changed .go files>  -> empty (exit 0)
+      (repo-wide `gofmt -l` lists 22 pre-existing unformatted files; NONE are
+       CM1 files — pre-existing on master, backlog item F3.)
+  $ go test -count=1 ./...           -> rc=0; 50 "ok" lines, 0 "FAIL" lines
+  $ go test -race -count=1 ./internal/services/retirement ./internal/handlers/whatif
+                                     -> rc=0; 1701 tests passed in 2 packages
+  Composite target (the repo's own `check` = vet static vuln css-verify test),
+  re-run under `rtk proxy` so the output is raw:
+  $ rtk proxy make check             -> rc=0; last line exactly "✓ all checks passed";
+                                        0 FAIL lines; govulncheck "No vulnerabilities found."
+                                        css-verify rebuilt CSS and left the tree clean
+                                        (git status --short in the copy unchanged after).
+
+C11 Oracle rerun.                                                    PASS
+  $ stat -c '%A %n' .swarm/tier3/CM1/accept.sh -> -rwxrwxr-x (executable)
+  $ bash .swarm/tier3/CM1/accept.sh <scratch>/work    [rc=0]
+      == 1 build
+      == 2 oracle probes (live-shaped copies; live data untouched)
+      --- PASS: TestOracleA_LivePlanFollowsCurrentMonth (0.01s)
+      --- PASS: TestOracleB_ScenarioFileFollowsCurrentMonth (0.00s)
+      --- PASS: TestOracleC_ExplicitFixedDateStays (0.00s)
+      --- PASS: TestOracleD_LegacyAgesMigrateAgainstOriginalDate (0.00s)
+      --- PASS: TestOracleE_NoFalseHealthcareLinks (0.00s)
+      --- PASS: TestOracleF_NoWriteOnLoadWithoutMigration (0.00s)
+      ok  	budget2/internal/zzoracle_cm1	0.018s
+      == 3 permanent unit tests present and green   [6/6 PASS]
+      == 4 tracked testdata untouched  -> clean after focused runs / clean after cmd/server
+      == 5 form exposes the toggle and locks the date input -> present
+      == 6 gofmt on touched Go files -> clean
+      ORACLE PASS
+  The recorded log for this attempt exists and its final line is exactly
+  "ORACLE PASS":  $ tail -1 .swarm/tier3/CM1/oracle.4.log -> ORACLE PASS
+  My independent run reproduces it line for line.
+
+C12 Consumer enumeration — EVERY consumer of StartDate/ages observes the resolved
+    month.                                                           PASS
+  Method: a throwaway probe package internal/zzconsumers_ct in the private copy,
+  seeded with a legacy live-shaped fixture (start_date 2020-01, no
+  use_current_month key, persons You/Spouse born 1958-11/1971-08, healthcare
+  "Darrell Gallion"/"Christine" unlinked with stale ages 61/48). Each probe
+  asserts StartDate == current month, CurrentAge/SpouseAge/PersonAge(id) ==
+  DeriveAgeAtStartDate(currentMonth, birthMonth), and each healthcare entry
+  linked + BirthMonth mirroring its person + CurrentAge following.
+  $ go test -count=1 -v ./internal/zzconsumers_ct    -> ok, 9/9 PASS:
+    1  SettingsManager.Load                 StartDate=2026-09 CurrentAge=67 SpouseAge=55 hcAges=67/55 hcNames="Darrell Gallion"/"Christine"
+    2  SettingsManager.LoadContext          StartDate=2026-09 CurrentAge=67 SpouseAge=55 hcAges=67/55 hcNames="Darrell Gallion"/"Christine"
+    3  SettingsManager.LoadContextWithRevision  StartDate=2026-09 CurrentAge=67 SpouseAge=55 hcAges=67/55 ...
+    4  SettingsManager.LoadScenarioSettings StartDate=2026-09 CurrentAge=67 SpouseAge=55 hcAges=67/55 ...
+    5  SettingsManager.Save (stale 1999-01 in)  on-disk start_date=2026-09 use_current_month=true
+    6  SettingsManager.UpdateSettingsWithPersons (stale "1999-01" passed in)
+                                            returned StartDate=2026-09; on-disk start_date=2026-09 use_current_month=true
+    7  prepare.From                         StartDate=2026-09 CurrentAge=67 SpouseAge=55 hcAges=67/55 ...
+    8  mcpsvc/plan Source.Load("")  -> whatif.json       StartDate=2026-09 ... (active scenario)
+       mcpsvc/plan prepare.From(whatif.json)             StartDate=2026-09 ...
+       mcpsvc/plan Source.Load("whatif_job-loss.json")   StartDate=2026-09 ...
+       mcpsvc/plan prepare.From(whatif_job-loss.json)    StartDate=2026-09 ...
+    9  explicit use_current_month:false never advances, across UpdateSettingsWithPersons
+  MCP wiring traced to the source, not assumed:
+    $ grep -n "src.Load(in.Scenario)" internal/services/mcpsvc/plan/register.go
+      133/152/177 (get_analysis, get_months, run_scenario) — every plan tool goes
+      through Source.Load -> sm.LoadScenarioSettings, then prepare.From. Both are
+      covered by probe 8 above. `grep -rn "start_date\|StartDate" internal/services/mcpsvc/plan/*.go`
+      returns nothing outside tests — the tools never read the raw file.
+  Surfaces that RENDER StartDate, enumerated from the templates rather than the diff:
+    $ grep -rn "StartDate\|start_date" web/templates/   -> only two whatif surfaces:
+      (a) components/whatif/rate-assumptions.html — proved in C5 on the rendered string.
+      (b) components/whatif/onetime-card.html (startYear .Settings.StartDate) — my probe:
+            RENDERED onetime year label: "Year 0 (2026)"
+            RENDERED add-form label: "Projection year (0 = 2026)"
+      (the other StartDate hits are insights/dashboard/explorer/major-expenses date
+       filters — an unrelated field, not the plan's projection start.)
+  Template-JS surface (dual-formatter class check):
+    web/static/js/whatif-rate-assumptions.js computeDerivedAge() re-implements the
+    age rule in JS from the readonly input's value. I EXECUTED it under node over a
+    288-point grid (start months 2024-01..2027-12 x 6 birth months) and diffed it
+    against Go models.DeriveAgeAtStartDate over the same grid:
+      $ diff js_ages.txt go_ages.txt
+      -> identical on all 288 grid points, including the negative/"Age -" cases.
+    No dual-formatter divergence. (JS Math.floor(months/12) == Go months/12 for
+    months>=0; both reject months<0.)
+  POST /whatif/settings: exercised in C5 (handleWhatIfSettings, both toggle states),
+    plus the permanent TestCurrentMonthFormToggleAndRender.
+
+C13 Scope.                                                           PASS
+  $ /usr/bin/git --no-pager diff master --name-only | sort  > changed.txt   (14 files)
+  $ cat .swarm/manifests/CM1.{1,3,4}.files | sort -u        > manifest.txt
+  $ diff changed.txt manifest.txt   -> no differences (IDENTICAL, 14 files)
+  $ (fnmatch of changed.txt against .swarm/critical.globs)  -> hits: NONE
+    (no storage/**, dataloader/**, retirement/engine/**, transfers/**,
+     accounts/accounts.go, mcpsvc/confirm/**)
+  Two untracked files in the real tree are NOT CM1's and are in no manifest:
+    $ stat -c '%y %n' docs/superpowers/{plans,specs}/2026-09-10-spending-first-optimizer*
+      2026-09-10 12:42:03 ... (both) — two days before e80c679; the spending-first
+      optimizer plan/spec from a different effort. Attributed, not charged to CM1.
+
+FINDINGS (backlog for the lead — none of these fails a criterion)
+
+F1  cmd/server isolation is incomplete at package scope, and C8 currently holds
+    because of the settings.go no-write fix, not the harness change.
+    Controlled experiment in the private copy (testdata restored between arms):
+      arm A  delivered code (both fixes)                 -> testdata: []            CLEAN
+      arm B  m8 only (changed=true restored), harness isolation INTACT
+                                                          -> testdata: [ M testdata/settings/whatif.json]  DIRTY
+      arm C  settings.go pristine, harness reverted to testutil.TestDataDir()
+                                                          -> testdata: []            CLEAN
+    So the new temp-copy harness does not by itself prevent the dirtying it is
+    documented to prevent. Per-test bisection over all 50 cmd/server tests under
+    arm B names the leak exactly:
+      DIRTIER: TestDI6MountedRefreshRouteAndLayout ->  M testdata/settings/whatif.json
+    That test (internal/services... via cmd/server/mcp_mount_test.go:33-35) builds
+    its own config with DataDirectory/SettingsDirectory = testutil.TestDataDir().
+    main_test.go itself also still has three un-isolated helpers pointing at the
+    tracked fixture (lines 432-434, 457-459, 809-811) plus a
+    storage.New(testutil.TestDataDir()) at line 713. Suggested follow-up: route
+    those through the temp-copy helper too, so the fixture guard is real rather
+    than incidental.
+
+F2  Verification gap disclosed: TestGuardrailChartToneContrastBrowser — the only
+    caller of the refactored setupIsolatedTestServer — SKIPS in this environment:
+      gv2_tone_contrast_browser_test.go:82: PLAYWRIGHT_MODULE not set; skipping browser contrast regression test
+    Playwright is not installed in the repo or the copy, so this is pre-existing,
+    not a CM1 regression. I closed the gap for the part that matters by calling
+    setupIsolatedTestServer + seedGuardrailFixture from a throwaway test (result
+    quoted under C8: testdata clean after a real guardrails SAVE), but the browser
+    assertions themselves remain unexercised here.
+
+F3  Pre-existing on master, in no manifest: `gofmt -l` repo-wide reports 22
+    unformatted files (e.g. internal/handlers/accounts/handlers.go,
+    internal/services/mcpsvc/plan/register.go, internal/models/user_profile.go).
+    None are CM1 files; `make check` does not gate on gofmt.
+
+F4  The repo's `test` target runs `go test ./...` WITHOUT -count=1 (Makefile:195),
+    so `make check` can pass on cached results ("ok budget2/web (cached)" appeared
+    in the raw log). I defeated this separately with `go test -count=1 ./...`.
+
+VERDICT: PASS — all 13 criteria demonstrated by command output above; the oracle
+reproduces ORACLE PASS independently; all six mutations (m3, m6, m7, m8, m9, m10)
+turn the guarding tests red; scope matches the manifest union exactly and touches
+nothing in critical.globs.

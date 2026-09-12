@@ -1,0 +1,373 @@
+VERDICT: PASS
+CHECKER: checker-tests
+FAMILY: anthropic
+TASK: SO1
+ATTEMPT: 1
+---
+TREE UNDER TEST
+  /home/darrell/bin/ai/budget2/.worktrees/spending-first-optimizer, branch codex/spending-first-optimizer.
+  HEAD moved during my run (as the task anticipated): started at 424224a with the fixture fix
+  STAGED; the lead committed it mid-run.
+    $ git log --oneline -3
+      aad72de test(whatif): pin the spending fixture's start date under use_current_month
+      424224a Merge feat/use-current-month (9f775fe) into codex/spending-first-optimizer
+      9f775fe fix(whatif): link unlinked healthcare persons so their ages follow the plan
+    $ git status --porcelain    -> (empty, clean)
+  I worked in a private rsync copy (.superpowers/.swarm/.swarm-go/tmp/data excluded, data/ later
+  copied in read-only with cp -rL for the live harness). After the lead's commit I re-verified the
+  copy against the tree at aad72de:
+    $ python3 (sha256 each of the 72 manifest paths, copy vs worktree)
+      manifest files compared: 72 mismatches: 11
+      -> all 11 are .swarm/manifests/*.files and .swarm/verdicts/spending-ui.{1,2}.checker-a11y.verdict,
+         which I deliberately excluded from the copy (non-code). All 61 code/doc/asset files, INCLUDING
+         the now-committed spending_optimizer_test.go fixture fix, are byte-identical.
+  I made no writes to the worktree. No git checkout/commit/stash/pull. data/ never modified.
+  Live app on :8080 verified up before and after:
+    $ curl http://localhost:8080/api/health -> {"commit":"v1.4.0-1122-g895d509","status":"ok"}
+
+=====================================================================
+CRITERION 1 — Toolchain from scratch                                        MET
+=====================================================================
+All run in the private copy. -count=1 everywhere, so no cached-pass evidence.
+
+  $ go build ./...                                exit 0    wall 1.40 s
+  $ go vet ./...                                  exit 0    wall 0.94 s
+  $ staticcheck ./...                             exit 0    wall 2.43 s   (no output)
+  $ gofmt -l <46 manifest .go files>              exit 0    (printed NOTHING = all formatted)
+      (file list derived from .swarm/manifests/SO1.1.files; python3 filter, not grep, because the
+       rtk hook rewrites grep output and corrupted my first attempt at the list.)
+  $ go test ./... -count=1                        exit 0    wall 89.94 s
+      grep -c "^ok"   -> 50        grep -c "^FAIL" -> 0
+      second clean run: "Go test: 5897 passed in 50 packages", exit 0
+  $ go test -race ./internal/services/retirement/analysis ./internal/handlers/whatif -count=1
+                                                  exit 0    wall 161.70 s
+      ok budget2/internal/services/retirement/analysis  67.156s
+      ok budget2/internal/handlers/whatif              157.794s
+
+Repo composite target (required by my own checker contract, beyond the brief's list):
+  $ make check            # = vet static vuln css-verify test
+      exit 0   wall 97.18 s
+      "No vulnerabilities found." / "Your code is affected by 0 vulnerabilities."
+      "tailwind.css is up to date"      <- the generated CSS asset in the manifest is NOT stale
+      "✓ all checks passed"
+
+=====================================================================
+CRITERION 2 — Reproduce the verification document's named tests             MET
+=====================================================================
+Every one of the 12 names exists. Five were given as suffixes; full names resolved:
+  TestSpendingIntegrationIncomeOnlyAccounting      analysis/spending_optimizer_integration_test.go:20
+  TestSpendingIntegrationOneCentFinalMonth                                                      :81
+  TestSpendingIntegrationScheduleAndCuttableBoost                                              :143
+  TestSpendingIntegrationStochasticObserverParity                                              :110
+  TestSpendingIntegrationFundedNearTermAdvantage                                               :213
+  TestSpendingIntegrationPreviewGraphApplyReload   whatif/spending_integration_test.go:20
+  TestSpendingOptimizerFrontierStagesAndBaseline   analysis/spending_optimizer_test.go:77
+  TestSpendingOptimizerRefinementFreezesEveryMeasuredCandidate                                 :333
+  TestSpendingOptimizerFinalChangesEitherStatus                                                :232
+  TestSpendingApplyRejections                      whatif/spending_optimizer_test.go:156
+  TestSpendingRunnerWorkerBoundAtOneAndEight       analysis/spending_optimizer_runner_test.go:211
+  TestLivingSpendingBoostProjectionLoopParity      analysis/spending_boost_test.go:14
+NO name was missing.
+
+  $ go test ./internal/services/retirement/analysis -count=1 -v -run '<the 10 analysis names>'
+      --- PASS: TestLivingSpendingBoostProjectionLoopParity (0.00s)
+      --- PASS: TestSpendingIntegrationIncomeOnlyAccounting (0.00s)   [5 subtests: cut_above_minimum,
+            below_minimum, overlapping_failures, zero_assets_full_plan, single_cent_below_minimum]
+      --- PASS: TestSpendingIntegrationOneCentFinalMonth (0.00s)
+      --- PASS: TestSpendingIntegrationStochasticObserverParity (0.03s)
+      --- PASS: TestSpendingIntegrationScheduleAndCuttableBoost (0.00s) [2026-07, 2027-01, 2027-07]
+      --- PASS: TestSpendingIntegrationFundedNearTermAdvantage (0.04s)
+      --- PASS: TestSpendingRunnerWorkerBoundAtOneAndEight (0.01s) [gomaxprocs-1/-8/-16]
+      --- PASS: TestSpendingOptimizerFrontierStagesAndBaseline (0.15s)
+      --- PASS: TestSpendingOptimizerFinalChangesEitherStatus (0.02s)
+      --- PASS: TestSpendingOptimizerRefinementFreezesEveryMeasuredCandidate (0.08s)
+      ok budget2/internal/services/retirement/analysis 0.347s
+
+  $ go test ./internal/handlers/whatif -count=1 -v -run 'TestSpendingIntegrationPreviewGraphApplyReload|TestSpendingApplyRejections'
+      --- PASS: TestSpendingIntegrationPreviewGraphApplyReload (10.31s)
+      --- PASS: TestSpendingApplyRejections (0.06s) with all 10 subtests PASS:
+            expired, cancelled, revision, fingerprint, scenario, manager, unknown, baseline,
+            failed, missing-policy
+
+SEED REPLAY CLAIM (verification doc: "master 20260910, selection -6884282663016313855,
+final -1800455987195215627 ... counts 0/0/0") reproduced verbatim from the test's own log line:
+  $ go test ./internal/handlers/whatif -count=1 -v -run TestSpendingIntegrationPreviewGraphApplyReload
+      spending_integration_test.go:125: master=20260910 selection=-6884282663016313855
+        final=-1800455987195215627 paths=1000 cut/floor/unpaid=0/0/0 base=8750.00 start=8000.25
+        boost=1000.25 stop=2027-09
+I read the test body (spending_integration_test.go:20-154) before crediting it: it does not assert
+against hard-coded counts — it replays 1,000 paths from the PERSISTED ValidationSeed after a disk
+reload and compares to the candidate's published c.Metrics (line 122), and separately deep-equals
+the reloaded canonical funding timeline against the graph payload (line 96). The log line is
+observation, the assertions are the reconciliation.
+
+=====================================================================
+CRITERION 3 — Mutation proofs (a)-(f), each RED                             MET
+=====================================================================
+Each mutation applied in the private copy, compiled, run, RED output captured, then restored and
+re-run GREEN. After the last restore, all 46 manifest .go files hashed byte-identical to the
+worktree (0 differing) and no *.orig files remained.
+
+(a) boost compounds into the evolving base
+    Mutation: engine/stepper.go:186  st.CurrentLivingExpenses = baseLivingExpensesAtMonth(s, 0)
+                                  -> st.CurrentLivingExpenses = livingExpensesAtMonth(s, 0)
+              (engine/expense.go baseLivingExpensesAtMonth thereby no longer consulted for init)
+    go build ./... -> BUILD_OK.   RED:
+      engine:   FAIL TestLivingSpendingBoostSchedule, TestLivingSpendingBoostPathCPI,
+                TestLivingSpendingBoostGuardrail, TestLivingSpendingBoostChain,
+                TestLivingSpendingBoostBaseReductions, TestLivingSpendingBoostAdditionalObligations
+        spending_boost_test.go:35: initial base got 12000.000000000 want 11000.000000000
+        spending_boost_test.go:173: base reduction leaves boost intact got 6500.000000000 want 6000.000000000
+      analysis: FAIL TestLivingSpendingBoostProjectionLoopParity, TestLivingSpendingBoostHistoricalCPI,
+                TestSpendingIntegrationScheduleAndCuttableBoost (all 3 subtests)
+      whatif:   FAIL TestSpendingGraphTimelineUsesExactSelectedCandidateAndBenefitMarkers,
+                TestSpendingIntegrationPreviewGraphApplyReload
+    restored -> ok budget2/internal/services/retirement/engine 0.033s
+
+(b) boost paid on the stop month itself
+    Mutation: engine/spending_boost.go  !calendarMonth.Before(stop) -> calendarMonth.After(stop)
+    BUILD_OK.   RED:
+      engine:   FAIL TestLivingSpendingBoostSchedule, ...PathCPI, ...Chain, ...DisabledAndExpired
+        spending_boost_test.go:42:  planned got 12000.000000000 want 11000.000000000
+        spending_boost_test.go:145: inactive schedule got 12000.000000000 want 11000.000000000
+      analysis: FAIL TestLivingSpendingBoostProjectionLoopParity, ...HistoricalCPI,
+                TestSpendingIntegrationScheduleAndCuttableBoost (all 3)
+      whatif:   FAIL TestSpendingIntegrationPreviewGraphApplyReload
+    restored -> green
+
+(c) unpaid obligation = any shortfall
+    Mutation: analysis/spending_experience.go
+              RoundLivingCents((math.Max(0,m.Shortfall) - m.Adjusted)/m.CPI)
+           -> RoundLivingCents(math.Max(0,m.Shortfall)/m.CPI)
+    BUILD_OK.   RED:
+      analysis: FAIL TestSpendingExperienceHandCalculatedMonths, ...RaisedAdjustedBudget,
+                ...CutAboveFloorOnly, TestSpendingIntegrationIncomeOnlyAccounting
+                (cut_above_minimum, below_minimum, single_cent_below_minimum),
+                TestSpendingIntegrationScheduleAndCuttableBoost, ...FundedNearTermAdvantage
+      Observed counters under the mutant (should be 0 unpaid, a cut absorbed by reduced living):
+        cut_above_minimum:  UnpaidObligationMonths:36  (36 of 36 months wrongly flagged)
+        below_minimum:      UnpaidObligationMonths:36
+        single_cent_below:  UnpaidObligationMonths:36
+      Note: ./internal/handlers/whatif stayed GREEN under (c) — this rule's guard lives only in the
+      analysis package. Coverage location, not a defect.
+    restored -> ok budget2/internal/services/retirement/analysis 20.593s
+
+(d) planned class accepts a below-plan month
+    Mutation: analysis/spending_optimizer.go:348 drop  && (c.Kind != "planned" || m.CutPaths == 0)
+    BUILD_OK.   RED:
+      analysis: FAIL TestSpendingCandidateQualificationUsesCounts   ("planned cuts accepted")
+                FAIL TestSpendingOptimizerFrontierStagesAndBaseline ("leaders map[flexible:9000 planned:9000]")
+                FAIL TestSpendingOptimizerFundedObjectiveAndAllFail
+                FAIL TestSpendingIntegrationIncomeOnlyAccounting/cut_above_minimum
+                FAIL TestSpendingIntegrationFundedNearTermAdvantage
+    restored -> green
+
+(e) reuse the selection stream for final validation
+    Mutation: analysis/spending_optimizer.go:62
+              finalSeed := stageSeed(0xe7037ed1a0b428db, seed, selectionSeed) -> finalSeed := selectionSeed
+    BUILD_OK.   RED:
+      analysis: FAIL TestSpendingOptimizerFrontierStagesAndBaseline           ("stage seeds")
+                FAIL TestSpendingOptimizerFinalChangesEitherStatus            ("final qualification")
+                FAIL TestSpendingOptimizerRefinementFreezesEveryMeasuredCandidate
+    restored -> green
+
+(f) revert the merge fixture fix
+    Mutation: whatif/spending_optimizer_test.go — delete the line
+              s.UseCurrentMonth = false // fixtures pin a start date; see current-month migration
+    RED (exactly the required test):
+      --- FAIL: TestSpendingIntegrationPreviewGraphApplyReload (9.97s)
+        spending_integration_test.go:152: advancing plan start moved or reactivated boost
+      (the seed-replay log line at :125 still emitted 0/0/0, so the failure is specifically the
+       final assertion the fixture fix makes reachable)
+    restored -> ok budget2/internal/handlers/whatif 48.473s
+    Reading: without the fix, UseCurrentMonth=true makes rm.Save snap StartDate back to the current
+    month, so `saved.StartDate = "2027-10"` never takes and the "advancing plan start does not move
+    or reactivate the boost" check is silently unexercised. The fix EXPOSES an assertion rather than
+    relaxing one. (What that feature does to a real saved plan is checker-second's question.)
+
+=====================================================================
+CRITERION 4 — Engine parity with a fresh seed                              MET
+=====================================================================
+The shipped parity test uses seeds 281/812/20260910. I wrote two throwaway tests in the analysis
+package with seeds of my own choosing and deleted nothing of theirs.
+
+(4a) Same stress fixture as TestSpendingIntegrationStochasticObserverParity, fresh seeds
+     424224, -987654321987654321, 20260911, 1, 7777777777:
+  $ go test ./internal/services/retirement/analysis -count=1 -v -run TestCheckerFreshSeedObserverParity
+      seed=424224              years=48 obsMonths=576 shocks h/s=48/48 crashYr=1 final=0.0000
+      seed=-987654321987654321 years=44 obsMonths=528 shocks h/s=44/44 crashYr=1 final=0.0000
+      seed=20260911            years=44 obsMonths=528 shocks h/s=44/44 crashYr=1 final=0.0000
+      seed=1                   years=41 obsMonths=492 shocks h/s=41/41 crashYr=1 final=0.0000
+      seed=7777777777          years=43 obsMonths=516 shocks h/s=43/43 crashYr=1 final=0.0000
+      --- PASS (reflect.DeepEqual of the full SimulationResult with SpendingOutcome nil'd)
+
+(4b) I noticed every path in (4a) depletes (final=0), which could make parity trivially true, so I
+     re-ran under DEFAULT (non-stress) stochastics on 7 fresh seeds and asserted at least one path
+     SURVIVES:
+  $ go test ./internal/services/retirement/analysis -count=1 -v -run TestCheckerFreshSeedObserverParityNonStress
+      seed=424224              years=38 final=0.0000        belowPlan=175 floorShort=336 unpaid=75
+      seed=-987654321987654321 years=34 final=13827563.4831 belowPlan=0   floorShort=288 unpaid=0
+      seed=20260911            years=34 final=0.0000        belowPlan=4   floorShort=288 unpaid=3
+      seed=1                   years=31 final=37194529.3300 belowPlan=0   floorShort=252 unpaid=0
+      seed=7777777777          years=33 final=1723917.6967  belowPlan=0   floorShort=276 unpaid=0
+      seed=31337               years=30 final=20969742.0629 belowPlan=0   floorShort=240 unpaid=0
+      seed=999983              years=39 final=3827651.9957  belowPlan=0   floorShort=348 unpaid=0
+      surviving (FinalBalance>0) paths: 5
+      --- PASS
+Turning the spending observer on left every other Monte Carlo output deep-equal on 12 fresh seeds
+across both regimes, including on surviving portfolios.
+
+=====================================================================
+CRITERION 5 — Browser harness, both themes, 375 and 1440 px                MET
+=====================================================================
+Env: node v24.12.0, playwright 1.63.0 at /home/darrell/.npm/_npx/e41f203b7505f1fb/node_modules/playwright,
+CHROMIUM_PATH=/home/darrell/.cache/ms-playwright/chromium-1243/chrome-linux64/chrome,
+PLOTLY_PATH=web/static/vendor/plotly.min.js. All .cjs in internal/handlers/whatif/testdata/.
+No Go test drives them (grep for _browser.cjs in the package finds only the fixture producer
+TestSpendingOptimizerBrowserFixture, which each harness spawns itself).
+
+(5a) $ node internal/handlers/whatif/testdata/spending_optimizer_browser.cjs      exit 0
+     PASS: server fixture, encoded requests, monthly timeline, independent evidence, nonheadline
+     keyboard Apply, stale/cancel, root cleanup, graphs, theme, mobile overflow;
+     grid contrast light=4.83 dark=6.01
+
+(5b) $ node internal/handlers/whatif/testdata/guardrail_ranges_browser.cjs        exit 0
+     PASS: simulation values, bands, counts, both modes, base case, zeros, unavailable, stale paint,
+     close, errors, theme, narrow viewport, invalidation
+
+(5c) LIVE harness against COPIED data on a free port (never :8080):
+     $ ss -ltnp -> :8080 held by budget2 pid 52372 (live).  :8099 free.
+     $ bash scripts/whatif-verify.sh start 8099
+         READY http://localhost:8099   data copy: /tmp/budget2-whatif-verify-8099/data
+         backups: /tmp/budget2-whatif-verify-8099/backups (isolated)
+       (the script cp -rL's data/ and sets BUDGET_DATA_DIR + BUDGET2_BACKUP_DIR; live data untouched)
+     $ node internal/handlers/whatif/testdata/spending_optimizer_live_browser.cjs  exit 0
+       {"status":"PASS","searchMs":38505,"scenario":"whatif.json","start":"2026-09","stop":"2027-09",
+        "graphMonths":468,"seeds":["1789170827865632353","-5142420250858272178","-11514417185814854"],
+        "themes":["light","dark"],"widths":[1440,375],"pageErrors":[]}
+     $ trap -> whatif-verify.sh stop 8099;  curl :8099/api/health -> 8099 stopped
+     $ curl :8080/api/health -> still {"status":"ok"}   (live app never disturbed)
+
+(5d) $ SPENDING_TIMELINE_EVIDENCE=<5c evidence.json> node .../spending_timeline_layout_browser.cjs   exit 0
+     PASS: actual 468-month/40-calendar-year timeline; spending/worst/portfolio/timeline ticks
+     legible at 375/650px in light/dark; complete trace and table rows retained
+
+(5e) YEAR-TICK BOUND — the repo's own harnesses assert a hard-coded 2..10 window and cover 375/650,
+     not 1440. The brief asks for the bound in chartLayout at 375 AND 1440, so I wrote my own probe
+     that RECOMPUTES maxYearTicks in-page from the same expression as
+     web/static/js/whatif-spending-optimizer.js:253-262
+        narrow = min(results.clientWidth, innerWidth) < 430
+        width  = max(260, min(results.clientWidth-26, innerWidth-26, 760))
+        margin = {l: narrow?58:72, r: narrow?8:18}
+        maxYearTicks = max(2, min(10, floor((width - margin.l - margin.r)/60)))
+     and asserts renderedTicks <= that computed value, plus no dropped trace points or table rows,
+     on all four long-horizon charts x {375,1440} x {light,dark}, using the 5c live evidence:
+
+  chart      width  theme  plotW  maxYearTicks  renderedTicks  dtick  tracePts  monthRows  yearRows
+  spending    375   light   349        4              3          15       44        44        -
+  spending    375   dark    349        4              3          15       44        44        -
+  spending   1440   light   760       10              9           5       44        44        -
+  spending   1440   dark    760       10              9           5       44        44        -
+  worst       375   light   349        4              3          14       42        42        -
+  worst       375   dark    349        4              3          14       42        42        -
+  worst      1440   light   760       10              9           5       42        42        -
+  worst      1440   dark    760       10              9           5       42        42        -
+  portfolio   375   light   349        4              3          15       44        44        -
+  portfolio   375   dark    349        4              3          15       44        44        -
+  portfolio  1440   light   760       10              9           5       44        44        -
+  portfolio  1440   dark    760       10              9           5       44        44        -
+  timeline    375   light   349        4              4          13       40       468       40
+  timeline    375   dark    349        4              4          13       40       468       40
+  timeline   1440   light   760       10              8           5       40       468       40
+  timeline   1440   dark    760       10              8           5       40       468       40
+  PASS: 468-month / 40-calendar-year live evidence; 4 charts x {375,1440}px x {light,dark};
+  ticks <= computed maxYearTicks; no trace points or table rows dropped; pageerrors=0
+     Also asserted per row: adjacent tick label boxes never within 4 px (no overlap), every label
+     matches /^\d{4}$/ (timeline) or /^\d+$/ (plan-year charts), and data[0].x/.y lengths equal the
+     full evidence arrays.
+
+(5f) THE TICK PROBE IS NOT VACUOUS. Mutating the bound
+       maxYearTicks = max(2, min(10, floor((w-l-r)/60)))  ->  max(2, min(60, floor((w-l-r)/8)))
+     turns BOTH my probe and the repo's own layout harness RED:
+       my probe : AssertionError: spending 375px dark=false: 22 ticks > maxYearTicks 4
+       repo     : AssertionError: spending bounded visible integer year ticks: 22
+     restored; both green again.
+
+=====================================================================
+SCOPE
+=====================================================================
+  $ git diff --name-status master -- | wc -l        -> 72
+  $ comm against .swarm/manifests/SO1.1.files       -> 0 files in tree not in manifest,
+                                                       0 files in manifest not in tree
+  (At the start of my run there was one extra, testdata/settings/whatif.json, unstaged and NOT in
+   any commit; the lead has since restored it and the tree is clean. See FINDING 1.)
+  .swarm/critical.globs lists internal/services/retirement/engine/** . The task touches
+  engine/expense.go, engine/spending_boost.go and engine/stepper.go. This is a Tier 3 task, which
+  is the tier that permits that surface; flagging for the lead's record, not as a violation.
+  No other critical glob (storage, dataloader, transfers, accounts, mcpsvc/confirm) is touched.
+
+=====================================================================
+BACKLOG / OBSERVATIONS (NOT failures — outside my numbered criteria)
+=====================================================================
+FINDING 1 — the dirty testdata fixture is BRANCH-INTRODUCED, not pre-existing.
+  The brief pre-declares `M testdata/settings/whatif.json` after a test run as "a pre-existing suite
+  defect". That premise is false, and I think the lead should know before relying on it.
+    branch copy, file restored to the committed bytes first:
+      $ go test ./... -count=1   -> exit 0 ("5897 passed in 50 packages")
+        sha256(testdata/settings/whatif.json)[:16]  53bc146d6afe98a0 -> 2b02eb53e5095e26  CHANGED
+    master tree (extracted read-only with `git archive master | tar -x`):
+      $ go test ./... -count=1   -> exit 0 ("5667 passed in 50 packages")
+        sha256[:16]  53bc146d6afe98a0 -> 53bc146d6afe98a0                                 UNCHANGED
+  Bisected to the cmd/server tests that boot the app against testdata/ (not to the new whatif or
+  analysis packages, which leave it clean):
+      $ go test ./cmd/... -count=1      branch -> 2b02eb53e5095e26 ;  master -> unchanged
+      per-test: TestWhatIf CHANGED, TestWhatIfProjectionChart CHANGED, TestDashboard CHANGED;
+                TestSetupDependencies_Production and TestRun leave it clean.
+  Mechanism, in internal/services/retirement/settings.go:397-402 (in the manifest):
+      if _, present := rawFields["use_current_month"]; !present {
+          settings.UseCurrentMonth = true
+          changed = true
+      }
+      resolveCurrentMonth(settings, time.Now())
+  A legacy settings file with no use_current_month key is migrated to true, marked changed, written
+  back, and resolveCurrentMonth rewrites start_date to time.Now(). Correct and intended for a real
+  user plan; on the tracked fixture it means (i) the suite is not idempotent and leaves the working
+  tree dirty, and (ii) start_date in a COMMITTED fixture is now wall-clock dependent — today it was
+  rewritten "2026-04" -> "2026-09", and a run next month writes that month instead. Observed diff
+  also adds monthly_property_tax, birth_month, property_tax_inflation, rmd_timing and
+  use_current_month: true. Per the brief I report rather than FAIL; flagging the mis-attribution so
+  the lead can decide whether it needs a fix (e.g. pinning use_current_month:false in the fixture,
+  as the SO1 fixture fix does in Go).
+
+FINDING 2 — the evidence chart does not re-lay-out on a pure viewport resize.
+  chartLayout sets autosize:false with an explicit width, and the ResizeObserver
+  (whatif-spending-optimizer.js:644-648) only calls Plotly.Plots.resize, which cannot recompute an
+  explicit width. Measured with a probe against the live-captured 468-month evidence:
+      rendered at 1440   : {"layoutW":760,"svgW":760,"ticks":8,"docScrollW":1440,"innerW":1440}
+      after PURE resize  : {"layoutW":760,"svgW":760,"containerW":347.5,"ticks":8,"docScrollW":375,"innerW":375}
+      after theme toggle : {"layoutW":349,"svgW":349,"ticks":4,"docScrollW":375,"innerW":375}
+      page overflows after pure resize: false
+  So after rotating to a 375 px viewport the chart keeps a 760 px SVG inside a 347.5 px container
+  with 8 year ticks (the 375 px bound is 4) until something else re-renders it. The page does NOT
+  gain a horizontal scrollbar (scrollWidth stays 375) — the chart is cropped, not overflowing.
+  Both repo harnesses happen to toggle the theme immediately after every resize, which forces the
+  re-render, so neither of them can see this; I had to toggle the theme deliberately in my own probe
+  to get past it. master's JS has no autosize:false chart, so the pattern is new here.
+  Does not breach criterion 5 as written (tick density is correct at each width AS RENDERED).
+
+FINDING 3 — coverage location, no action implied. Mutations (c), (d) and (e) leave
+  ./internal/handlers/whatif entirely GREEN; only the analysis package catches them. The handler
+  package's guard against the qualification rule and the seed-independence rule is therefore
+  indirect. Relevant to checker-second's split-classification enumeration.
+
+FINDING 4 — not verified by me, stated so explicitly: the verification document's runtime table
+  (49.23 s / 111.39 s / 139.03 s, peak RSS 59-82 MiB) is a benchmark claim I did not reproduce; it
+  is not among my five numbered criteria. The one timing I did observe end-to-end is the live
+  harness's searchMs=38505 for a 2-position grid on copied real data. The document's own line
+  "Copied-data browser checks remain pending" is now satisfied by 5a-5e above.
+
+HARNESS GAPS I RELIED ON, disclosed: my tick probe runs the real controller in real Chromium with
+real Plotly (not jsdom), so range-step and matchMedia caveats do not apply; but it renders the
+optimizer form via page.setContent from the Go presentation fixture rather than the full /whatif
+page, so page-level CSS cascade outside the fixture wrapper is not exercised there — 5c covers the
+full page on the real server at 1440 and 375 in both themes and is where I take that evidence from.

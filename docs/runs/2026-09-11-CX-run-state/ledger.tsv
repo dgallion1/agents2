@@ -1,0 +1,3 @@
+# task_id	tier	checks	status	attempt	worker	reason
+CM1	3	tests,second	accepted	4	worker-coder	gate-ok-tier3-attempt-4-oracle-pass-dual-lane; attempts 1 (oracle) 3 (second) real catches, attempt 2 lead-oracle defect
+SO1	3	tests,second	accepted	1	lead	gate-ok-tier3-attempt-1-oracle-pass-tri-lane; codex build + lead merge/fixture fix
