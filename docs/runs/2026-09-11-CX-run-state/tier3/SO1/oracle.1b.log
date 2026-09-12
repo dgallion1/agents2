@@ -1,0 +1,21 @@
+== 1 build/vet
+== 2 named financial/lifecycle tests
+  PASS TestSpendingIntegrationIncomeOnlyAccounting
+  PASS TestSpendingIntegrationOneCentFinalMonth
+  PASS TestSpendingIntegrationScheduleAndCuttableBoost
+  PASS TestSpendingIntegrationStochasticObserverParity
+  PASS TestSpendingIntegrationFundedNearTermAdvantage
+  PASS TestSpendingIntegrationPreviewGraphApplyReload
+  PASS TestSpendingOptimizerFrontierStagesAndBaseline
+  PASS TestSpendingApplyRejections
+  PASS TestSpendingRunnerWorkerBoundAtOneAndEight
+  PASS TestLivingSpendingBoostProjectionLoopParity
+== 3 seed replay reproduces published counts
+  reproduced
+== 4 qualification rule has one source
+  one definition
+== 5 forbidden wording absent on new surfaces
+  clean
+== 6 gofmt on manifest Go files
+  clean
+ORACLE PASS

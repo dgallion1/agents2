@@ -1,0 +1,21 @@
+== 1 build/vet
+== 2 named financial/lifecycle tests
+  MISSING/FAIL TestSpendingIntegrationIncomeOnlyAccounting
+  MISSING/FAIL TestSpendingIntegrationOneCentFinalMonth
+  MISSING/FAIL TestSpendingIntegrationScheduleAndCuttableBoost
+  MISSING/FAIL TestSpendingIntegrationStochasticObserverParity
+  MISSING/FAIL TestSpendingIntegrationFundedNearTermAdvantage
+  MISSING/FAIL TestSpendingIntegrationPreviewGraphApplyReload
+  MISSING/FAIL TestSpendingOptimizerFrontierStagesAndBaseline
+  MISSING/FAIL TestSpendingApplyRejections
+  MISSING/FAIL TestSpendingRunnerWorkerBoundAtOneAndEight
+  MISSING/FAIL TestLivingSpendingBoostProjectionLoopParity
+== 3 seed replay reproduces published counts
+  seed replay line absent
+== 4 qualification rule has one source
+  0 definitions
+== 5 forbidden wording absent on new surfaces
+  clean
+== 6 gofmt on manifest Go files
+  clean
+ORACLE FAIL (12 step(s))

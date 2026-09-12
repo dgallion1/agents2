@@ -1,0 +1,130 @@
+VERDICT: PASS
+CHECKER: checker-second
+FAMILY: adversarial
+TASK: SO1
+ATTEMPT: 1
+---
+Method: private `cp -a` of /home/darrell/bin/ai/budget2/.worktrees/spending-first-optimizer taken twice
+(before and after a concurrent commit aad72de landed on the tree mid-session); all builds/tests/
+probes below ran in the scratch copy only. Never touched the real worktree, data/, or ran a server
+binary. `go build ./...` clean; `go vet ./internal/handlers/whatif/...` clean.
+
+1. SPLIT CLASSIFICATION (qualification rule) — REFUTED, holds up.
+   Single source: `spendingCandidateQualifies` in internal/services/retirement/analysis/spending_optimizer.go:346
+     `m.Runs > 0 && m.FloorShortfallPaths == 0 && m.UnpaidObligationPaths == 0 && (c.Kind != "planned" || m.CutPaths == 0)`
+   Enumerated every consumer:
+     - frontier table + headline cards: web/templates/components/whatif/spending_optimizer_results.html:44
+       reads `$row.Candidate.Qualifies` only (Go bool, no re-derivation).
+     - Apply authorization: internal/handlers/whatif/handlers_spending_optimizer.go:335
+       `spendingCandidateCanApply` gates on `c.Qualifies` (the same field) plus Baseline/Kind/Guardrails checks;
+       Apply token is only minted into the `tokens` map when this is true.
+     - JS: `grep -n "qualif" web/static/js/whatif-spending-optimizer.js` → 1 hit, unrelated prose string;
+       JS never reads or recomputes `.qualifies`/FloorShortfallPaths/UnpaidObligationPaths/CutPaths anywhere
+       (`grep` for those field names in the JS file returns nothing). No client-side re-derivation exists.
+
+2. RENDERED-STRING ARITHMETIC — REFUTED, holds up.
+   Existing test `TestSpendingOptimizerRenderResultsEvidence` already uses near-cent-boundary inputs
+   (8000.004 / 9000.006) and asserts `"$8,000.00"`, `"$9,000.01"`, `"$1,000.01 more per month than the
+   current plan"` all reconcile — ran it: PASS (`go test ./internal/handlers/whatif/... -run
+   TestSpendingOptimizerRenderResultsEvidence -v` → PASS, 0.02s).
+   Built my own fractional-cent fixture per the brief (base 8000.25, boost 1000.25, floor 6000.25,
+   current near-term 8000.25, alt near-term 9000.755) via a throwaway test calling
+   `buildSpendingOptimizerView` + `renderer.RenderPartial` directly (not the diff, the real code path).
+   Rendered body: current "$8,000.25", alternative "$9,000.75", comparison sentence "$1,000.50 more
+   per month than the current plan" — 8000.25 + 1000.50 = 9000.75 exactly, i.e. the comparison sentence's
+   cents reconcile against the two table cells' rendered strings at real-cent precision. The
+   StartingBudgetEvidence sentence ($9,000.50 starting vs $8,000.25 base) and the guardrail floor
+   ($6,000.25) also rendered exactly as supplied — no drift. (Throwaway test discarded after use.)
+   "Cut depth $/%" and "boost ends in <StopMonth>" strings are built in
+   internal/handlers/whatif/handlers_spending_optimizer.go:populateSpendingRowEvidence /
+   populateSpendingRowPlanEvidence, both using `budgettemplates.FormatMoney` — same function as the
+   table cells, single rounding path (math.Round(*100)/100 upstream, %.2f at format time).
+
+3. DUAL FORMATTERS — REFUTED, holds up.
+   Go side: every dollar/percent figure named in the brief (near-term monthly, comparison sentence,
+   cut-depth $/%, starting-budget sentence, floor, guardrail percents) is formatted exclusively via
+   `budgettemplates.FormatMoney` (%.2f + thousands separator, IEEE -0 normalized) or `printf "%.0f"/"%.2f"`
+   in the Go template — one path, one locale (implicit en-US grouping), no JS reformatting of these
+   same values anywhere (`grep` for the JSON field names these sentences derive from turned up nothing
+   in whatif-spending-optimizer.js).
+   JS `Intl.NumberFormat('en-US', {style:'currency', minimumFractionDigits:2, maximumFractionDigits:2})`
+   and `Intl.NumberFormat('en-US')` are used only for the separate graph/chart-values-table evidence
+   (P10/P50/P90 paths, funding-timeline rows) — a different evidence surface, not a second renderer of
+   the frontier/headline dollar figures already covered above.
+
+4. BOOST NEVER AN ExpenseSource; must be cuttable and below-floor — REFUTED, holds up (with one
+   backlog note).
+   Confirmed the boost is not a member of `s.ExpenseSources` anywhere. Diffed
+   internal/services/retirement/engine/stepper.go against master (895d509): `plannedLivingExpenses :=
+   st.CurrentLivingExpenses + LivingSpendingBoostAtMonth(...)` is fed into `floorAdjustedLiving`, which
+   applies the guardrail multiplier AND the absolute floor to the COMBINED (base+boost) figure — so the
+   boost is proportionally cut like the rest of living spending and can be driven to the floor along
+   with it; `st.CurrentLivingExpenses` is seeded from `baseLivingExpensesAtMonth` (boost-excluded) so the
+   boost never compounds into the evolving base (this is exactly mutation (a) from the checker-tests
+   brief; the diff shows the fix is present).
+   Side observation (BACKLOG, not a FAIL — out of the "new surfaces" scope): the pre-existing,
+   unrelated `engine.CalculateExpenseBreakdown` (used only by the legacy Monte-Carlo-tab "adaptive
+   spending" crash-buffer card, monte-carlo.html:264-285, not the new spending-optimizer surfaces) calls
+   the same `livingExpensesAtMonth` helper for its "Essential"/"not marked discretionary" total. Since
+   that helper now includes the boost (it didn't on master), a user's boost silently rides into that old
+   card's "Expenses not marked discretionary" figure. The card's copy is already careful ("does not
+   define protected essentials"), so nothing false is claimed, but it's a real, untested behavior change
+   to an old surface via a shared helper — worth a follow-up regression test, not grounds to fail this task.
+
+5. WORST PATH IS ONE COHERENT PATH — REFUTED, holds up.
+   `summarizeSpendingRisk` (spending_risk.go) picks a single `worst` index via
+   `spendingRiskPathWorse` and sets `metrics.WorstPathIndex = worst`; `c.WorstPathYears` is built from
+   `rows[c.WorstPathIndex].FloorOutcome.Years` only (spending_optimizer.go:117-119) — one retained path's
+   annual series, never a per-year stitch of independent percentiles. The JS series comment even states
+   the invariant: "Worst is one retained observed path."
+
+6. FORBIDDEN WORDING — none found on the new surfaces.
+   `grep -rniE "guaranteed|risk-free|riskfree|\bmaximum\b"` across
+   web/templates/components/whatif/spending_optimizer*.html, web/static/js/whatif-spending-optimizer.js,
+   and handlers_spending_optimizer.go → no hits. (One unrelated, pre-existing hit of "not guaranteed
+   bounds" — a negation — in guardrail_optimizer.html, a different, untouched-by-this-task feature.)
+
+7. APPLY REJECTS STALE/CANCELLED/REPLAYED/TAMPERED — REFUTED, holds up.
+   `TestSpendingApplyRejections` (spending_optimizer_test.go) covers exactly this matrix — expired,
+   cancelled, revision (stale), fingerprint, scenario-switch, manager-swap, unknown/forged token,
+   baseline, disqualified (`failed`), missing-policy — 10 subtests, all asserting 409 + no bytes
+   written; ran it: PASS (`go test ... -run TestSpendingApplyRejections -v` → all 10 subtests PASS).
+   Traced handleApplySpendingOptimizerWithHook: the POST body is read only for `request_id` and
+   `recommendation` (a lookup key into a per-preview, server-generated opaque token map) — no financial
+   field is ever read from the client for Apply; the actual `MonthlyLivingExpenses`/`LivingSpendingBoost`/
+   `Guardrails` written to disk come from the frozen server-held candidate `c`, so tampered posted
+   numbers have no effect. On success the preview entry is deleted before the response is sent
+   (discardSpendingPreview under the same operation lock, before the deferred applying-flag reset, before
+   the deferred unlock), so a replay of the identical POST finds `p == nil` and is rejected — verified
+   this is single-use, not just single-concurrent-use.
+
+8. CURRENT-MONTH (`use_current_month`) INTERACTION WITH A SAVED BOOST STOP MONTH — REFUTED, holds up.
+   Found and ran `TestSpendingIntegrationPreviewGraphApplyReload` (spending_integration_test.go), which
+   ends by manually advancing a saved plan's StartDate past its own saved boost's StopMonth ("2027-10"
+   vs. stop "2027-09") via an ordinary `rm.Save`, then asserts the reloaded settings' `LivingSpendingBoost
+   .StopMonth` is UNCHANGED ("2027-09", not silently moved) and that `engine.LivingExpensesAtMonth` at
+   month 0 has dropped by ~$1000 (the boost's own contribution), confirming the boost goes inert without
+   its own schedule being mutated. Ran it standalone: PASS, 13.7s, reproducing the exact seeds named in
+   the checker-tests brief (search=20260910, selection=-6884282663016313855, final=-1800455987195215627,
+   cut/floor/unpaid=0/0/0) — this is also the test whose fixture the manifest's "one-line fixture fix"
+   (`s.UseCurrentMonth = false`) targets; the commit that landed it mid-session (aad72de, "pin the
+   spending fixture's start date under use_current_month") explicitly states the untouched fixture let
+   the newly-defaulted `use_current_month=true` silently reset the test's own pinned StartDate and
+   "reactivated the boost" — i.e. the worker found and fixed exactly this interaction, and the guard test
+   for it passes.
+
+BACKLOG OBSERVATIONS (not FAIL grounds):
+- `engine.CalculateExpenseBreakdown` / the Monte-Carlo-tab "adaptive spending" crash-buffer card
+  (monte-carlo.html) now silently includes any configured living-spending boost in its "Expenses not
+  marked discretionary" total, as a side effect of the shared `livingExpensesAtMonth` helper's new
+  boost-inclusive semantics. No false claim (copy already disclaims "does not define protected
+  essentials"; no dollar is wrong), but untested and worth a regression test in a follow-up task.
+- `populateSpendingRowPlanEvidence` prints "The early-spending boost ends in <StopMonth>" for any
+  non-nil boost regardless of whether that StopMonth is already in the past (an already-expired but
+  still-configured boost). No dollar figure is misstated (Base and Starting collapse to the same value
+  once the boost is inert, so the separate "starting differs from base" sentence correctly does not
+  fire), but the "ends in" phrasing reads oddly for a past date. Wording nit, not a mislabeled figure.
+
+All builds/tests cited above were run against the real code paths (buildSpendingOptimizerView,
+spendingCandidateQualifies, the real SettingsManager, the real Apply handler) — no reliance on the
+diff's own claims or codex's `.superpowers/sdd/` reports.
