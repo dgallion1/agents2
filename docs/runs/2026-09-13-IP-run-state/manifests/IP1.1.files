@@ -1,0 +1,7 @@
+web/templates/pages/insights.html
+web/templates/components/insights-investigation.html
+web/templates/components/shared/period-context.html
+internal/handlers/insights/investigation.go
+internal/handlers/insights/http_links_di5_test.go
+internal/templates/render_insights_ip1_test.go
+web/static/css/tailwind.css

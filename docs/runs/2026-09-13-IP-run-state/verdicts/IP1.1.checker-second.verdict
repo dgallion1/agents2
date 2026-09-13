@@ -1,0 +1,141 @@
+VERDICT: FAIL
+CHECKER: checker-second
+FAMILY: adversarial
+TASK: IP1
+ATTEMPT: 1
+---
+
+## Primary defect: §3.5 Compact period-context is NEVER wired to the Insights page
+
+SPEC.md §3.5 states explicitly: "`insights.html` passes `Compact true`." The
+"Claim under test" in the brief restates this: "(3.5) a Compact
+period-context (no card chrome, stale note as a warning callout with
+'Note:') on Insights ONLY." Acceptance criteria for IP1 require "Compact
+period-context callout only when Stale, non-Compact output byte-identical to
+master's" — this presupposes Compact is actually reachable on the real page.
+
+Evidence this was never wired:
+
+1. grep for every non-test occurrence of "Compact" in the branch tree:
+   ```
+   $ grep -rn "Compact" $BRANCH --include="*.go" --include="*.html" | grep -v "_test.go"
+   web/templates/components/shared/period-context.html:3:{{if $.Compact}}<section class="space-y-2">{{else}}<section class="bg-white dark:bg-gray-800 rounded-lg shadow p-4">{{end}}
+   web/templates/components/shared/period-context.html:4:    <p class="text-sm {{if $.Compact}}...
+   web/templates/components/shared/period-context.html:6:    {{if $.Compact}}<p class="rounded-lg border border-warning bg-warning-soft ...
+   ```
+   Zero hits in any handler or in `insights.html` itself. The only place
+   "Compact" ever appears with value `true` is inside
+   `internal/templates/render_insights_ip1_test.go`, which renders the
+   `shared/period-context` partial in ISOLATION via
+   `renderer.RenderToString("shared/period-context", map[string]any{"Period": stale, "Compact": true})`
+   — it never exercises the actual page template's invocation.
+
+2. `web/templates/pages/insights.html:41` (the only call site inside the
+   real page) is unchanged from a plain `.` pass-through:
+   ```
+   <div id="period-context">{{template "shared/period-context" .}}</div>
+   ```
+   Confirmed via diff against master — this line is byte-identical to
+   master; the spec's required `(dict "Period" .Period "Compact" true)`
+   invocation was never made.
+
+3. `internal/handlers/insights/handlers.go:261-277` — `handleInsights`
+   builds `pageData := map[string]interface{}{...}` (the `.` passed at
+   call site 1) with keys Title/ActiveTab/Insights/Investigation/
+   PaceVerdict/Period/StartDate/EndDate/MinDate/MaxDate/Preset/Anomalies/
+   AnomalyTotal/PriceCreep/PriceCreepTotal — no `Compact` key. In Go
+   templates a missing map key is the zero value, so `{{if $.Compact}}`
+   evaluates false. Verified this Go template semantic directly:
+   ```
+   $ cat /tmp/tmpldemo.go
+   ... t.Execute(os.Stdout, map[string]interface{}{"Title":"Insights"}) with {{if $.Compact}}COMPACT{{else}}NOTCOMPACT{{end}}
+   $ go run /tmp/tmpldemo.go
+   NOTCOMPACT
+   ```
+
+4. Built the branch (cp -a minus .git/data, `go build ./cmd/server`),
+   served it against a copied `testdata/` on `:8099` (killed after test,
+   confirmed down: `curl :8099/insights` -> exit/000 after kill), and
+   fetched `/insights`:
+   ```
+   $ curl -s http://127.0.0.1:8099/insights?start=2024-12-31&end=2025-12-31 -o /tmp/ip1_insights.html
+   $ sed -n '247,250p' /tmp/ip1_insights.html
+       <div id="period-context">
+   <section class="bg-white dark:bg-gray-800 rounded-lg shadow p-4">
+       <p class="text-sm text-gray-700 dark:text-gray-300">Selected period: 2024-12-31 to 2025-12-31 (366 calendar days) · Latest transaction: 2025-12-31</p>
+   ```
+   The live rendered Insights page shows FULL CARD CHROME
+   (`bg-white dark:bg-gray-800 rounded-lg shadow p-4`) — i.e. exactly
+   master's non-Compact rendering, not the Compact "no card chrome"
+   design the spec and the brief's claim require. §3.5 is unimplemented on
+   the one page it was supposed to change; the partial-level unit tests
+   (`TestIP1PeriodContextCompact`) pass because they test the partial in
+   isolation and never catch the missing integration.
+
+This is squarely in scope (§3.1–§3.6 named in the IP1 task row) and
+directly contradicts the "Claim under test" and the worker's underlying
+design intent. Default-to-FAIL is not even needed here — this is
+unambiguous: grep, diff, a Go template semantics probe, and a live server
+render all agree.
+
+## Other adversarial checks run (informational — not overridden by the above)
+
+- Money-figure diff (item 1): rendered `/insights` on master (:8098) and
+  branch (:8099) against the SAME copied testdata (HistoryAvailable=false
+  fixture — 12m preset spans all data). `grep -oE '\$[0-9,]+\.[0-9]{2}'`
+  extraction + `diff` shows added figures are exactly the recurring
+  strip's 3×(Monthly,Annual) tiles, verified character-for-character equal
+  to their own group cards' figures later in the document (sanctioned
+  exception, brief item 1):
+  tile1 `$26.98`/`$323.76` == `Estimated monthly $26.98 · Estimated annual $323.76` (subscriptions);
+  tile2 `$2,107.57`/`$25,290.83` == bills group card;
+  tile3 `$323.08`/`$3,876.87` == other group card.
+  One additional order effect observed: within a single price-creep
+  finding `<li>`, the evidence-sentence figures now appear before the
+  actual-transaction amount in document order (master: amount, meta,
+  evidence; branch: link, chips, meta, evidence, amount, caption) — this
+  is a direct, approved consequence of the two-column flex layout in
+  §3.3 (right-column amount now follows left-column content in source
+  order), not a new/changed/misclassified figure; same SET of values,
+  same rows, same rounding path. Not treated as a FAIL basis.
+- Severity single-source (item 2): `FindingView.Severity` set only from
+  `a.Severity` in `investigation.go` (`add(t, "anomaly", ..., a.Severity, nil)`
+  for anomalies, `""` for price-creep); template branches only on
+  `.Severity`/`.Type`, no re-derivation found via grep for direction logic
+  beyond existing `.Change.Direction`.
+- Bar width fixture (item 3) and severity-badge fixture: ran
+  `go test ./internal/templates/... -run TestIP1 -v` — all 5 pass
+  (`TestIP1ContributorBarWidths`, `TestIP1FindingSeverityBadges`,
+  `TestIP1PeriodContextCompact`, `TestIP1OnThisPageNav`,
+  `TestIP1RecurringStrip`). Note `TestIP1PeriodContextCompact` only proves
+  the partial is CORRECT when invoked with Compact:true directly — it does
+  not prove `insights.html` ever does so (see primary defect above).
+- RF3/SV1/LT1/DI2 untouched (item 5): `rtk proxy git diff master --
+  internal/templates/render_insights_rf3_test.go
+  internal/handlers/insights/investigation_sv1_test.go
+  internal/templates/render_period_context_lt1_test.go
+  internal/templates/period_di2_test.go
+  internal/handlers/insights/period_di2_test.go` — empty diff, all
+  unmodified.
+- `go build ./... && go vet ./...` — clean (no output).
+- `go test ./... -count=1` — all packages `ok` (48 packages, including
+  `internal/handlers/insights`, `internal/templates`, `internal/services/storage`).
+- `make css-verify` — "tailwind.css is up to date" (writes only to
+  `tmp/tailwind.check.css`, no tracked-file mutation; cleaned up after).
+- `testdata/settings/whatif.json`: `git status --porcelain` shows it was
+  never touched by any of the above (no restore needed).
+- Worktree left clean: `git status --porcelain` after all commands is
+  identical to the pre-check state (the same 6 modified + 2 untracked
+  files present at session start; nothing else). Both scratch servers
+  (:8098, :8099) confirmed killed (curl to both returns connection
+  failure after cleanup).
+
+## Observations (backlog, not a FAIL basis)
+- Evidence-sentence-before-amount document-order swap in findings rows
+  (see item 1 above) — cosmetic, approved by §3.3's two-column layout,
+  not a figure-value defect.
+- `investigation.go`'s `add()` still passes `a.Severity+" severity"` as the
+  `Evidence` field for anomaly rows even though the template only ever
+  reads `.Evidence` inside `{{with .Creep}}` (nil for anomalies, so it's
+  dead data, never rendered) — harmless but worth a follow-up cleanup so
+  the field isn't misleading to a future reader.
