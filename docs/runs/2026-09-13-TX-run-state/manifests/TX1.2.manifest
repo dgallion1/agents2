@@ -1,0 +1,117 @@
+TASK: TX1 attempt 2 (worktree /home/darrell/bin/ai/budget2/.worktrees/tax-tables-2026)
+
+(a) CHANGED FILES (budget2-relative, matches `git status --short` exactly at time of writing)
+internal/handlers/whatif/failure_bounds_rounding_render_test.go
+internal/handlers/whatif/handlers_sweep_test.go
+internal/services/retirement/analysis/coverage_gaps_test.go
+internal/services/retirement/analysis/failure_bounds_test.go
+internal/services/retirement/analysis/lifestyle_outcomes_test.go
+internal/services/retirement/analysis/tax_constants_basis_test.go
+internal/services/retirement/analysis/tax_optimizer_strategies.go
+internal/services/retirement/analysis/tax_optimizer_strategies_test.go
+internal/services/retirement/calculator_expense_test.go
+internal/services/retirement/engine/finance_concerns_gaps_test.go
+internal/services/retirement/engine/tax.go
+internal/services/retirement/engine/tax_test.go
+internal/services/retirement/engine/taxyears.go
+internal/services/retirement/engine/taxyears_test.go
+
+Note: `git status --short` shows internal/services/retirement/engine/taxyears.go
+as `M ` (staged) and all thirteen other files as ` M` (unstaged); the file set
+is identical to attempt 1's manifest — attempt 2 only edited
+tax_optimizer_strategies_test.go (Finding 1 fix) plus this manifest and
+attempt 1's TX1.1.manifest (not tracked by git).
+
+(b) VERIFICATION COMMANDS RUN THIS ATTEMPT, WITH FINAL OUTPUT LINE(S)
+
+1. `go build ./...` (via `rtk proxy go build ./...`)
+   -> exit 0, no output (clean build).
+
+2. `go vet ./...` (via `rtk proxy go vet ./...`)
+   -> exit 0, no output (clean vet).
+
+3. Targeted mutation check to validate Finding 1's fix independently derives
+   its expected value (not tautological): temporarily injected a 5% mis-scale
+   into engine/tax.go's scaleBrackets (`MaxIncome * factor * 1.05`), then ran:
+   `go test ./internal/services/retirement/analysis/... -run
+   "TestInflatedBracketTopForYear_GrowsWithCalendarYear|TestInflatedBracketTopForYear_SingleFiler12PercentAt2026"
+   -v`
+   -> with the mutation: FAIL — "projection year 1 ceiling = 228629.1, want
+      217742 (211400 x (1+rate/100)^1), relative error 0.05" and the same for
+      year 10; TestInflatedBracketTopForYear_SingleFiler12PercentAt2026
+      PASSed (n=0 is statutory/unscaled, correctly unaffected by the
+      scaleBrackets mutation).
+   -> reverted the mutation (restored engine/tax.go from a pre-mutation copy;
+      `git diff --stat internal/services/retirement/engine/tax.go` confirmed
+      only the original 86 insertions / 0 deletions remained, i.e. the
+      mutation left no trace).
+
+4. `go test -count=1 ./internal/services/retirement/analysis/...
+   -run "TestInflatedBracketTopForYear_GrowsWithCalendarYear|TestInflatedBracketTopForYear_SingleFiler12PercentAt2026" -v`
+   (post-revert, clean code)
+   -> "--- PASS: TestInflatedBracketTopForYear_GrowsWithCalendarYear (0.00s)"
+      "--- PASS: TestInflatedBracketTopForYear_SingleFiler12PercentAt2026 (0.00s)"
+      "PASS"
+      "ok      budget2/internal/services/retirement/analysis  0.007s"
+
+5. `go test -count=1 ./...` (via `rtk proxy go test -count=1 ./...`, full
+   suite, no cache, raw output)
+   -> last line: "ok      budget2/web     0.012s"; all 50 packages report
+      "ok"; exit 0.
+
+6. `go test ./internal/services/retirement/... ./internal/handlers/...
+   ./internal/models/... ./cmd/...` (AC2 scope, via rtk proxy)
+   -> last line: "ok      budget2/cmd/validate    (cached)"; all 21 packages
+      report "ok".
+
+7. `git status --short`
+   -> the 14 files listed in (a) above; no untracked/stray files; identical
+      set to attempt 1.
+
+8. `git status --short testdata/settings/whatif.json`
+   -> no output (clean — cmd/server tests did not dirty it; no restore
+      needed).
+
+9. AC6: `grep -n "201_050\|201050\|100_525\|94_300\|47_150\|191_950\|383_900"
+   internal/services/retirement/analysis/*.go | grep -v "_test.go"`
+   -> no output (grep exit 1 = no matches = clean; the 2024 literals do not
+      leak into non-test analysis code).
+
+10. AC4: `git diff ff4ff34 -- internal/services/retirement/engine/tax.go |
+    grep -cE "^-[^-]"`
+    -> "0" (zero deleted lines relative to base ff4ff34; the 2024 vars are
+       untouched, only additions).
+
+(c) RATE-EQUALITY CHOICE
+bracketTopForRate (internal/services/retirement/analysis/tax_optimizer_strategies.go)
+matches a bracket's Rate to the target using exact float equality (`==`),
+not an epsilon — every Rate in the versioned registry is a compile-time
+literal (e.g. 0.22), never a computed value, so there is no accumulated
+floating-point drift to guard against.
+
+(d) FINDING 1 FIX SUMMARY
+TestInflatedBracketTopForYear_GrowsWithCalendarYear (tax_optimizer_strategies_test.go)
+previously computed its "expected" year-10 value by calling
+engine.NewTaxCalculator(...).GetAdjustedBrackets(...) a second time — the
+same chain inflatedBracketTopForYear itself calls — so a mis-scale inside
+the engine moved both sides together and stayed green (confirmed by the
+mutation check in item 3 above, run against the OLD test body before this
+fix; the fix's new body correctly fails under the same mutation, see item 3
+above run against the NEW body). Rewrote it to assert against the literal
+MFJ 2026 22% ceiling ($211,400, IRS Rev. Proc. 2025-32 §4.01) run through the
+compounding formula `211400 * (1+rate/100)^n` for n=0,1,10 at 1e-6 relative
+tolerance; kept one engine-agreement comparison as a secondary, explicitly
+non-load-bearing check. Added a new test,
+TestInflatedBracketTopForYear_SingleFiler12PercentAt2026, pinning the
+Single-filer 0.12 case against the literal $50,400 (2026, n=0) — this case
+did not previously exist as a dedicated test (spec item 4.1.3 asked for it;
+attempt 1 omitted it). Swept the other tests added in this task:
+engine/taxyears_test.go's new tests (TestResolveTaxYear_2026IsStatutory,
+TestResolveTaxYear_2027ProjectsFrom2026, TestLatestAndEarliestFederalTaxYear,
+TestResolveTaxYear_2024Unchanged, TestResolveTaxYear_2025NoRecordProjectsWithoutError)
+and analysis/tax_constants_basis_test.go's new
+TestBuildTax_2026StartPlanRestsOnSeeded2026Statutory already assert against
+literals (211400, 32200, 1650, 2050, 98900, 201050, 2026, 2027, "Rev. Proc.
+2025-32") or structural properties (Basis, DerivedFromYear, error-ness), not
+against a second call through the code path under test — no changes needed
+there.

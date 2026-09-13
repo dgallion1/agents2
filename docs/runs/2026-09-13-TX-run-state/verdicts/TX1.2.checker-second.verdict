@@ -1,0 +1,114 @@
+VERDICT: PASS
+CHECKER: checker-second
+FAMILY: adversarial
+TASK: TX1
+ATTEMPT: 2
+---
+Setup: `sha256sum -c TX1.2.sha256` from the worktree root → all 14 files OK.
+`git status --short` in the live tree matches the manifest's file set
+exactly (13 unstaged + taxyears.go staged `M `). All mutation/build work ran
+in a `cp -a` copy at /tmp/claude-1000/tx1-checker-second-2/work; the live
+tree was never written to. My attempt-1 copy
+(/tmp/claude-1000/tx1-checker-second/repo) was still present and used for a
+byte-diff baseline.
+
+Hunt item 1 — is the fix real (mutation testing), PASS:
+- Injected `MaxIncome * factor * 1.05` into engine `scaleBrackets`
+  (internal/services/retirement/engine/tax.go). Ran
+  `go test ./internal/services/retirement/analysis/... -run
+  "TestInflatedBracketTopForYear_GrowsWithCalendarYear|TestInflatedBracketTopForYear_SingleFiler12PercentAt2026"
+  -v`. Result: `TestInflatedBracketTopForYear_GrowsWithCalendarYear` FAILS
+  at BOTH n=1 ("got=228629.1, want 217742 ... relative error 0.05") and
+  n=10 ("got=298309.11..., want 284103.92... relative error 0.05");
+  Single-12% test correctly stays green (n=0 only, unaffected by scaling).
+  Reverted; `diff` against the pre-mutation copy showed the file restored
+  byte-for-byte.
+- Injected a wrong MFJ 22% literal (211400→211500, both the bracket-top and
+  the next bracket's floor) directly into engine/tax.go's 2026 table. Ran
+  `go test ./internal/services/retirement/...`. Caught by THREE shipped
+  tests by name: `TestInflatedBracketTopForYear_GrowsWithCalendarYear`
+  (analysis pkg, all three n values), `TestResolveTaxYear_2026IsStatutory`
+  and `TestResolveTaxYear_2027ProjectsFrom2026` (engine pkg). Reverted;
+  `diff` confirmed byte-identical restoration.
+Both mutations caught → the rewritten test is not tautological; Finding 1
+from attempt 1 is fixed.
+
+Hunt item 2 — tautology sweep across every test file this task touched,
+PASS (none found):
+- tax_optimizer_strategies_test.go:
+  `TestInflatedBracketTopForYear_GrowsWithCalendarYear` now asserts against
+  the literal `211400 * (1+rate/100)^n` for n∈{0,1,10}; only a secondary,
+  explicitly-labeled non-load-bearing cross-check still calls
+  GetAdjustedBrackets (does not gate PASS/FAIL of the primary claim — proven
+  by mutation 1 above, which fails the test via the primary assertions
+  before the cross-check runs). New
+  `TestInflatedBracketTopForYear_SingleFiler12PercentAt2026` pins the
+  literal 50400 directly, no engine call in its expectation.
+- taxyears_test.go's five new tests
+  (TestResolveTaxYear_2026IsStatutory/2027ProjectsFrom2026/
+  2025NoRecordProjectsWithoutError/2024Unchanged,
+  TestLatestAndEarliestFederalTaxYear) all assert against hand-typed
+  literals (211400, 32200, 1650, 2050, 98900, 201050, 2024, 2026, 2027) or
+  structural Basis/DerivedFromYear/error checks — none re-derive their
+  expectation by calling the function under test.
+- tax_test.go's one changed assertion: `29200+2*1550` → `32200+2*1650`, a
+  literal, not a call-through.
+- tax_constants_basis_test.go's new
+  TestBuildTax_2026StartPlanRestsOnSeeded2026Statutory asserts literals
+  (2026, "Rev. Proc. 2025-32" substring, 2027) via BuildTax's output
+  struct, not by recomputing through the code under test.
+
+Hunt item 3 — production files unchanged since attempt 1, PASS:
+`diff` of engine/tax.go, engine/taxyears.go, and
+analysis/tax_optimizer_strategies.go between my attempt-1 copy and the
+attempt-2 copy → IDENTICAL, all three. Worker's claim confirmed by direct
+byte comparison, not just the manifest's assertion. Literal-by-literal
+cross-check of tax.go's 2026 tables against rp-25-32.txt §4.01: TABLE 1
+(MFJ) 22% ceiling $211,400 (line 428) matches; TABLE 3 (Unmarried/Single)
+12% ceiling $50,400 (line 468) matches — both the figures newly pinned in
+attempt 2's rewritten tests are correct against the source text.
+
+Hunt item 4 — split-source enumeration + Rate-equality safety, PASS:
+`grep -rn` for every 2024/2026 bracket-edge/deduction literal across
+internal/ and cmd/ (*.go, excluding _test.go and the two engine files
+themselves) → zero hits; no second copy of the constants exists outside
+engine/tax.go+taxyears.go. `scaleBrackets` (tax.go) copies `Rate:
+bracket.Rate` unchanged into the scaled struct — confirmed by reading the
+function body — so `bracketTopForRate`'s `b.Rate == target` exact-float
+match against `taxOptimizerBracketFillTargets = {0.12, 0.22, 0.24}` is
+safe.
+
+Hunt item 5 — test hygiene, PASS:
+`withFederalTaxYears` (taxyears_test.go) calls `resetProjectedYears()` both
+before the swap and inside `t.Cleanup` (Go's structured defer-equivalent,
+runs on every exit path including panics/subtests) after restoring
+`federalTaxYears = original` — no cached-projection leak across tests.
+`go test ./internal/services/retirement/engine/... -count=1 -shuffle=on -v`
+run twice: both PASS, no order dependence observed.
+
+Hunt item 6 — build/test truth, PASS:
+`go build ./...` → clean, exit 0. `go vet ./...` → clean, exit 0.
+`go test -count=1 ./...` → 50/50 packages `ok`, no FAIL or panic lines in
+the captured log. `git status --short testdata/settings/whatif.json` →
+empty (no dirt from cmd/server tests).
+
+Hunt item 7 — manifest accuracy, PASS:
+The 14-file list in TX1.2.manifest is set-identical to `git status
+--short` in the live tree (verified above). Every numbered verification
+command in the manifest has a final-line result; the manifest's own
+mutation-check claim (item 3 in its list) matches what I independently
+reproduced (same FAIL text for both n=1 and n=10).
+
+Scope check, PASS: `git diff ff4ff34 --stat` touches only
+engine/tax.go, engine/taxyears.go, analysis/tax_optimizer_strategies.go,
+and test files for those plus two whatif-handler test files that consume
+recalibrated figures — no models/settings files, no 2025 record (grep for
+"2025" in the tax.go diff hits only "Rev. Proc. 2025-32" citations), no
+IRMAA/§86/NIIT/senior-deduction changes. taxBaseYear is still `const
+taxBaseYear = 2024` (tax.go:12).
+
+Observations for backlog (not grounds for FAIL, carried from attempt 1,
+still valid): the LTCG-crossing bound fragility in
+calculator_expense_test.go is calendar-anchored pre-existing fragility;
+coverage_gaps_test.go's 0.32→0.99 guard-probe swap is legitimate scope
+drift caused by the shared table now containing a real 0.32 bracket.
