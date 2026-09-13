@@ -1,0 +1,247 @@
+VERDICT: PASS
+CHECKER: checker-tests
+FAMILY: anthropic
+TASK: SP1
+ATTEMPT: 1
+---
+Scratch copies (never edited the real tree):
+  /tmp/claude-1000/sp1-checker-tests  (first cp -a)
+  /tmp/claude-1000/sp1-v2             (second cp -a; see NOTE 2)
+Real worktree /home/darrell/bin/ai/budget2/.worktrees/spending-plan-restore,
+HEAD 94820b7 == master, all work UNCOMMITTED.
+
+NOTE 2 (mid-verification change): the worktree changed WHILE I was verifying.
+`diff -r` between my first copy and the live tree showed the dead helper
+`CloneSpendingSearchPreferences` (internal/models/spending_optimizer.go) had
+been REMOVED after my copy was taken. I re-copied (sp1-v2) and re-ran build,
+vet, the targeted suites, `make check` and the two headline mutations against
+the CURRENT state. Both states pass; every command cited below that says
+"(v2)" was run on the current tree. md5 of the six files at the time of the
+final run recorded via `md5sum` in the real worktree.
+
+=== (a) Apply persists the raw form; revision +1; nothing else changes ===
+COMMAND: cd /tmp/claude-1000/sp1-v2 && go test -count=1 -v -run
+  'TestSpendingApplySavesSearchPreferences' ./internal/handlers/whatif/
+OUTPUT: --- PASS: TestSpendingApplySavesSearchPreferences (0.12s)
+        --- PASS: .../explicit  --- PASS: .../defaults  --- PASS: .../strict-zero
+The "explicit" case (spending_optimizer_test.go:~860) posts the exact figures
+the criterion names -- form {FloorMonthlyReal:6000, MaxShortfallPct:7.5,
+NearTermYears:3, SearchMin 7000, SearchMax 9500.5, SearchStep 250} -- and
+asserts reflect.DeepEqual(got.SpendingSearch, &models.SpendingSearchPreferences
+{MaxShortfallPct:7.5, NearTermYears:3, 7000, 9500.5, 250}) after a real
+`rm.LoadContextWithRevision`. The fixture is file-backed (setupTestEnv ->
+t.TempDir() settings dir, handlers_test.go:61-76), so the assertion crosses a
+real JSON round-trip, not an in-memory struct.
+Revision: `if rev != p.revision+1 { t.Fatalf("revision %d want %d", ...) }` --
+read at spending_optimizer_test.go:~882.
+"Nothing else changed": got has MonthlyLivingExpenses / LivingSpendingBoost /
+Guardrails / SpendingSearch reset to `before`, then json.Marshal(got) is
+compared byte-for-byte to json.Marshal(before).
+Raw-vs-normalized: the test deliberately sets p.request to a DIFFERENT
+normalized struct ({MaxShortfallPct:99, NearTermYears:5, 6000/17000/100}) and
+posts contradictory form fields (max_shortfall_pct=42, near_term_years=9), so
+a PASS proves the SAVED value came from p.form, not from p.request or a re-read
+of the POST body.
+LIVE CONFIRMATION (criterion e machinery): after a real Apply the on-disk
+/tmp/claude-1000/sp1-demo-data/settings/whatif.json contained
+  {"max_shortfall_pct": 7.5, "near_term_years": 3,
+   "search_min_monthly_real": 4000, "search_max_monthly_real": 5500.5,
+   "search_step_monthly_real": 250}
+MUTATION 1 (v2): commented out the `s.SpendingSearch = &models.
+SpendingSearchPreferences{...}` line in handleApplySpendingOptimizerWithHook ->
+  --- FAIL: TestSpendingApplyAtomicCompleteCandidate
+  --- FAIL: TestSpendingApplySavesSearchPreferences
+MUTATION 2 (v1): swapped p.form.* for p.request.* in that same assignment ->
+  --- FAIL: TestSpendingApplySavesSearchPreferences
+MUTATION 3 (v1): dropped `form: req` from the spendingPreview literal ->
+  --- FAIL: TestSpendingOptimizerPreviewRetainsRawForm
+MUTATION 4 (v1): inserted `s.MonthlyPropertyTax = 999` before the write ->
+  --- FAIL: ... /explicit /defaults /strict-zero
+     "spending_optimizer_test.go:895: unrelated settings changed"
+  (proves the every-other-setting-unchanged assertion is non-vacuous)
+All mutations reverted; post-revert run: ok budget2/internal/handlers/whatif.
+=> (a) MET.
+
+=== (b) defaults -> {MaxShortfallPct:5}; explicit 0 -> {MaxShortfallPct:0} ===
+COMMAND: same -v run as (a).
+  --- PASS: TestSpendingApplySavesSearchPreferences/defaults
+      form {MaxShortfallPct: models.DefaultSpendingMaxShortfallPct}, want
+      &SpendingSearchPreferences{MaxShortfallPct: 5} -- all advanced fields
+      zero, asserted by reflect.DeepEqual on the whole struct.
+  --- PASS: TestSpendingApplySavesSearchPreferences/strict-zero
+      want &SpendingSearchPreferences{MaxShortfallPct: 0}; DeepEqual against a
+      non-nil pointer, so "turned back into 5" AND "collapsed to nil" both fail
+      the assertion.
+The strict rule survives serialization because `max_shortfall_pct` carries NO
+omitempty (internal/models/spending_optimizer.go, struct read directly) while
+the WhatIfSettings field is `*SpendingSearchPreferences ... omitempty` -- a
+non-nil pointer to a zero struct still serializes. Verified at the file level
+live: a blank-advanced Apply wrote exactly {"max_shortfall_pct": 12.5} with the
+four omitempty fields absent (see (e)).
+=> (b) MET.
+
+=== (c) spendingOptimizerFormData emits the five keys ===
+COMMAND: go test -count=1 -v -run
+  'TestSpendingOptimizerFormRestoresSearchPreferences' ./internal/handlers/whatif/
+OUTPUT: --- PASS (none / saved / strict-zero / fractional)
+Read the assertions: "none" (prefs nil) wants MaxShortfallPctText=="5",
+NearTermYearsSaved==0, SearchMin/Max/Step==0.0; "saved" wants "7.5", 3, 7000.0,
+9500.5, 250.0; "strict-zero" wants "0"; "fractional" wants "12.3". Compared with
+reflect.DeepEqual on each key, so a wrong TYPE (e.g. float where int is wanted)
+also fails.
+MUTATION 5 (v1): changed `if s.SpendingSearch != nil` to `if false && ...` in
+spendingOptimizerFormData -> --- FAIL: TestSpendingOptimizerFormRestoresSearch
+Preferences.
+SINGLE PRODUCER (split-classification check): `grep -rn "SpendingOptimizerForm"`
+across .go/.html/.js returns exactly two non-test hits -- handlers.go:1356
+(the only producer, calling spendingOptimizerFormData) and the template's
+`{{$form := .SpendingOptimizerForm}}`. `grep -rn "spendingOptimizerFormData"`
+confirms one definition, one caller. The partial is rendered only inside
+"whatif-guardrails", which is included only by web/templates/pages/whatif.html
+(grep for whatif-guardrails); no handler RenderPartial re-renders it. One
+surface, one source.
+=> (c) MET.
+
+=== (d) Rendered partial: value= attributes, no <no value> ===
+COMMAND: go test -count=1 -v -run 'TestSpendingOptimizerRenderSearchPreferences'
+  ./internal/handlers/whatif/
+OUTPUT: --- PASS (saved / defaults)
+Read the assertions: "saved" wants, per input id,
+  spending-shortfall="7.5", spending-near-term-years="3",
+  spending-search-min="7000.00", spending-search-max="9500.50",
+  spending-search-step="250.00";
+"defaults" wants spending-shortfall="5" and "" for the other four. Both cases
+also assert the body contains neither "<no value>" nor "&lt;no value&gt;", and
+that placeholder="Automatic: 5" survives. The assertions read the RENDERED
+value attribute via guardrailTestElement/guardrailTestAttribute, not the float.
+MUTATIONS 6-10 (v1), one per input, each reverting exactly the template change
+the criterion names:
+  value="{{$form.MaxShortfallPctText}}" -> value="5"
+     FAIL: spending-shortfall value = "5" want "7.5"
+  remove value="{{with $form.NearTermYearsSaved}}..."
+     FAIL: spending-near-term-years value = "" want "3"
+  remove the SearchMin value=   FAIL: spending-search-min value = "" want "7000.00"
+  remove the SearchMax value=   FAIL: spending-search-max value = "" want "9500.50"
+  remove the SearchStep value=  FAIL: spending-search-step value = "" want "250.00"
+Each mutation killed the test; all reverted (diff -r against the live worktree
+is empty). MUTATION 6 re-run on v2: same FAIL.
+LIVE: the nil-prefs case is also confirmed on a real page render -- see (e),
+baseline row.
+=> (d) MET.
+
+=== (e) Live round-trip on a scratch server with COPIED demo data ===
+Setup: cp -a /home/darrell/bin/ai/budget2-demo/data /tmp/claude-1000/sp1-demo-data
+  go build -o /tmp/claude-1000/sp1-server ./cmd/server
+  BUDGET_DATA_DIR=/tmp/claude-1000/sp1-demo-data BUDGET_LISTEN_ADDR=:8091 sp1-server
+(:8080 and ~/bin/ai/budget2/data were never touched; `ss -ltnp | grep 8080`
+shows pid 77523 budget2 still listening, untouched. Scratch server killed after
+the run; `ss -ltnp | grep :8091` -> 8091 free.)
+
+BASELINE  curl -s http://127.0.0.1:8091/whatif  (settings had no spending_search)
+  spending-shortfall value= '5'
+  spending-near-term-years value= ''   spending-search-min value= ''
+  spending-search-max value= ''        spending-search-step value= ''
+  no value markers: False False   (also checked ZgotmplZ: False)
+
+ROUND TRIP
+  POST /whatif/spending/optimize  request_id=sp1-check-1 floor_monthly_real=3500
+    max_shortfall_pct=7.5 near_term_years=3 search_min=4000 search_max=5500.5
+    search_step=250   -> HTTP 200 in 5.36s
+  POST /whatif/spending/optimize/apply request_id=sp1-check-1
+    recommendation=06a4281e...c2be  -> HTTP 200,
+    Hx-Redirect: /whatif?spending_applied=1#spending-optimizer
+  on-disk whatif.json spending_search:
+    {"max_shortfall_pct":7.5,"near_term_years":3,"search_min_monthly_real":4000,
+     "search_max_monthly_real":5500.5,"search_step_monthly_real":250}
+  GET /whatif?spending_applied=1  ->
+    spending-shortfall value= '7.5'
+    spending-near-term-years value= '3'
+    spending-search-min value= '4000.00'
+    spending-search-max value= '5500.50'
+    spending-search-step value= '250.00'
+    no value markers: False False ; ZgotmplZ: False
+
+ORDINARY SAVES DO NOT ERASE
+  POST /whatif/guardrails (enabled + 7 fields) -> HTTP 200; on-disk
+    spending_search unchanged: {"max_shortfall_pct":7.5,...,250}
+  POST /whatif/settings (portfolio_value, monthly_living_expenses,
+    monthly_property_tax, property_tax_inflation, projection_years) -> HTTP 200;
+    on-disk spending_search unchanged; subsequent GET /whatif still renders
+    '7.5' / '3' / '4000.00' / '5500.50' / '250.00'.
+
+BLANKS STAY BLANK (raw-form retention, live)
+  POST optimize request_id=sp1-check-3 max_shortfall_pct=12.5 with all four
+  advanced fields EMPTY -> apply HTTP 200 -> on-disk spending_search is exactly
+  {"max_shortfall_pct": 12.5} (omitempty suppressed the rest) -> GET /whatif:
+    spending-shortfall '12.5', the other four ''. The normalizer's canonical
+    range (5 / 6000 / 17000 / 100) did NOT leak into the form.
+=> (e) MET.
+
+=== (f) build / vet / targeted tests / make check ===
+COMMAND (v2): go build ./... && go vet ./...
+  -> "Go build: Success" / "Go vet: No issues found"
+COMMAND (v2): go test -count=1 ./internal/handlers/whatif/ ./internal/models/
+  ./internal/services/retirement/...
+  -> ok budget2/internal/handlers/whatif 8.274s; ok internal/models 0.006s;
+     ok retirement, retirement/analysis, completeness, engine, history,
+     overrides, prepare  (all ok, none cached -- -count=1)
+COMMAND (v2): make check  -> MAKE_EXIT=0, final line "✓ all checks passed"
+  stages observed: `go vet ./...`, `staticcheck ./...`, `govulncheck ./...`
+  ("Your code is affected by 0 vulnerabilities"), css-verify
+  ("tailwind.css is up to date" -- the template change adds no classes, so the
+  committed CSS is not stale), then the full `go test -count=1 ./...` sweep
+  including storage (72.9s) and handlers/whatif (11.7s), all ok.
+Post-`make check` `git status --porcelain` in the scratch copy lists ONLY the
+six modified files -- testdata/settings/whatif.json was NOT left dirty on this
+run, so the known cmd/server rewrite did not bite.
+=> (f) MET.
+
+=== SCOPE ===
+`git status --porcelain` in the real worktree:
+  M internal/handlers/whatif/handlers_spending_optimizer.go
+  M internal/handlers/whatif/spending_optimizer_render_test.go
+  M internal/handlers/whatif/spending_optimizer_test.go
+  M internal/models/spending_optimizer.go
+  M internal/models/whatif.go
+  M web/templates/components/whatif/spending_optimizer.html
+Exactly the six paths in .swarm/manifests/SP1.1.files -- no additions, no
+omissions. No untracked files (`--ignored` shows only `!! tmp/`, the Makefile's
+gitignored tailwind download). None of the six matches any pattern in
+.swarm/critical.globs (storage/**, dataloader/**, retirement/engine/**,
+transfers/**, accounts/accounts.go, mcpsvc/confirm/**). `git diff HEAD --` was
+used throughout; HEAD == master == 94820b7 so master...HEAD is empty, as warned.
+
+=== FINDINGS (observations, not criterion failures) ===
+F1 (test quality, criterion d): the `<no value>` / `&lt;no value&gt;` guard in
+   TestSpendingOptimizerRenderSearchPreferences cannot fire for these keys. A
+   throwaway probe (rendered the partial with MaxShortfallPctText OMITTED from
+   the map) produced
+     id="spending-shortfall" ... step="0.1" value=""
+   and reported `contains <no value>: false ; contains escaped: false` --
+   html/template renders a missing map key as empty inside an attribute, never
+   the "<no value>" marker. The criterion's OBSERVABLE (no such marker on any
+   rendered surface) is met, live and in unit tests; the guard simply adds no
+   protection. The value= assertions carry all the weight and they mutation-kill
+   (mutations 6-10). Probe deleted.
+F2 (process): the implementation tree was edited mid-verification (dead helper
+   CloneSpendingSearchPreferences removed from internal/models/spending_optimizer.go
+   between my two `cp -a` snapshots). Re-verified on the later state; no
+   criterion is affected. Flagging only because a live-edited tree can silently
+   invalidate a checker's baseline.
+F3 (domain, not a defect): the live strict-zero path could not be exercised
+   end to end -- POST optimize with max_shortfall_pct=0 on demo data returns
+   "No spending option met your minimum" with no recommendation token, and the
+   subsequent apply correctly returns HTTP 409. Criterion (b)'s strict-zero
+   behaviour is covered by the handler and formData unit tests instead, both of
+   which mutation-kill.
+F4 (cosmetic, pre-existing parser latitude): parseSpendingRequest accepts any
+   shortfall in [0,100), so a non-browser POST of e.g. 12.34 would now be
+   restored as value="12.34" into an input declaring step="0.1", making the
+   restored form client-side invalid until edited. Unreachable through the UI
+   (HTML5 validation blocks the submit that would save it). No change requested.
+F5 (dual-formatter check, clean): web/static/js/whatif-spending-optimizer.js
+   touches none of these five inputs -- its only reference to the search range
+   (line 185) formats the SERVER's normalized echo into a text summary and never
+   writes an input value. One Go formatter per site (FormatFloat 'f',-1 for the
+   percent; template printf "%.2f" for the three money fields); no JS second
+   formatter exists to disagree with it.
