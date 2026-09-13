@@ -1,0 +1,159 @@
+VERDICT: PASS
+CHECKER: checker-second
+FAMILY: adversarial
+TASK: IP1
+ATTEMPT: 2
+---
+Scope: re-attack per brief's "Attempt 2" section — Compact wiring across every
+route rendering insights-content, no accidental Compact leakage, RF3 order
+test still holds, money-figure diff vs master. Also re-verified items 1-7
+from the original checker-second brief since the manifest is cumulative.
+
+## 1. Compact wired to the page — full load AND htmx refresh path
+`internal/handlers/insights/handlers.go:225-286` (handleInsights) is the
+ONLY handler for GET /insights. The page's htmx refresh
+(`hx-get="/insights" hx-target="#insights-wrapper" hx-select="#insights-wrapper"`,
+web/templates/pages/insights.html:7) re-issues the same GET /insights
+request — there is no separate content-only handler — so both the full page
+load and the htmx-refresh path execute the identical
+`_ = renderer.Render(w, "base", pageData)` call, which includes
+`insights.html:41`:
+`{{template "shared/period-context" (dict "Period" .Period "Compact" true)}}`.
+Corroborating existing test (unmodified, RF3/SV1/LT1/DI2 family):
+`TestDI2InsightsPeriodFullAndPartials` (internal/handlers/insights/period_di2_test.go)
+calls handleInsights directly with HX-Request header both false and true for
+`/insights` and asserts period-context content renders in both — confirms
+structurally that both paths funnel through handleInsights.
+$ go test ./internal/handlers/insights/... -run 'TestDI2InsightsPeriodFullAndPartials' -v
+--- PASS: TestDI2InsightsPeriodFullAndPartials (0.10s)
+
+New page-level test (part of the manifest) directly renders "insights-content"
+(the same define handleInsights's "base" template includes) with a Stale and
+fresh Period and asserts no card chrome + Compact section wrapper +
+conditional "Note:" callout:
+$ go test ./internal/templates/... -run TestIP1PageWiresCompactPeriodContext -v
+--- PASS: TestIP1PageWiresCompactPeriodContext (0.03s)
+    --- PASS: .../stale (0.01s)
+    --- PASS: .../fresh (0.01s)
+
+## 2. No accidental Compact key elsewhere
+$ grep -rn '"Compact"\|\.Compact\b\|Compact:' --include=*.go --include=*.html . | grep -v _test.go
+-> only web/templates/pages/insights.html:41 (sets it) and
+   web/templates/components/shared/period-context.html:3,4,6 (reads it).
+The four other callers of shared/period-context (insights.html:303,329 and
+insights-investigation.html:101,110,115 — category-trends, spending-velocity,
+insights-recurring-partial, insights-income-partial, insights-trends-partial)
+all pass `.` unmodified. Read handlers.go:288-430
+(handleRecurringPartial/handleTrendsPartial/handleVelocityPartial/handleIncomePartial):
+every pageData for those is `map[string]interface{}{...}` with no "Compact"
+key — a missing map key in Go html/template evaluates false in {{if}}, no
+panic, no error (verified: `go vet ./...` clean, full suite green, no
+runtime panics in any of the below test runs). Dashboard handler/template
+have zero diff vs master:
+$ rtk proxy git diff master -- internal/handlers/dashboard/ web/templates/pages/dashboard.html
+-> (empty)
+
+## 3. RF3 order test / other pinned tests still hold
+$ rtk proxy git diff master -- '*_test.go'
+-> only internal/handlers/insights/http_links_di5_test.go changed (the
+   sanctioned DI5 re-anchoring); RF3/SV1/LT1/DI2 test files unmodified.
+$ go test ./internal/templates/... -run 'TestRF3|TestLT1|TestDI2|TestIP1' -v
+-> all PASS (TestRF3InsightsLeadHistoryAvailable,
+   TestRF3InsightsLeadHistoryUnavailableSingular, TestRF3InsightsLeadZeroFindings,
+   TestRF3TrendsTableCap/*, TestLT1RenderPeriodContextDisclosure/*,
+   TestDI2RenderedForecastAvailability, all TestIP1* — 9 tests, 0 fail)
+$ go test ./internal/handlers/insights/... -run 'TestSV1|TestDI2|TestDI5' -v
+-> all PASS (TestDI5GroupingLinksAndPartials, TestSV1FindingsSortedByAbsAmountDesc,
+   TestSV1PreviewAndRemainingFollowAmountOrder, TestDI2HistoricalSelectionHasNoForecast,
+   TestDI2ChartUsesSharedBounds, TestDI2InsightsPeriodFullAndPartials,
+   TestDI5CreepTieMedianAndHistory, TestDI5RecurringRenderedRetention)
+$ go build ./... && go vet ./... && go test ./... -count=1
+-> both clean; full suite: 46/46 packages ok, 0 fail (backup 30.9s,
+   storage 70.1s included).
+$ make css-verify
+-> "tailwind.css is up to date"
+Tracked testdata/settings/whatif.json unmodified by any of the above runs
+(git status clean on that path throughout).
+
+## 4. Money-figure diff vs master (fresh fixture, not reused from attempt 1)
+Built a `git archive 763337f` copy (master) and a `cp -a` copy (branch) in
+scratch, both minus .git. Wrote a throwaway probe (discarded after) rendering
+"insights-content" with Current=1234.567, Previous=999.994,
+Change=234.573/up, three Contributors (123.456/up, -61.728/down, 0.005/up),
+one Group (Monthly=12.345, Annual=148.14), Monthly=87.654, Annual=1051.848,
+via the SAME rf3Render/rf3Period helpers both trees already carry.
+$ python3 -c 'regex extract \$[\d,]+\.\d{2} from both, diff'
+master (13 figures): $1,234.57 $234.57 $87.65 $1,234.57 $999.99 $234.57
+  $123.46 $61.73 $0.01 $87.65 $1,051.85 $12.35 $148.14
+branch (15 figures): same 13, PLUS two more: $12.35 $148.14
+Located in branch_out.html:
+  line 192-193 (new recurring-strip tile): "$12.35" / "0 series · $148.14 a year"
+  line 200 (pre-existing group card, present in master too):
+    "0 retained series · Estimated monthly $12.35 · Estimated annual $148.14"
+Both instances are the group's own .Monthly/.Annual, byte-for-byte identical
+strings ($12.35, $148.14) — exactly the sanctioned exception in brief item 1
+("the recurring strip's .Monthly/.Annual figures, which must equal the group
+cards' own figures character-for-character"). No other figure differs,
+appears, or disappears. No ZgotmplZ in either render
+($ grep -c ZgotmplZ master_out.html branch_out.html -> 0, 0).
+
+## 5. shared/period-context non-Compact byte-identical to master
+Rendered "shared/period-context" with `map[string]any{"Period": p}` (no
+Compact key) for a Stale and a fresh Period on both master and branch scratch
+trees (throwaway probe, discarded after):
+$ python3 -c 'compare bytes'
+stale identical 874 874
+fresh identical 717 717
+(Cross-checked shell `diff` output too, but per prior-run lesson the rtk hook
+can rewrite diff output, so the python3 byte-compare above is the evidence
+of record, not the `diff` invocation.)
+
+## 6. Bar-width fixture (brief's own +1234.56/-617.28/+0.01 figures)
+Threw a probe test using the brief's literal amounts (not the shipped
+TestIP1ContributorBarWidths' 200/100/50 fixture) at rf3Render:
+$ go test ./internal/templates/... -run TestZZZChecker -v
+--- PASS: TestZZZCheckerBarWidthFixture (width: 100%, width: 50%, width: 0%
+    all present, no ZgotmplZ)
+--- PASS: TestZZZCheckerNoBarWhenSoleContributorZeroChange (no
+    `h-1.5 rounded-full` div rendered when the only contributor has zero
+    change)
+(Probe files existed only in the scratch `cp -a`/`git archive` copies under
+/tmp/claude-1000/.../scratchpad/ip2; removed after; tracked worktree under
+test was never modified — confirmed by `git status --short` before/after,
+unchanged from the IP1.2 manifest.)
+
+## 7. Split classification (severity / direction single source)
+$ rtk proxy git diff master -- web/templates/components/insights-investigation.html internal/handlers/insights/investigation.go
+Severity: `investigation.go` sets `FindingView.Severity` directly from
+`a.Severity` (the anomaly service's own field) at the single `add(...)` call
+site for anomaly findings; price-creep findings pass `""`. Template only
+does `{{if eq .Severity "high"}}`/`"medium"` — no re-derivation.
+Direction: insights.html's new Change/contributor tiles use
+`.Change.Direction` ("up"/"down") exclusively — the same field
+"insights-change-cell"/"insights-dollar-change" already consumed on master;
+no new direction logic invented.
+
+## 8. Edge cases (item 7 of original brief)
+- HistoryAvailable=false branch: template else-arm renders only the Selected
+  tile (single-column grid) + "Not enough history to compare" — confirmed by
+  reading web/templates/pages/insights.html:85-90 and by
+  TestIP1NeutralTileBorderContrast's tile count (6 = Selected+Prior+Change+3
+  strip links, all under the HistoryAvailable=true arm).
+- Zero-row group + strip link: `insights-recurring-group`
+  (insights-investigation.html:27-29) renders `id="recurring-{{.Group.ID}}"`
+  on the <h3> unconditionally — the table/detail body is the only part gated
+  on `{{if .Group.Rows}}` — so a strip tile's `#recurring-{{.ID}}` anchor
+  always resolves even for a 0-row group.
+- Legacy "Other recurring spending" ({{else}} compatibility branch,
+  insights.html:199-201) is a different code path (keyed off
+  `.Insights.OtherRecurring`, not `.Groups`) untouched by this task; not
+  reachable when `.Investigation` is present (the real handler always
+  supplies it), consistent with master.
+
+## Conclusion
+No figure changed, appeared, or disappeared outside the sanctioned
+strip-mirrors-card exception; Compact reaches the page on every route that
+renders insights-content (there is only one); no accidental Compact leakage
+to the four still-carded partials or the Dashboard; RF3/SV1/LT1/DI2 unmodified
+and green; build/vet/full-suite/css-verify clean; bar widths and severity
+badges remain single-source. PASS.
