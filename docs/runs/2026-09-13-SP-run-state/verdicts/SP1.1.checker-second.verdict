@@ -1,0 +1,112 @@
+VERDICT: PASS
+CHECKER: checker-second
+FAMILY: adversarial
+TASK: SP1
+ATTEMPT: 1
+---
+Scope: manifest (SP1.1.files) matches `git diff HEAD --stat` in the worktree exactly
+(6 files: handlers_spending_optimizer.go, spending_optimizer_{test,render_test}.go,
+models/spending_optimizer.go, models/whatif.go, spending_optimizer.html). Worked in
+a `cp -a` copy at /tmp/claude-1000/sp1-checker-second; never touched the real tree
+or :8080/:8091/:8098.
+
+(a) Apply persists RAW form == saved SpendingSearch, unrelated settings unchanged:
+  `go test ./internal/handlers/whatif -run TestSpendingApplySavesSearchPreferences -v -count=1`
+  → 3/3 subtests PASS. This test explicitly poisons `p.request` with different
+  values (99/5/6000/17000/100) than `p.form` (the case values) and asserts the
+  SAVED SpendingSearch equals `p.form`'s values, not `p.request`'s — a strong
+  mutation-kill against the split-classification-style bug of leaking the
+  normalized request instead of the raw form. Confirmed live (see (e)).
+
+(b) Defaults/strict-zero: `TestSpendingApplySavesSearchPreferences/defaults` →
+  `&SpendingSearchPreferences{MaxShortfallPct:5}`; `/strict-zero` →
+  `{MaxShortfallPct:0}`. Live-verified: POSTed max_shortfall_pct=0 through
+  optimize→apply on a running scratch server (BUDGET_DATA_DIR=copied demo data,
+  :8092); `whatif.json` after apply shows `"spending_search":{"max_shortfall_pct":0}`
+  (advanced fields correctly omitted via omitempty; MaxShortfallPct has no
+  omitempty so 0 is written). Reload showed `value="0"`, not blank or "5".
+
+(c)/(d) Form-data keys and rendered values: `TestSpendingOptimizerFormRestoresSearchPreferences`
+  (none/saved/strict-zero/fractional) and `TestSpendingOptimizerRenderSearchPreferences`
+  (saved/defaults) both PASS — asserting exact `value="…"` attributes
+  (7.5/3/7000.00/9500.50/250.00 and blanks) and that the body never contains
+  `<no value>` or `&lt;no value&gt;`. `go test ./internal/handlers/whatif -run Spending -v -count=1`
+  → all green (full output reviewed).
+
+(e) Live end-to-end on scratch server + copied demo data (`BUDGET_LISTEN_ADDR=:8092`,
+  data copied from ~/bin/ai/budget2-demo/data, no flags):
+  - optimize (floor=3000, shortfall=7.5, near_term=3, min=7000/step first run,
+    then min=3000/max=9500.50/step=250 to get a qualifying token) → apply via
+    the real `recommendation` token → `HX-Redirect: /whatif?spending_applied=1#spending-optimizer`.
+  - GET that EXACT redirect target (not a fresh plain GET) showed
+    `value="7.5"`, `value="3"`, `value="3000.00"`, `value="9500.50"`,
+    `value="250.00"` — 0 occurrences of `<no value>` / `&lt;no value&gt;`.
+  - A subsequent ordinary `POST /whatif/settings` (monthly_living_expenses)
+    and `POST /whatif/guardrails` (enabled+floor) each left
+    `whatif.json`'s `spending_search` object byte-identical afterward
+    (verified by reading the JSON file directly before/after each call) —
+    both handlers load-mutate-only-named-fields-save, never reconstruct
+    WhatIfSettings field-by-field, so the new field can't be dropped.
+
+(f) `make check` (vet, static, vuln, css-verify, full `go test ./...`) → all
+  packages `ok`, ends "✓ all checks passed". `gofmt -l` on every changed file →
+  clean. `go build ./...` / `go vet ./...` → clean.
+
+Attacks investigated and REFUTED with evidence (not just eyeballed):
+- Aliasing: `p.form` and `p.request` are both value-typed
+  `SpendingOptimizerRequest` copies; `p.request` is later overwritten with
+  `retained.Request` (line 304) via a JSON round trip, `p.form` is never
+  reassigned after construction — confirmed by reading the full handler and
+  by the poison-value test in (a).
+- Clone/DeepCopy path (`prepare.Clone`/`DeepCopy`): both go through
+  `json.Marshal`/`Unmarshal`; `SpendingSearch` has a normal json tag (not
+  `json:"-"`), so it round-trips correctly without needing hand-written
+  carry logic — verified `carryJSONOmittedFields` only touches
+  CurrentAge/SpouseAge, and `go test ./internal/services/retirement/prepare`
+  passed inside `make check`.
+- Field-by-field reconstruction sites that could silently drop the new
+  field: grepped every `WhatIfSettings{` literal outside models/prepare
+  (only `prepare.go:95`, which is fed by DeepCopy's JSON output, not a
+  literal enumeration) and every settings-mutating handler
+  (`UpdateSettings`, `UpdateSettingsWithPersons`, `handleWhatIfGuardrails`,
+  `cloneForCurrentMonth`) — all load-then-mutate-named-fields, never
+  rebuild the struct, so `SpendingSearch` cannot be lost. No MCP
+  `apply_changes`/scenario-copy code constructs `WhatIfSettings{}` either.
+  Live-tested two of these paths in (e).
+  `CloneSpendingSearchPreferences` is added but genuinely unused anywhere
+  in the tree (grep confirmed) — harmless defensive helper, not a sign of a
+  missed call site, since (unlike LivingSpendingBoost) SpendingSearch never
+  flows through the optimizer's in-memory candidate machinery that needs
+  clone-on-mutate protection.
+- Whole-cent money vs `%.2f` display: `analysis.NormalizeSpendingRequest`
+  rejects non-cent SearchMin/Max/StepMonthlyReal (spending_optimizer.go:306-311)
+  during the search itself; since Apply is only reachable after a
+  successful search populated `p.tokens`, the raw values ever saved into
+  SpendingSearch are already cent-exact by construction — a non-cent
+  value can never reach Apply, so the `%.2f` render can't disagree with a
+  later re-submission.
+- `step="0.1"` / float formatting: wrote a throwaway probe
+  (`strconv.FormatFloat(i/10.0,'f',-1,64)` for i in 0..999) — zero
+  mismatches and zero cases with >1 fractional digit, so no restored
+  shortfall value can trip `stepMismatch` for a value the UI itself could
+  have produced. (Probe discarded per calibration rule; not kept as a
+  test.)
+- `{{with}}` zero-is-falsy semantics for `NearTermYearsSaved` (int) and the
+  three money fields (float64) confirmed correct per Go template `IsTrue`
+  and by the "none"/"strict-zero" test cases rendering blank.
+- `{{if $form.Chained}}` guards the entire form including the new inputs;
+  since `spendingOptimizerFormData` populates the new keys unconditionally,
+  a chained scenario hides the block without any missing-key template
+  panic (verified by reading the template guard structure).
+
+Findings for backlog (out of scope for SP1, not grounds for FAIL):
+- `QualificationRule` on the results view formats `MaxShortfallPct` with
+  `%.1f` (pre-existing, untouched by this diff) while the restored form
+  uses `FormatFloat(...,-1,...)` (exact). For a shortfall value with more
+  than one decimal (only reachable via a direct POST bypassing the
+  browser's `step="0.1"`, e.g. 12.34), the results sentence would show
+  "12.3%" while the reloaded form would show "12.34" — a pre-existing
+  dual-formatter mismatch unrelated to the restore bug SP1 fixes, and not
+  introduced by this change.
+
+No FAIL found. Every criterion (a)-(f) has direct command/log evidence above.

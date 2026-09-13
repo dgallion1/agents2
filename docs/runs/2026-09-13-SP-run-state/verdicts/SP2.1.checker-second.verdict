@@ -1,0 +1,124 @@
+VERDICT: PASS
+CHECKER: checker-second
+FAMILY: adversarial
+TASK: SP2
+ATTEMPT: 1
+---
+Method: worked in a `cp -a` backup + a separate scratch copy of
+.worktrees/spending-plan-restore (base 950e2d9). All new probe test files
+lived only in the scratch copy; the real worktree was diffed byte-identical
+against the backup before and after (`diff -rq` exit 0). No write/mutation
+touched the worktree itself. Ran `go build ./...`, `go vet ./...`, and
+`go test -count=1 ./internal/handlers/whatif/ ./internal/models/
+./internal/templates/...` directly in the real worktree (read-only) — all
+green, matching the manifest.
+
+Attacks tried, per the brief:
+
+1. Hash-guard sensitivity to SP1's own field. Wrote a probe
+   (TestProbe_AppliedEvidenceStaleAfterSpendingSearchEdit) that edits ONLY
+   `SpendingSearch.MaxShortfallPct` after a real apply (not DiscountRate,
+   which is all the shipped test touches) and re-saves. `appliedSpendingEvidenceFresh`
+   correctly went false and `POST /whatif/spending/applied/graph` returned
+   409. PASS — the shipped test's narrower fixture (DiscountRate only) did
+   not miss a real gap.
+
+2. Hash collision across two independent applies. Probe
+   (TestProbe_DifferentAppliesProduceDifferentHashes) confirmed distinct,
+   non-empty hashes; inspected the marshaled evidence directly (int64 seeds
+   via `,string` tag round-trip correctly including a negative selection
+   seed).
+
+3. Re-apply (second Apply on the same scenario) fully replaces evidence —
+   this is the brief's explicit "SpendingSearch changing on a LATER Apply"
+   surface, read as "does the OLD evidence survive/leak". Wrote
+   TestProbe_ReApplyReplacesEvidenceAndHashVerifies: applied option A
+   (seed 111111), then option B (seed 222222) on the same settings file.
+   The persisted evidence after the second apply carries B's seed, not A's,
+   and its hash verifies against the current settings. No stale evidence
+   survives a re-apply.
+
+4. Cross-scenario leak: `AppliedSpendingEvidence` lives on `WhatIfSettings`,
+   which is per-scenario-file; `handleCreateScenario` builds a fresh
+   settings struct rather than copying an existing one (grep found no
+   scenario-duplication/clone-settings feature). Structurally cannot leak
+   across scenarios — not reachable, no probe needed.
+
+5. Seed-exactness / vacuous-test check for criterion (c). Read
+   TestAppliedSpendingGraphByteIdenticalToSharedCore: it compares the live
+   HTTP handler's body to a DIRECT call of `buildSpendingGraphPayload`
+   using the SAME persisted `got` settings and the SAME evidence-derived
+   inputs (not independently reconstructed/wrong inputs) — not vacuous.
+   Manifest's mutation-kill (hardcoding seeds 424242 in the handler) broke
+   this test, confirming it actually pins the seed plumbing. Verified the
+   shared-core refactor itself: `buildSpendingGraphPayload` is the one
+   function both `/whatif/spending/optimize/graph` and
+   `/whatif/spending/applied/graph` call; no second graph-construction path
+   exists in the diff.
+
+6. Panel relocation / duplicate IDs. `#spending-graph-preview` is now
+   defined once (`{{define "whatif-spending-graph-panel"}}` in
+   spending_optimizer_results.html) and invoked once, outside the swapped
+   `#spending-optimizer-results` div, in the persistent shell
+   (spending_optimizer.html). Grepped the whole template tree: no second
+   `id="spending-graph-preview"` or `id="spending-applied-plan"`. JS
+   `form.addEventListener('submit', ...)` calls `invalidate()` →
+   `purgeGraph()` (hides panel, clears heading/summary/note/data, resets
+   `aria-pressed` on every `[data-spending-graph]` button including the
+   applied one) BEFORE `results.innerHTML = markup` — a new comparison run
+   cannot leave a stale chart visible, and the applied button's
+   aria-pressed/panel state stays coherent whichever direction the user
+   goes (applied → live preview, or live preview → applied).
+
+7. Boost deep-clone. `cloneSpendingCandidate` clones `LivingSpendingBoost`
+   and `Guardrails` then round-trips the WHOLE candidate through
+   `json.Marshal`/`Unmarshal` — a genuine deep, independent clone including
+   `Metrics`/`SimulationYears`/`WorstPathYears`. `evidenceRequest.LivingSpendingBoost`
+   is explicitly `models.CloneLivingSpendingBoost`'d before being stored.
+   Read-side `appliedSpendingEvidenceFresh` only shallow-copies
+   `WhatIfSettings` to nil one field for hashing — read-only, no mutation
+   risk.
+
+8. Stale-chart honesty. On a fresh `GET /whatif`, the panel is `hidden`
+   with all text nodes empty (server always renders it that way); the
+   "Selected spending plan" block for stale evidence renders ONLY the note,
+   with the button (`{{if $form.AppliedEvidenceFresh}}`) never emitted —
+   confirmed in spending_optimizer.html. No path renders a chart for stale
+   evidence: `handleAppliedSpendingGraphWithRunner` checks
+   `appliedSpendingEvidenceFresh` before building anything and returns 409
+   with a message containing "changed" (asserted by the shipped test and
+   my own SpendingSearch-edit probe).
+
+9. `spendingOptimizerFormData` sets all four `AppliedEvidence*` keys
+   unconditionally before any branching (including for chained scenarios),
+   so there is no code path that leaves them as a missing map key
+   (`<no value>`) — confirmed by reading the function body directly.
+
+10. Formatter discipline: `formatDate` is the single existing template
+    helper (shared with the rest of the app, not a new date formatter);
+    the only money figure in the new block goes through
+    `spendingGraphCandidateLabel` → `budgettemplates.FormatMoney`
+    (pre-existing, unchanged, reused).
+
+11. Regression check on SP1/apply/preview/cancel: the two touched existing
+    tests (TestSpendingApplyAtomicCompleteCandidate,
+    TestSpendingApplySavesSearchPreferences) were extended, not weakened —
+    they still assert the FULL settings byte-for-byte match after
+    resetting the new field back, and were forced to change only because
+    they assert "nothing else changed" and a 5th field is now legitimately
+    written; verified this is the necessary/correct update, not a
+    scope-widening or a hidden weakening, by tracing that an unmodified
+    version of these tests would have failed on a CORRECT implementation
+    (proving they had no choice). Confirmed `s.AppliedSpendingEvidence`
+    and SP1's fields are written in exactly one `SaveWithRevisionIfScenario`
+    call (single revision increment).
+
+12. No critical-glob files touched (checked
+    .swarm/critical.globs from the run dir against the manifest's file
+    list — no overlap).
+
+No FAIL found. The strongest candidate attack was #1 (hash sensitivity to
+SP1's own SpendingSearch field, since the shipped test only exercised
+DiscountRate) — it did NOT succeed; the guard is a whole-settings hash and
+is sensitive to that field too, confirmed by a live probe against the
+unmodified code.

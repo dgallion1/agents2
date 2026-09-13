@@ -1,0 +1,197 @@
+VERDICT: PASS
+CHECKER: checker-tests
+FAMILY: anthropic
+TASK: SP2
+ATTEMPT: 1
+---
+METHOD
+All commands run in a `cp -a` scratch copy of the worktree at
+/tmp/claude-1000/-home-darrell-work-agents2/b9533e38-.../scratchpad/work with
+its `.git` renamed to `.git.disabled`, so no git operation could reach
+/home/darrell/bin/ai/budget2/.git. Read-only `git diff/status/ls-files` were run
+in the real worktree. The budget2 binary was never executed; every server
+interaction is httptest inside `go test`. The live :8080 unit was never touched.
+At the end: `diff -r --brief <scratch> <worktree>` printed nothing (ignoring the
+.git entries) and the worktree's `git status --porcelain` is byte-identical to
+its state at the start of this verification (10 M + 1 ??).
+
+SCOPE
+Changed set (`git diff --name-only HEAD --` + `git ls-files --others
+--exclude-standard`) = 11 paths; manifest FILES = 11 paths; set difference in
+both directions is empty ("manifest-only: []", "tree-only (UNDECLARED): []").
+Checked each changed path against every line of .swarm/critical.globs
+(internal/services/storage/**, dataloader/**, retirement/engine/**,
+transfers/**, accounts/accounts.go, mcpsvc/confirm/**): zero matches
+("(no HIT lines above = no critical-glob changes)"). web/static/css/tailwind.css
+is NOT in the changed set.
+
+(a) Apply persists AppliedSpendingEvidence (candidate, exact seeds,
+    ValidationRuns, applied_at, verifying settings_hash) in ONE revision
+    with SP1's fields; every other serialized setting unchanged.
+  CMD: go test -count=1 -v -run
+       'TestAppliedSpendingEvidenceSavedInSameRevisionAsSearchPreferences|TestSpendingApplySavesSearchPreferences|TestSpendingApplyAtomicCompleteCandidate'
+       ./internal/handlers/whatif/
+  OUT: --- PASS: TestAppliedSpendingEvidenceSavedInSameRevisionAsSearchPreferences (0.71s)
+       --- PASS: TestSpendingApplySavesSearchPreferences (0.02s)   [explicit/defaults/strict-zero]
+       --- PASS: TestSpendingApplyAtomicCompleteCandidate (0.02s)  [boost/remove]
+  READ: spending_applied_graph_test.go:61-82 drives a REAL router round trip
+       (handleSpendingOptimizer -> handleApplySpendingOptimizer, real optimizer,
+       seed 777777), then reflect.DeepEqual's evidence.Candidate against the
+       applied row and compares all four seed/run fields to the published
+       optimizer result, and asserts appliedSpendingEvidenceFresh(got) on the
+       RELOADED settings. The one-revision property is asserted in
+       spending_optimizer_test.go:889 (`rev != p.revision+1`) and :124, in the
+       same Load that now also requires the evidence present+fresh.
+  MUTATION-KILL (mine, in the scratch copy, reverted after each):
+   - SearchSeed/SelectionSeed -> 0 in the evidence write:
+     FAIL "evidence seeds ... SearchSeed:0, SelectionSeed:0 ... want search=777777
+     selection=-6884282663030048226".
+   - Evidence moved to a SECOND SaveWithRevisionIfScenario after the main save:
+     FAIL "revision 4 want 3" (x2) and "not atomic rev=4" (x2). The single-
+     revision claim is live, not decorative.
+   - Apply also writes an unrelated setting (`s.DiscountRate += 0.5`):
+     FAIL "unrelated settings changed" in BOTH atomic tests -- proving the
+     "every other serialized setting unchanged" guard survived the worker's
+     edit that added AppliedSpendingEvidence to those tests' reset lists.
+
+(b) GET /whatif: fresh -> block (label, date, button); nil -> nothing;
+    stale -> note and no button; never "<no value>".
+  CMD: go test -count=1 -v -run 'TestSpendingOptimizerRenderAppliedPlanBlock'
+       ./internal/handlers/whatif/
+  OUT: --- PASS (nil / fresh / stale subtests).
+  CMD (my own probe, real page not just the partial; probe file deleted after):
+       go test -count=1 -v -run 'TestProbeAppliedBlockOnRealPage' ./internal/handlers/whatif/
+       -- spendingFixture + real search + real Apply through the router, then
+       three handleWhatIf GETs with a real templates.Renderer attached.
+  OUT: PROBE nil: block absent=true
+       PROBE fresh block (RENDERED STRING, verbatim):
+         <h4 id="spending-applied-plan-heading" class="font-semibold">Selected spending plan</h4>
+         <p class="mt-1">Flexible spending at $10,000.00 per month — applied Sep 13, 2026.</p>
+         <button type="button" data-spending-graph="applied"
+           data-graph-endpoint="/whatif/spending/applied/graph" aria-pressed="false" ...>Inspect evidence</button>
+       PROBE stale block (after `cur.DiscountRate++; rm.Save`):
+         <p class="mt-1 text-gray-600 dark:text-gray-300">Your plan has changed since this
+         option was applied — run a new comparison for current evidence.</p>
+         (no Inspect-evidence button, no data-graph-endpoint)
+       --- PASS: TestProbeAppliedBlockOnRealPage (0.75s)
+       The probe fails the test on any occurrence of "<no value>" or
+       "&lt;no value&gt;" on all three pages; none occurred.
+  MUTATION-KILL (mine): `{{if $form.AppliedEvidenceFresh}}` -> `{{if true}}`
+       => stale subtest FAILs ("unexpected \"Inspect evidence\" in body",
+       "unexpected \"data-graph-endpoint\"", missing the note).
+       `{{if $form.AppliedEvidencePresent}}` -> `{{if true}}`
+       => nil subtest FAILs ("unexpected \"Selected spending plan\" in body").
+
+(c) POST /whatif/spending/applied/graph is byte-identical to the shared core
+    invoked directly with the persisted inputs (seed-exact, one code path).
+  CMD: go test -count=1 -v -run 'TestAppliedSpendingGraphByteIdenticalToSharedCore'
+       ./internal/handlers/whatif/
+  OUT: --- PASS (subtests real, nominal).
+  READ: spending_applied_graph_test.go:87-115 compares the endpoint's response
+       body string against json.Marshal(buildSpendingGraphPayload(...)) called
+       with the persisted candidate/request/seeds/runs and the SAME loaded
+       settings -- an exact string compare, both display modes.
+  ONE CODE PATH: the diff refactors the preview handler's body into
+       buildSpendingGraphPayload and both handlers call it; `grep -c` over the
+       shipped JS shows renderGraph definitions: 1, loadGraph definitions: 1.
+  MUTATION-KILL (mine): seeds hardcoded to 424242 in the applied handler's
+       buildSpendingGraphPayload call => FAIL, and the reported diff is exactly
+       search_seed"424242" vs "777777" and selection_seed"424242" vs
+       "-6884282663030048226". The byte-identity assertion is seed-sensitive.
+
+(d) After any settings edit the endpoint returns 409 + an honest message.
+  CMD: go test -count=1 -v -run 'TestAppliedSpendingGraphStaleAfterSettingsEdit|TestAppliedSpendingGraphNilEvidence'
+       ./internal/handlers/whatif/
+  OUT: --- PASS (both).
+  READ: the stale test first asserts its own setup really changed the stored
+       bytes ("test setup did not actually edit settings" guard), then requires
+       409 and an error string containing "changed".
+  MY PROBE (live body): PROBE stale endpoint: 409
+       {"error":"Your plan has changed since this option was applied. Run a new
+       comparison for current evidence."}
+  MUTATION-KILL (mine): appliedSpendingEvidenceFresh body replaced with
+       `return true` => FAIL "stale graph 200 {\"candidate\":{...}}" -- the 409
+       comes from the hash comparison, not from some other precondition.
+
+(e) The applied block's chart goes through the SAME JS render function; no
+    second renderer in the diff.
+  CMD: node probe_js.cjs -- EXECUTES the shipped endpoint/param-selection lines
+       sliced verbatim out of web/static/js/whatif-spending-optimizer.js (not
+       retyped) via new Function, against the two real button datasets.
+  OUT: APPLIED  -> {"endpoint":"/whatif/spending/applied/graph","params":{"display_dollars":"real"}}
+       PREVIEW  -> {"endpoint":"/whatif/spending/optimize/graph","params":{"display_dollars":"nominal","request_id":"req-123","candidate":"tok-abc"}}
+       renderGraph definitions: 1 | loadGraph definitions: 1 | renderGraph call sites: 5
+  CMD: node --check web/static/js/whatif-spending-optimizer.js -> OK (silent).
+  READ: the delegated handler is `event.target.closest('[data-spending-graph]')`
+       -> loadGraph(button,'real') -> renderGraph(); the applied button carries
+       data-spending-graph="applied" (asserted on the rendered page in (b)), so
+       it enters the same single function. The preview branch is byte-unchanged:
+       no data-graph-endpoint on preview buttons (probe: endpoint-overrides=0).
+  GAP DISCLOSED: jsdom is not installed on this host, so the full IIFE was not
+       executed in a DOM; (e) is proved by executing the shipped decision lines
+       + the server-rendered attributes, which is what the criterion specifies
+       ("server-assertable wiring: endpoint + data attributes").
+
+(f) build/vet/tests green; css-verify clean.
+  CMD: go build ./...               -> BUILD_EXIT=0, no output
+  CMD: go vet ./...                 -> VET_EXIT=0, no output
+  CMD: go test -count=1 ./internal/handlers/whatif/ ./internal/models/
+       ./internal/templates/ ./internal/services/retirement/...
+       -> ok x10 packages, EXIT=0 (whatif 9.700s, models, templates, retirement
+          + analysis/completeness/engine/history/overrides/prepare)
+  CMD: go test -count=1 ./...       -> 50 "ok" lines, zero FAIL/--- lines, EXIT=0
+  CMD: make css-verify              -> "tailwind.css is up to date", EXIT=0
+  CMD: gofmt -l <all 8 changed .go files> -> empty output
+
+(g) No critical-glob changes; un-reloaded preview/cancel/apply behave as before.
+  CRITICAL GLOBS: see SCOPE above -- zero matches.
+  CMD: go test -count=1 -v -run 'Spending' ./internal/handlers/whatif/
+       -> 143 PASS lines, 0 failures, "ok budget2/internal/handlers/whatif 4.442s".
+  REGRESSION (the scaffold move out of the swapped partial into the shared
+  whatif-spending-graph-panel block) -- my own probes:
+   - TestProbeAppliedBlockOnRealPage counts every scaffold id on the real page:
+     spending-graph-preview / -main / -heading / -view / -dollars / -close /
+     -data / -note / -summary, plus spending-optimizer-results and
+     spending-applied-plan. OUT: "PROBE fresh: scaffold ids each appear exactly
+     once" (the test errors on any count != 1). No duplicate IDs.
+   - TestProbeResultsPartialHasNoGraphScaffold drives the REAL production swap
+     response (handleSpendingOptimizer with a renderer attached, Content-Type
+     text/html) and asserts the partial no longer carries any scaffold id while
+     keeping its preview buttons. OUT: "PROBE partial: len=19667 graph-buttons=7
+     endpoint-overrides=0 scaffold-mentions=0"; data-request-id= and
+     data-graph-token= both present; no "<no value>".
+   - JS lookups: every graph-panel query in the shipped file is
+     root.querySelector('#spending-graph-...') where root is #spending-optimizer
+     (the shell) -- it was ALREADY shell-scoped on master, never results-scoped,
+     so moving the panel up one level keeps every lookup valid, and purgeGraph()
+     still hides/clears the now-persistent panel on invalidate().
+   - Existing render tests for the results partial (lines 170/272/302/395/405 of
+     spending_optimizer_render_test.go) all pass in the runs above.
+
+FINDINGS (observations for the backlog; none is a FAIL)
+ F1 (g, disclosure): two PRE-EXISTING tests were modified, contra the literal
+    "existing tests untouched": TestSpendingApplySavesSearchPreferences and
+    TestSpendingApplyAtomicCompleteCandidate. Both edits are strictly additive
+    (new assertions on the evidence) plus adding the new field to the
+    reset-before-JSON-compare list, which is required or the atomic test would
+    fail on a legitimate new field. The manifest discloses both. I proved the
+    edits did not blind the tests: the "unrelated settings changed" guard and
+    the "rev == p.revision+1" guard both still fire under my mutations (see (a)).
+ F2 (harness gap): the standalone Playwright oracle
+    internal/handlers/whatif/testdata/spending_optimizer_browser.cjs (gated on
+    SPENDING_BROWSER_FIXTURE, referenced by neither the Makefile nor CI) could
+    NOT be executed -- playwright is not installed here. By reading, it builds
+    the page from fixture.form (which now carries the panel) and injects
+    fixture.results into #spending-optimizer-results, so its
+    `#spending-graph-preview` waits still resolve; that is inspection, not
+    execution. Worth one manual run before merge if the oracle is still used.
+ F3 (harness gap): no jsdom; see (e).
+ F4 (observation, pre-existing, out of scope): getSettingsHash truncates
+    sha256 to 8 bytes (16 hex chars). It was the engine cache key; it now also
+    carries the evidence staleness guard. 64-bit collision risk is negligible,
+    but the truncated hash has a new responsibility.
+ F5 (observation): appliedSpendingEvidenceFresh takes a shallow `clone := *s`.
+    Correct here -- only a top-level pointer is nil-ed and json.Marshal follows
+    the shared pointers -- and it mutates nothing through *s. I confirmed the
+    guard both fires (mutation d) and does not false-fire (probe (b) renders the
+    button on a freshly applied plan loaded from disk). No defect found.

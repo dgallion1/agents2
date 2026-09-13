@@ -1,0 +1,6 @@
+internal/handlers/whatif/handlers_spending_optimizer.go
+internal/handlers/whatif/spending_optimizer_render_test.go
+internal/handlers/whatif/spending_optimizer_test.go
+internal/models/spending_optimizer.go
+internal/models/whatif.go
+web/templates/components/whatif/spending_optimizer.html
