@@ -1,0 +1,27 @@
+TASK: SP2
+ATTEMPT: 1
+WORKER: worker-coder
+FILES:
+internal/models/spending_optimizer.go
+internal/models/whatif.go
+internal/handlers/whatif/handlers.go
+internal/handlers/whatif/handlers_spending_optimizer.go
+internal/handlers/whatif/handlers_spending_graph.go
+internal/handlers/whatif/spending_optimizer_test.go
+internal/handlers/whatif/spending_optimizer_render_test.go
+internal/handlers/whatif/spending_applied_graph_test.go
+web/templates/components/whatif/spending_optimizer.html
+web/templates/components/whatif/spending_optimizer_results.html
+web/static/js/whatif-spending-optimizer.js
+COMMANDS:
+go build ./... -> success
+go vet ./... -> no issues
+go test -count=1 ./internal/handlers/whatif/ ./internal/models/ ./internal/templates/ ./internal/services/retirement/... -> ok (all 10 packages, 3224 tests)
+go test ./internal/handlers/whatif/... -run Spending -> ok (full pre-existing suite green after 2 tests updated for the new AppliedSpendingEvidence field: TestSpendingApplySavesSearchPreferences, TestSpendingApplyAtomicCompleteCandidate)
+make css-verify -> "tailwind.css is up to date" (no new Tailwind classes introduced; reused existing utility classes verbatim)
+gofmt -l <all changed .go files> -> empty (clean)
+node --check web/static/js/whatif-spending-optimizer.js -> OK
+Mutation-kill (a): zeroed SearchSeed/SelectionSeed in the AppliedSpendingEvidence write -> TestAppliedSpendingEvidenceSavedInSameRevisionAsSearchPreferences FAILED (evidence seeds mismatch); restored -> PASS
+Mutation-kill (c): hardcoded seeds 424242/424242/424242 in handleAppliedSpendingGraphWithRunner's call to buildSpendingGraphPayload -> TestAppliedSpendingGraphByteIdenticalToSharedCore FAILED (payload differs, search_seed/selection_seed/validation_seed strings differ); restored -> PASS
+Mutation-kill (d): appliedSpendingEvidenceFresh forced to always return true (hash comparison bypassed) -> TestAppliedSpendingGraphStaleAfterSettingsEdit FAILED (200 instead of 409 after settings edit); restored -> PASS
+Post-restore verification: diff against pre-mutation backups showed files IDENTICAL; go build + targeted go test re-run green
