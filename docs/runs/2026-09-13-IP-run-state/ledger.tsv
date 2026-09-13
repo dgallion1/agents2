@@ -1,0 +1,2 @@
+# task_id	tier	checks	status	attempt	worker	reason
+IP1	2	a11y,second	accepted	2	worker-coder+lead	gate-ok-tier2-attempt-2-dual-lane; attempt 1 FAIL both lanes (Compact unwired: lead review + second; tile borders <3:1: a11y); attempt 2 lead-direct fix

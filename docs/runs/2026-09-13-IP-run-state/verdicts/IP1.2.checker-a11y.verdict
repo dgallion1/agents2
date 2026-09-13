@@ -1,0 +1,207 @@
+VERDICT: PASS
+CHECKER: checker-a11y
+FAMILY: anthropic
+TASK: IP1
+ATTEMPT: 2
+---
+## Setup (real render, isolated servers, never :8080/data)
+
+Worktree: /home/darrell/bin/ai/budget2/.worktrees/insights-presentation
+(branch feat/insights-presentation, working tree = uncommitted attempt 2;
+base master 763337f, unchanged since attempt 1). Manifest (IP1.2.files):
+web/templates/pages/insights.html, web/templates/components/insights-investigation.html,
+web/templates/components/shared/period-context.html,
+internal/handlers/insights/investigation.go,
+internal/handlers/insights/http_links_di5_test.go,
+internal/templates/render_insights_ip1_test.go, web/static/css/tailwind.css.
+Confirmed via `rtk proxy git status`/`git diff master --stat` — matches.
+
+Rebuilt the branch binary FRESH from the current tree (not attempt-1's
+binary):
+```
+cd /home/darrell/bin/ai/budget2/.worktrees/insights-presentation
+go build -o $SCRATCH/budget2-branch2 ./cmd/server   # exit 0
+cp -a testdata $SCRATCH/data2
+BUDGET_LISTEN_ADDR=:8099 BUDGET_DATA_DIR=$SCRATCH/data2 BUDGET_DEBUG=1 $SCRATCH/budget2-branch2 &
+```
+Reused attempt-1's master checkout (still detached at 763337f, working tree
+clean, matches current `master` — verified with `rtk proxy git log --oneline
+-1` on both), reused its already-built master binary (unchanged mtime,
+predates this session), copied its testdata fresh to $SCRATCH/data-master2
+and ran on :8100. Port 8098 (the lead's) was never touched; both scratch
+servers were killed at the end via `kill`/`pkill`, confirmed down with `ss
+-ltnp`, leaving only 8098 listening.
+
+Fixture: `/insights?start=2025-07-01&end=2025-12-31` against the repo's own
+`testdata/transactions.csv` (same as attempt 1) — latest transaction
+2025-12-31, so `DataAgeDays` (real wall clock, 2026-09-13) = 256 days > 7,
+which is what makes the Stale/Compact-callout path render — needed for this
+attempt's re-measure item.
+
+Browser probe: reused attempt 1's throwaway Playwright/axe script
+($SCRATCH/probes/ip1_a11y.cjs, unmodified) re-run against the FRESH :8099
+build, plus two new small throwaway probes for the attempt-2-specific
+re-measure items (Compact callout contrast, byte-identity re-check).
+PLAYWRIGHT_MODULE/CHROMIUM_EXECUTABLE/AXE_PATH/node v24.12.0 same as attempt 1.
+
+## Diff since attempt 1 (confirmed by `rtk proxy git diff master`)
+
+1. `web/templates/pages/insights.html:41`: period-context call now passes
+   `(dict "Period" .Period "Compact" true)` instead of `.` (bare Period).
+2. `web/templates/pages/insights.html` + `shared/period-context.html`: the
+   five neutral tile borders (Selected/Prior/Change-fallback/3 recurring
+   strip tiles) changed `border-gray-200 dark:border-gray-700` (attempt-1
+   FAIL) → `border-gray-500 dark:border-gray-400`.
+3. `shared/period-context.html`: Compact stale note now
+   `<p class="rounded-lg border border-warning bg-warning-soft text-warning
+   px-3 py-2 text-sm"><span class="font-semibold">Note:</span> …</p>`.
+
+## PASSING checks (evidence)
+
+1. **ACCESSIBILITY.md §7 — tile border contrast ≥ 3:1, both themes**
+   (attempt-1's FAIL, re-measured on the fresh build). Computed via
+   getComputedStyle + WCAG relative-luminance, all 6 tile sites
+   (Selected/Prior/Change/3 recurring-strip), 1440px:
+   ```
+   1440-light: Selected period      border rgb(120,113,108) / bg rgb(255,255,255) = 4.80:1
+   1440-light: Prior period         border rgb(120,113,108) / bg rgb(255,255,255) = 4.80:1
+   1440-light: Change (colored)     border rgb(190,18,60)   / bg rgb(255,255,255) = 6.29:1
+   1440-light: Detected subscriptions/Recurring bills/Other recurring spending
+                                     border rgb(120,113,108) / bg rgb(245,245,244) = 4.40:1 (x3)
+   1440-dark:  Selected period      border rgb(168,162,158) / bg rgb(41,37,36)    = 6.01:1
+   1440-dark:  Prior period         border rgb(168,162,158) / bg rgb(41,37,36)    = 6.01:1
+   1440-dark:  Change (colored)     border rgb(253,164,175) / bg rgb(41,37,36)    = 8.02:1
+   1440-dark:  Detected subscriptions/Recurring bills/Other recurring spending
+                                     border rgb(168,162,158) / bg rgb(28,25,23)   = 6.93:1 (x3)
+   ```
+   All ≥ 3:1 (worst case 4.40:1, well clear). Visually confirmed with fresh
+   Chromium screenshots ($SCRATCH/shots/attempt2-1440-{light,dark}.png):
+   tile boundaries are now clearly perceivable in both themes (contrast to
+   attempt 1's screenshots, where the same tiles read as borderless).
+
+2. **Compact callout renders on the page (stale fixture) — ACCESSIBILITY.md
+   §7/§8.** `curl` of the fresh :8099 render, `#period-context` block:
+   ```
+   <section class="space-y-2">
+       <p class="text-sm text-gray-600 dark:text-gray-400">Selected period: 2025-07-01 to 2025-12-31 …</p>
+       <p class="rounded-lg border border-warning bg-warning-soft text-warning px-3 py-2 text-sm">
+         <span class="font-semibold">Note:</span> Data is more than seven calendar days old (256 days). …</p>
+       <details>…</details>
+   </section>
+   ```
+   No card chrome (`bg-white dark:bg-gray-800 rounded-lg shadow` from the
+   non-Compact variant is absent) — matches §3.5.
+
+3. **Compact callout text contrast ≥ 4.5:1, both themes** (attempt-2's named
+   re-measure item). Throwaway probe ($SCRATCH/probes/compact_callout.cjs),
+   real Chromium, `#period-context .bg-warning-soft`:
+   ```
+   light: color rgb(146,64,14) on bg rgb(255,251,235) -> 6.84:1
+   dark:  color rgb(251,191,36) on bg rgb(38,30,34)    -> 9.74:1
+   ```
+   Both well above 4.5:1. "Note:" prefix confirmed as real visible text
+   (`notePrefix: "Note:"`, `visibility: visible`, `display: block`, not
+   `aria-hidden`/off-screen/sr-only) — satisfies "meaning not by color
+   alone" (§8) since the callout carries the word "Note" as text, not just
+   an amber border/background.
+
+4. **axe-core, zero NEW violations** — re-run at all 4 tag combos
+   (375/1440 × light/dark) on the fresh build:
+   ```
+   375-light / 375-dark / 1440-light / 1440-dark: 1 violation each,
+   id=link-name (serious), target tr[data-category=""] > td:nth-child(1) > .underline
+   ```
+   Re-confirmed pre-existing/out-of-scope: `curl` of :8100 (master, same
+   fixture) contains the byte-identical row at the same position
+   (`<tr data-category="" data-current="30" data-previous="0"
+   data-change="30">`). This table is not in IP1's manifest. Reported below
+   as OBSERVATION only, per the lead's pre-existing-markup rule. No other
+   axe violations at any combo — same as attempt 1's result, unaffected by
+   the attempt-2 changes.
+
+5. **Heading order / landmarks unaffected** (ACCESSIBILITY.md §1). Same DOM
+   query as attempt 1, re-run on fresh build, both themes: exactly one
+   `<h1>` ("Insights"), `h2 > h3` throughout, no skipped levels; landmarks
+   `main=1, nav=2, header=1, footer=1` — identical structure to attempt 1.
+
+6. **"On this page" nav landmark unaffected.** `nav[aria-label="On this
+   page"]`, 4 anchors, each target is/contains a heading; clicked
+   `#insights-recurring`, landed at `top=85.06px` (within viewport, not
+   obscured) — unchanged from attempt 1.
+
+7. **Meaning not by color alone (§8) unaffected.** `body.innerText`
+   contains "increase" and "High severity"/"Medium severity" literal text,
+   both themes — unchanged from attempt 1. (Compact callout adds "Note:" as
+   a further instance, checked separately above.)
+
+8. **`aria-hidden` decorative bars, no focusable content — unaffected.** All
+   3 contributor-bar tracks, both themes, 0 focusable descendants each.
+
+9. **Bar-fill contrast ≥ 3:1 — unaffected.** 100/91/7% fills:
+   light 6.29:1, dark 8.02:1 vs card bg — same values as attempt 1 (bar
+   markup untouched by attempt 2).
+
+10. **Severity-badge text contrast ≥ 4.5:1 — unaffected.** Medium 6.84:1
+    (light)/9.74:1 (dark), High 5.72:1 (light)/8.88:1 (dark) — same as
+    attempt 1 (badge markup untouched).
+
+11. **Focus visible on new links — unaffected.** Nav link and recurring-
+    strip tile link both show real `outline-style: solid/auto` +
+    `box-shadow` on `:focus-visible`, both themes (checks run with
+    `.focus()` first in a fresh context, avoiding attempt 1's documented
+    Chromium input-modality heuristic).
+
+12. **Target size ≥ 24 px — unaffected.** Nav links h≈29.75px (all 4),
+    strip tiles h≈108–112px, both themes.
+
+13. **Dashboard `/` and `/insights/*` partials still byte-identical to
+    master** (attempt-2's other named re-measure item). Fresh diff on the
+    rebuilt binaries:
+    ```
+    curl :8099/ vs :8100/                                            -> diff exit 0 (identical)
+    curl -H "HX-Request: true" :8099/insights/recurring?... vs :8100  -> diff exit 0
+    curl -H "HX-Request: true" :8099/insights/trends?...   vs :8100  -> diff exit 0
+    curl -H "HX-Request: true" :8099/insights/income?...   vs :8100  -> diff exit 0
+    ```
+    Confirms `Compact` did not leak into the Dashboard or the `/insights/*`
+    HTMX partials — those still render the shared partial's non-Compact,
+    card-chrome branch untouched.
+
+14. **`make css-verify` passes on the current tree** (worker's claim,
+    checked):
+    ```
+    $ make css-verify
+    ./tmp/tailwindcss-3.4.17 -c tailwind.config.js -i web/static/css/tailwind.src.css -o tmp/tailwind.check.css --minify
+    tailwind.css is up to date
+    ```
+    `rtk proxy git status --short` before/after: no tracked-file changes
+    (only writes to `tmp/`), confirming this check was read-only.
+
+## Observations (backlog, non-blocking)
+
+- Pre-existing `link-name` axe violation (empty-text link for the
+  empty-category comparison-table row in the Spending-trends comparison
+  table) is byte-identical to master's own rendering of the same fixture —
+  not introduced or replicated by IP1, out of scope for this task's FAIL
+  (re-confirmed this attempt, same as attempt 1's finding).
+- The Dashboard's own `components/kpis.html` neutral KPI tiles still use the
+  original low-contrast `border-gray-200 dark:border-gray-700` pattern (not
+  touched by IP1, not in its manifest, not fixed by attempt 2's border-color
+  change since that change only touched the 6 IP1-authored tile sites) —
+  same defect class as attempt 1's FAIL, worth a site-wide follow-up task.
+
+## Raw evidence artifacts (scratch, not committed anywhere)
+$SCRATCH = /tmp/claude-1000/-home-darrell-work-agents2--claude-worktrees-insights-page-presentation-aff8ff/49b81a0d-02fc-471c-9db1-5db2465140df/scratchpad/ip1-a11y
+- budget2-branch2 (freshly built branch binary this attempt), data2/
+  data-master2/ (fresh testdata copies)
+- probes/ip1_a11y.attempt2.out.json (full reused-probe run, 108 notes, 0
+  manual failures), probes/ip1_a11y.attempt2.err.log
+- probes/compact_callout.cjs (new throwaway probe, Compact-callout contrast)
+- shots/attempt2-1440-{light,dark}.png (fresh screenshots showing the fixed
+  tile borders + the Compact stale callout)
+- /tmp/branch-insights.html, /tmp/master-insights.html,
+  /tmp/b_*.html, /tmp/m_*.html (byte-identity diff inputs)
+
+Both isolated servers (:8099 branch2, :8100 master) stopped at the end of
+the run (`pkill`/`kill`), confirmed via `ss -ltnp` that only :8098 (the
+lead's, untouched) remains listening. :8080/data were never touched.

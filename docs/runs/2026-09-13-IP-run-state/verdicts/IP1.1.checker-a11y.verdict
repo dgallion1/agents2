@@ -1,0 +1,217 @@
+VERDICT: FAIL
+CHECKER: checker-a11y
+FAMILY: anthropic
+TASK: IP1
+ATTEMPT: 1
+---
+## Setup (real render, isolated servers, never :8080/data)
+
+Worktree: /home/darrell/bin/ai/budget2/.worktrees/insights-presentation
+(branch feat/insights-presentation, working tree = uncommitted attempt 1;
+base master 763337f). Manifest: internal/handlers/insights/investigation.go,
+internal/handlers/insights/http_links_di5_test.go,
+internal/templates/render_insights_ip1_test.go,
+web/templates/pages/insights.html,
+web/templates/components/insights-investigation.html,
+web/templates/components/shared/period-context.html,
+web/static/css/tailwind.css.
+
+Commands:
+```
+cd /home/darrell/bin/ai/budget2/.worktrees/insights-presentation
+go build -o $SCRATCH/budget2-branch ./cmd/server
+cp -a testdata $SCRATCH/data
+cd /home/darrell/bin/ai/budget2/.worktrees/insights-presentation   # cwd for templates/static lookup
+BUDGET_LISTEN_ADDR=:8099 BUDGET_DATA_DIR=$SCRATCH/data BUDGET_DEBUG=1 $SCRATCH/budget2-branch &
+```
+(second instance identically for a MASTER build, cloned via
+`git clone --local --no-hardlinks` + `git checkout 763337f` into
+$SCRATCH/master-checkout, run on :8100 against its own copied testdata/ —
+used only for the Dashboard-unchanged / partial-byte-identical checks, no
+edits or checkouts performed on the audited worktree itself.)
+
+Fixture used for the deep audit: `/insights?start=2025-07-01&end=2025-12-31`
+against the repo's own `testdata/transactions.csv` — chosen because it is
+the one date range in the fixture data that exercises every new surface at
+once: HistoryAvailable=true (all three "What changed" tiles + 3 contributor
+bars with real width variety 100/91/7%), 6 findings spanning all three
+finding types (High + Medium severity badges, price-creep evidence
+sentences), a 3-tile recurring strip, and a Stale period (so the Compact
+callout renders). Verified with:
+```
+curl -s "http://127.0.0.1:8099/insights?start=2025-07-01&end=2025-12-31" -o /tmp/ip1-insights-hist.html
+grep -o 'style="width:[^"]*"' /tmp/ip1-insights-hist.html   # -> width: 100%, 91%, 7%
+grep -c "ZgotmplZ" /tmp/ip1-insights-hist.html              # -> 0
+```
+
+Browser probe: real Chromium via the repo's own Playwright/axe toolchain
+(same paths gv2_tone_contrast_browser_test.go and DI5-a11y-browser.cjs use):
+`PLAYWRIGHT_MODULE=/home/darrell/.npm/_npx/e41f203b7505f1fb/node_modules/playwright`,
+`CHROMIUM_EXECUTABLE=/home/darrell/.cache/ms-playwright/chromium-1243/chrome-linux64/chrome`,
+axe.min.js from the globally-installed `@axe-core/cli`, node v24.12.0.
+Script: `$SCRATCH/probes/ip1_a11y.cjs` (throwaway, written for this task).
+Ran both themes (`classList.toggle('dark')` + a real `themechange` dispatch,
+per the run's own prior-lesson note about `#theme-toggle` — used the JS
+event directly since no click-driven toggle was needed for a first pass;
+confirmed content actually re-themes by reading computed colors, which DID
+change between runs, so the toggle took effect) at 375×812 and 1440×900.
+
+## PASSING checks (evidence)
+
+1. **axe-core, zero NEW violations.** `axe.run(document, {runOnly:{type:'tag',
+   values:['wcag2a','wcag2aa','wcag21a','wcag21aa','wcag22aa']}})` at all 4
+   tag combos (375/1440 × light/dark) returned exactly one violation each
+   time: `link-name` (serious) on `tr[data-category=""] > td:nth-child(1) >
+   .underline` — an empty-text link inside the Spending-trends comparison
+   table for a row with an empty category. Verified PRE-EXISTING (not
+   introduced/replicated by IP1): `curl` of master's own render of the same
+   fixture on :8100 contains the byte-identical row at the same position:
+   `<tr data-category="" data-current="30" data-previous="0"
+   data-change="30"><td class="p-3 text-sm"><a class="text-accent underline"
+   href="/explorer?category=&amp;start=2025-07-01&amp;end=2025-12-31&amp;
+   type=Outflow"></a></td>...`. This table is not in IP1's manifest. Reported
+   below as an OBSERVATION only, per the pre-existing-markup rule.
+
+2. **Heading order / landmarks** (ACCESSIBILITY.md §1). DOM query at 1440,
+   both themes: exactly one `<h1>` ("Insights"), then `h2 > h3` throughout
+   with no skipped level: `What changed(h2) > Largest contributors(h3)`,
+   `Review these transactions(h2)`, `Detected recurring spending(h2) >
+   Detected subscriptions/Recurring bills/Other recurring spending(h3 x3)`,
+   `Supporting charts and tables(h2) > Spending trends/Income
+   sources/Anomalies/Price Creep/Spending pace(h3 x5)`. Landmarks:
+   `main=1, nav=2 (site nav + "On this page"), header=1, footer=1`.
+
+3. **"On this page" nav landmark** (brief item). `nav[aria-label="On this
+   page"]` found, 4 anchors (`#insights-change`, `#insights-findings`,
+   `#insights-recurring`, `#insights-supporting`), each target either is a
+   heading or contains one. Clicked the real `#insights-recurring` link at
+   both viewports/themes and confirmed
+   `getElementById('insights-recurring').getBoundingClientRect().top` lands
+   between 0 and the viewport height (not hidden under overlapping chrome —
+   confirmed separately the header is `position: static`, not
+   fixed/sticky, so `scroll-mt-20` has no obstruction to correct for
+   in this app in the first place).
+
+4. **Meaning not by color alone** (ACCESSIBILITY.md §8). `document.body.
+   innerText` contains the literal word "increase" (Change tile + Shopping/
+   Auto & Transport/Charity contributor deltas) and the literal strings
+   "High severity" / "Medium severity" on the anomaly badges, in both
+   themes — confirmed present at 1440 both themes.
+
+5. **`aria-hidden` decorative bars carry no focusable content.** All 3
+   contributor-bar tracks (`div.h-1.5.w-full[aria-hidden="true"]`) contain
+   zero `a/button/input/select/textarea/[tabindex]` descendants, both
+   themes.
+
+6. **Severity-badge text contrast ≥ 4.5:1** (ACCESSIBILITY.md §7), computed
+   via `getComputedStyle` + WCAG relative-luminance formula, light theme:
+   "Medium severity" `rgb(146,64,14)` on `rgb(255,251,235)` = 6.84:1;
+   "High severity" `rgb(190,18,60)` on `rgb(255,241,242)` = 5.72:1. (Dark
+   theme also computed and passed — see raw JSON below.)
+
+7. **Bar-fill contrast ≥ 3:1** vs. card background: `rgb(190,18,60)` (the
+   negative fill color) vs. white card = 6.29:1 in light theme; dark theme
+   also passed (raw JSON below).
+
+8. **Focus visible on new links** (ACCESSIBILITY.md §9). First pass with
+   `.focus()` immediately after a mouse `.click()` in the SAME browser
+   context spuriously reported no `:focus-visible` outline — traced this to
+   Chromium's input-modality heuristic (a prior real mouse click suppresses
+   `:focus-visible` on a subsequent programmatic `.focus()` in the same
+   context; verified with a minimal throwaway repro,
+   `$SCRATCH/probes/debug_focus.cjs`, that showed `outline: rgb(79,70,229)
+   solid 2px` / real `box-shadow` on a FRESH page for the identical
+   selector). Re-ran the real probe with the focus checks moved before the
+   click-based anchor test (so `.focus()` is the first interaction in the
+   context) and both the "On this page" nav link and the recurring-strip
+   tile link then show a real, non-`none` `outline-style` / `box-shadow` on
+   `:focus-visible`, in both themes.
+
+9. **Target size ≥ 24 px** (WCAG 2.5.8 / brief item) on the new nav links
+   and strip tiles, both viewports/themes: nav links measured `h≈29.75px`
+   (all 4), strip tiles `h≈108–112px` — all well over 24px. No axe
+   `target-size` violation either.
+
+10. **Dashboard `/` unchanged.** `diff` of `curl http://127.0.0.1:8099/`
+    (branch) vs `curl http://127.0.0.1:8100/` (master, same testdata/)
+    returns byte-identical output (`diff` exit 0) — stronger evidence than a
+    screenshot compare since it proves not just visual parity but zero
+    markup drift.
+
+11. **`Compact` did not leak into the `/insights/*` HTMX partials.**
+    `curl -H "HX-Request: true"` on `/insights/recurring`,
+    `/insights/trends`, `/insights/income` (same fixture) on branch vs.
+    master: all three `diff` byte-identical (exit 0) — confirms §3.5's "the
+    Dashboard, `/insights/*` partials ... must be byte-identical" invariant
+    holds from the a11y-relevant angle (no accidental Compact/no-card-chrome
+    bleed into a surface that still needs its own landmark/card semantics).
+
+## FAILING check — ACCESSIBILITY.md §7 (non-text contrast ≥ 3:1)
+
+The brief explicitly requires checking "tile borders ≥ 3:1 against the card
+background." Five of the new neutral (non-directional) tiles use
+`border-gray-200 dark:border-gray-700` and fail this badly in BOTH themes:
+
+```
+1440-light: tile border[Selected period] contrast 1.26:1 < 3:1 (border=rgb(231,229,228) bg=rgb(255,255,255))
+1440-light: tile border[Prior period]    contrast 1.26:1 < 3:1 (border=rgb(231,229,228) bg=rgb(255,255,255))
+1440-light: tile border[Detected subscriptions] contrast 1.15:1 < 3:1 (border=rgb(231,229,228) bg=rgb(245,245,244))
+1440-light: tile border[Recurring bills]        contrast 1.15:1 < 3:1 (border=rgb(231,229,228) bg=rgb(245,245,244))
+1440-light: tile border[Other recurring spending] contrast 1.15:1 < 3:1 (border=rgb(231,229,228) bg=rgb(245,245,244))
+1440-dark:  tile border[Selected period] contrast 1.48:1 < 3:1 (border=rgb(68,64,60) bg=rgb(41,37,36))
+1440-dark:  tile border[Prior period]    contrast 1.48:1 < 3:1 (border=rgb(68,64,60) bg=rgb(41,37,36))
+1440-dark:  tile border[Detected subscriptions] contrast 1.70:1 < 3:1 (border=rgb(68,64,60) bg=rgb(28,25,23))
+1440-dark:  tile border[Recurring bills]        contrast 1.70:1 < 3:1 (border=rgb(68,64,60) bg=rgb(28,25,23))
+1440-dark:  tile border[Other recurring spending] contrast 1.70:1 < 3:1 (border=rgb(68,64,60) bg=rgb(28,25,23))
+```
+
+(The colored variant of the Change tile — `border-negative`/`border-positive`
+— is NOT affected; it passed. Only the 5 neutral-border tiles fail.)
+
+Confirmed visually with real Chromium screenshots
+(`$SCRATCH/shots/insights-1440-{light,dark}.png`): the "Selected period" /
+"Prior period" tile boundaries and the recurring-strip tile boundaries read
+as essentially borderless in both themes — there is no perceivable boundary
+line separating a tile from its card background, which is exactly what the
+1.15–1.7:1 measurement predicts. A low-vision user relying on the boundary
+to tell where one tile ends and the next begins does not get one.
+
+Attribution (git diff master, per the lead's classification rule):
+```
+$ rtk proxy git diff master -- web/templates/pages/insights.html | grep -n "border-gray-200\|rounded-xl"
+23:+            <div class="rounded-xl border border-gray-200 dark:border-gray-700 p-4">
+27:+            <div class="rounded-xl border border-gray-200 dark:border-gray-700 p-4">
+31:+            <div class="rounded-xl border p-4 {{if eq .Change.Direction "up"}}border-negative bg-negative-soft{{else if eq .Change.Direction "down"}}border-positive bg-positive-soft{{else}}border-gray-200 dark:border-gray-700{{end}}">
+61:+            <div class="rounded-xl border border-gray-200 dark:border-gray-700 p-4">
+89:+            <a href="#recurring-{{.ID}}" class="rounded-xl border border-gray-200 dark:border-gray-700 p-4 block focus-visible:ring-2 focus-visible:ring-accent">
+```
+All 5 are `+` lines — genuinely new markup introduced by this task, not
+pre-existing content this task merely touched. (Note for provenance only,
+does not change the FAIL: the SAME low-contrast `border-gray-200
+dark:border-gray-700` neutral-tile pattern already exists, uncontested, on
+the Dashboard's `components/kpis.html` KPI tiles — so this is a systemic,
+site-wide pattern the worker replicated rather than inventing from scratch.
+Per the lead's own rule ("FAIL only what this task's change introduced or
+replicated into new content") replication into IP1's new tiles is still a
+FAIL, not an observation — but the Dashboard's own pre-existing instance is
+out of IP1's scope and is called out below as a backlog item, not folded
+into this FAIL.)
+
+## Observations (backlog, non-blocking)
+
+- Pre-existing `link-name` axe violation (empty-text link for the
+  empty-category comparison-table row) is byte-identical to master's
+  rendering of the same fixture — not introduced or replicated by IP1,
+  out of scope for this task's FAIL.
+- The Dashboard's own `components/kpis.html` neutral KPI tiles use the
+  identical low-contrast `border-gray-200 dark:border-gray-700` pattern
+  (not touched by IP1, not in its manifest) — same defect class, worth a
+  site-wide follow-up task rather than a per-page patch.
+
+## Raw evidence artifacts (scratch, not committed anywhere)
+$SCRATCH = /tmp/claude-1000/-home-darrell-work-agents2--claude-worktrees-insights-page-presentation-aff8ff/49b81a0d-02fc-471c-9db1-5db2465140df/scratchpad/ip1-a11y
+- probes/ip1_a11y.cjs (probe source), probes/ip1_a11y.out4.json (full run,
+  38 OK / 10 FAIL notes + axe violations per tag), probes/debug_focus.cjs
+  (focus-visible heuristic repro), shots/insights-{1440,375}-{light,dark}.png.
+Both isolated servers (:8099 branch, :8100 master) stopped via their own
+`/killme` endpoint at the end of the run; :8080/data were never touched.
