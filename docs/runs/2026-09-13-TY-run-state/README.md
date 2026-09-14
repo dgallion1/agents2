@@ -1,7 +1,7 @@
 # Run TY — tax-year-2025 federal record (2026-09-13)
 
 Target: simpleBudget PR #113 `feat/tax-tables-2025` (9a531e0 over master
-686a5a5). Follow-on to run TX (#112). One task, Tier 2 with `tests,second`.
+686a5a5). MERGED d6c554f + DEPLOYED :8080 2026-09-13 (health v1.4.0-1149-gd6c554f). Follow-on to run TX (#112). One task, Tier 2 with `tests,second`.
 
 Outcome: accepted at attempt 1. `gate.sh stats`:
 `first-attempt clean: 1/1 (no-evidence rows: 0)`.
