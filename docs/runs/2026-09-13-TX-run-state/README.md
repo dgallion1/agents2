@@ -1,7 +1,7 @@
 # Run TX — tax-year-2026 federal tables (2026-09-13)
 
 Target: simpleBudget PR #112 `feat/tax-tables-2026` (f21ab9d over master
-ff4ff34). One task, Tier 2 with `tests,second`.
+ff4ff34). MERGED 686a5a5 + DEPLOYED :8080 2026-09-13 (health v1.4.0-1147-g686a5a5). One task, Tier 2 with `tests,second`.
 
 Outcome: accepted at attempt 2. `gate.sh stats`:
 `first-attempt clean: 0/1 (no-evidence rows: 0)`.
