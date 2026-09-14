@@ -1,0 +1,211 @@
+VERDICT: PASS
+CHECKER: checker-tests
+FAMILY: anthropic
+TASK: TY1
+ATTEMPT: 1
+---
+TREE IDENTITY (first and last, in worktree root):
+  $ sha256sum -c .../scratchpad/TY1.1.sha256
+  FIRST : all four files "OK" (analysis/tax_optimizer_strategies_test.go, engine/tax.go,
+          engine/taxyears.go, engine/taxyears_test.go)
+  LAST  : all four files "OK" — live worktree unmodified by this verification.
+  All mutations were performed in cp -a copy /tmp/claude-1000/ty1-checker-tests.
+
+AC1 — PASS
+  $ (copy) go build ./... ; go vet ./...
+  BUILD_EXIT=0 / VET_EXIT=0 (no output from either).
+  Additionally the repo's composite target:
+  $ (copy) make check      → final line "✓ all checks passed", MAKE_CHECK_EXIT=0
+  (make check = vet + staticcheck + govulncheck + css-verify + test -count=1)
+  $ (copy) go vet -tags financegaps ./internal/services/retirement/engine/ → exit 0
+  (the build-tagged gap suite still compiles).
+
+AC2 — PASS
+  $ (copy) go test -count=1 ./...
+  EXIT=0; "grep -c ^ok" = 50 packages ok; "grep -c FAIL" = 0.
+  $ (worktree) rtk proxy git status --short   [after the test run]
+   M internal/services/retirement/analysis/tax_optimizer_strategies_test.go
+   M internal/services/retirement/engine/tax.go
+   M internal/services/retirement/engine/taxyears.go
+   M internal/services/retirement/engine/taxyears_test.go
+  Exactly the four intended files, nothing else.
+  testdata dirtiness: sha256sum of every file under testdata/ in the post-test copy vs the
+  live worktree, compared with python3 difflib → "IDENTICAL: testdata unchanged by test run".
+  testdata/settings/whatif.json is NOT dirty.
+
+AC3 — PASS (figures re-derived by me from the source texts, then probed out of the registry)
+  Probe (temporary test in my copy only, removed afterwards) calling
+  tc.ResolveTaxYear(2025,1) on the real federalTaxYears table:
+  $ (copy) go test -count=1 -v -run TestZZZCheckerProbe2025 ./internal/services/retirement/engine/
+    PROBE basis=statutory year=2025 month=1 jur=US
+    PROBE ORD MFJ    [10%:0-23850][12%:23850-96950][22%:96950-206700][24%:206700-394600]
+                     [32%:394600-501050][35%:501050-751600][37%:751600-UNBOUNDED]
+    PROBE ORD Single [10%:0-11925][12%:11925-48475][22%:48475-103350][24%:103350-197300]
+                     [32%:197300-250525][35%:250525-626350][37%:626350-UNBOUNDED]
+    PROBE ORD HoH    [10%:0-17000][12%:17000-64850][22%:64850-103350][24%:103350-197300]
+                     [32%:197300-250500][35%:250500-626350][37%:626350-UNBOUNDED]
+    PROBE ORD MFS    [10%:0-11925][12%:11925-48475][22%:48475-103350][24%:103350-197300]
+                     [32%:197300-250525][35%:250525-375800][37%:375800-UNBOUNDED]
+    PROBE LTCG MFJ   [0%:0-96700][15%:96700-600050][20%:600050-UNBOUNDED]
+    PROBE LTCG Single[0%:0-48350][15%:48350-533400][20%:533400-UNBOUNDED]
+    PROBE LTCG HoH   [0%:0-64750][15%:64750-566700][20%:566700-UNBOUNDED]
+    PROBE LTCG MFS   [0%:0-48350][15%:48350-300000][20%:300000-UNBOUNDED]
+    PROBE SD MFJ=31500 AGED MFJ=1600 / Single=15750,2000 / HoH=23625,2000 / MFS=15750,1600
+    PROBE len(SD)=4 len(AGED)=4 len(ORD)=4 len(LTCG)=4
+  24 bounded ordinary edges (6 per status x 4) + 4 unbounded tops; 8 LTCG ceilings;
+  4 standard deductions; 4 aged amounts — all present.
+  Source re-derivation, literal by literal:
+  $ sed -n '120,215p' .swarm/rp-24-40.txt   (§2.01 Tables 1-4)
+    Table 1 MFJ:    23,850 / 96,950 / 206,700 / 394,600 / 501,050 / 751,600  → matches
+    Table 2 HoH:    17,000 / 64,850 / 103,350 / 197,300 / 250,500 / 626,350  → matches
+                    (note HoH 32% top is 250,500, distinct from Single's 250,525 — correct)
+    Table 3 Single: 11,925 / 48,475 / 103,350 / 197,300 / 250,525 / 626,350  → matches
+    Table 4 MFS:    11,925 / 48,475 / 103,350 / 197,300 / 250,525 / 375,800  → matches
+  $ sed -n '235,262p' .swarm/rp-24-40.txt   (§2.03 max capital gains rate)
+    MFJ $96,700/$600,050; MFS $48,350/$300,000; HoH $64,750/$566,700;
+    "All Other Individuals" $48,350/$533,400                                → matches
+  $ sed -n '450,480p' .swarm/rp-24-40.txt   (§2.15(3) aged or blind)
+    "the additional standard deduction amount under § 63(f) ... is $1,600. ... increased to
+     $2,000 if the individual is also unmarried and not a surviving spouse."
+    → Single 2000, HoH 2000 (unmarried), MFJ 1600, MFS 1600                 → matches
+  $ sed -n '360,392p' .swarm/rp-25-32.txt   (§3.01, removal of RP 2024-40 §2.15(1))
+    MFJ $31,500; HoH $23,625; Single $15,750; MFS $15,750                   → matches
+    The superseded pre-OBBBA figures (30,000/22,500/15,000, RP 2024-40 §2.15(1), read at
+    lines 450-462) are NOT present anywhere in engine/tax.go
+    ($ grep -n "30000\|22500\|15000" internal/services/retirement/engine/tax.go → only
+     "{48350, 300000, 0.15}" and "{300000, math.MaxFloat64, 0.20}", i.e. substrings of the
+     MFS LTCG 15% ceiling; no standard-deduction hit).
+
+AC4 — PASS
+  $ rtk proxy git show 686a5a5:.../engine/tax.go > tax_master.go ; python3 difflib vs current
+    "DELETION LINES: 0"  /  "ADDED LINES: 88"
+    The 88 added lines are one contiguous block (hunk @@ -123,2 +123,90 @@) declaring
+    TaxBrackets2025, LongTermCapitalGainsBrackets2025, StandardDeduction2025,
+    AdditionalStandardDeduction2025Age65 — inserted between the 2024 and 2026 var blocks.
+  $ rtk proxy git show 686a5a5:.../engine/taxyears.go ; python3 difflib vs current
+    "DELETION LINES: 8 | all comment lines: True"   (all eight are the reworded `//` doc
+    comment above federalTaxYears)
+    "ADDED non-comment lines: 13"  (exactly the inserted 2025 TaxYearRecord literal)
+    Per-record byte compare of the extracted record blocks:
+    "taxBaseYear record identical to master: True" ; "2026 record identical to master: True"
+
+AC5 — PASS
+  Order / boundaries (probe output above):
+    PROBE ORDER [2024/1 2025/1 2026/1] sorted=true ; nRecords=3
+    PROBE Latest=2026 Earliest=2024
+  Provenance (probe output):
+    PROBE source=IRS Rev. Proc. 2024-40 (tax year 2025); §2.01 rate tables, §2.03 capital
+      gains, §2.15(3) aged addition; standard deduction per OBBBA §63(c)(7) as restated in
+      Rev. Proc. 2025-32 §3.01
+    PROBE verifiedOn=2026-09-13
+  New shipped invariant test read in full (taxyears_test.go:352-418,
+  TestFederalTaxYears_TableInvariants). It asserts, over the REAL federalTaxYears:
+    - strict ascending (Year, EffectiveFromMonth): `cur.Year < prev.Year ||
+      (cur.Year == prev.Year && cur.EffectiveFromMonth <= prev.EffectiveFromMonth)` → error;
+    - all four filing statuses present in ALL FOUR maps (OrdinaryBrackets,
+      LongTermGainBrackets, StandardDeduction, AdditionalDeductionAge65);
+    - brackets[0].MinIncome == 0; last MaxIncome == math.MaxFloat64;
+    - brackets[i].MinIncome == brackets[i-1].MaxIncome, for both bracket sets.
+  $ (copy) go test -count=1 -v -run 'TestFederalTaxYears_TableInvariants|TestResolveTaxYear_2025IsStatutory|TestResolveTaxYear_2026IsStatutory|TestResolveTaxYear_2027ProjectsFrom2026' ./internal/services/retirement/engine/
+    --- PASS: TestResolveTaxYear_2026IsStatutory / _2027ProjectsFrom2026 /
+              _2025IsStatutory / TestFederalTaxYears_TableInvariants ; ok
+  MUTATION 1 (swap the 2025 and 2026 records in my copy; verified order became [2026,2025]):
+    --- FAIL: TestFederalTaxYears_TableInvariants
+        taxyears_test.go:369: federalTaxYears not strictly ascending at index 2:
+        (2026,1) then (2025,1)
+    reverted → ok.
+  MUTATION 2 (2025 MFJ 22% MinIncome 96950 → 96951 in tax.go):
+    --- FAIL: TestFederalTaxYears_TableInvariants
+        taxyears_test.go:410: year 2025 status married_joint: OrdinaryBrackets bracket 2
+        MinIncome 96951 != previous MaxIncome 96950
+    reverted; post-revert sha256 of tax.go and taxyears.go in the copy are byte-identical
+    to the live worktree (d92a81d4..., 362b9158...).
+
+AC6 — PASS
+  $ (worktree) grep -rn "206_700\|206700\|96_950\|96950\|48_475\|48475\|103_350\|103350\|31_500\|31500" internal/ cmd/ web/ --include=*.go --include=*.html --include=*.js | grep -v _test.go | grep -v internal/services/retirement/engine/tax.go
+    Single hit: web/static/vendor/plotly.min.js:8 (the file is one minified line).
+    $ grep -o "206700\|96950\|48475\|103350\|31500" web/static/vendor/plotly.min.js | sort | uniq -c
+        1 31500          ← the only matching token; a coincidental substring, not a bracket.
+    Vendor file unchanged vs base:
+    $ rtk proxy git show 686a5a5:web/static/vendor/plotly.min.js | sha256sum
+      6d21266ce1bd7d9e5ab4e115989c70c20de0382fd973a8f26ab58619eba4d603
+    $ sha256sum web/static/vendor/plotly.min.js
+      6d21266ce1bd7d9e5ab4e115989c70c20de0382fd973a8f26ab58619eba4d603
+  No second copy of the bracket constants anywhere in internal/, cmd/ or web/.
+
+AC7 — PASS
+  $ (copy) go test -count=1 -v -run 'TestBuildTax_2026StartPlanRestsOnSeeded2026Statutory|TestInflatedBracketTopForYear_MFJ22PercentAt2025|TestBuildTax_ReportsWhichConstantsTheAnswerRestsOn' ./internal/services/retirement/analysis/
+    --- PASS: TestBuildTax_ReportsWhichConstantsTheAnswerRestsOn
+    --- PASS: TestBuildTax_2026StartPlanRestsOnSeeded2026Statutory
+    --- PASS: TestInflatedBracketTopForYear_MFJ22PercentAt2025
+  Assertions read, not inferred:
+    tax_constants_basis_test.go:82-90 — `if basis.StatutoryYear != 2026` /
+      `if basis.FirstProjectedYear != 2027` / Source contains "Rev. Proc. 2025-32".
+      File is unchanged by this task (absent from git status).
+    tax_optimizer_strategies_test.go (new TestInflatedBracketTopForYear_MFJ22PercentAt2025):
+      fixture `StartDate: "2025-01"`, MFJ; `got, ok := inflatedBracketTopForYear(s, 0.22, 0)`;
+      `const want = 206700.0` ; `if got != want`. LITERAL — no engine call supplies `want`.
+    2025 statutory / 2027 projected-from-2026 are covered by the engine tests run under AC5
+    (TestResolveTaxYear_2025IsStatutory asserts Basis==BasisStatutory, DerivedFromYear==2025,
+    InflationFactor==1; TestResolveTaxYear_2027ProjectsFrom2026 PASS) and confirmed by probe:
+      PROBE 2027 basis=projected derivedFrom=2026 ; 2026 basis=statutory.
+
+AC8 — PASS
+  Manifest file list (4 paths) is set-identical to `rtk proxy git status --short` (4 paths) —
+  compared item by item; no extra or missing entry. Manifest records each verification
+  command with its final line.
+  Golden-shift claim re-derived INDEPENDENTLY in my copy: I deleted only the 2025
+  TaxYearRecord block from federalTaxYears (verified the remaining records became
+  [taxBaseYear, 2026]) and ran:
+  $ (copy) go test -count=1 ./internal/services/retirement/engine/ ./internal/services/retirement/analysis/
+    --- FAIL: TestResolveTaxYear_2025IsStatutory
+    --- FAIL: TestInflatedBracketTopForYear_MFJ22PercentAt2025
+    (no other test in either package failed)
+  And, going beyond the manifest's claim, the WHOLE repo with the 2025 record removed:
+  $ (copy) go test -count=1 ./...   →  the only two failures repo-wide are the same two:
+    TestInflatedBracketTopForYear_MFJ22PercentAt2025 and TestResolveTaxYear_2025IsStatutory.
+  So the only moved assertions are the worker's own new/flipped ones; no pre-existing golden
+  anywhere in the repository depends on the 2025 record. Both new tests are therefore
+  mutation-killed by removal of the thing they guard. Copy reverted afterwards
+  (taxyears.go sha256 362b9158... == live).
+
+NOT ACCEPTABLE list — all clear
+  taxBaseYear: $ grep -rn "taxBaseYear" internal/ --include=*.go | grep -v _test.go →
+    "engine/tax.go:12:const taxBaseYear = 2024"; master shows the same at line 12
+    ($ rtk proxy git show 686a5a5:.../tax.go | grep -n taxBaseYear → "12:const taxBaseYear = 2024").
+    Not moved.
+  Optimizer logic: $ sha256sum of analysis/tax_optimizer_strategies.go, current vs
+    686a5a5 → 0c2a005b35c459e2a222fd83904b2423cff771dd0603814d0a43928f16127afe both.
+    BYTE-IDENTICAL. No non-test engine/analysis file other than tax.go and taxyears.go
+    appears in git status at all.
+  Pre-OBBBA deduction figures: absent (see AC3).
+  Senior-deduction field: $ grep -n "[Ss]enior" engine/tax.go, and the TaxYearRecord struct
+    (taxyears.go:59-72) has exactly the pre-existing fields — no new field added
+    (taxyears.go diff adds 13 non-comment lines, all inside the new record literal).
+  2024/2026 literals: untouched (AC4 block compare, "identical to master: True").
+  Second copy of bracket constants: none (AC6).
+
+TAUTOLOGY SWEEP — no violation found
+  Every new/changed assertion was read in the diffs of both test files.
+  taxyears_test.go TestResolveTaxYear_2025IsStatutory compares against literals only:
+    BasisStatutory, 2025, 1, 206700, 31500, 1600, 2000, 96700, 375800.
+  TestFederalTaxYears_TableInvariants compares against literals (0, math.MaxFloat64) and
+    against the ADJACENT element of the same table (MinIncome == previous MaxIncome), which
+    is the structural invariant the criterion specifies, not a call into the code under test.
+    Its only helper use is the local slice/map indexing; `bracketsFor` (a plain map lookup in
+    taxyears.go) is used in TestResolveTaxYear_2025IsStatutory to select a status, and the
+    value it yields is compared to a hard literal — the presence of every status is
+    independently asserted by the invariant test, so the MFJ fallback cannot mask a gap.
+  tax_optimizer_strategies_test.go new test: `const want = 206700.0` literal.
+
+OBSERVATION (backlog, not a FAIL)
+  internal/services/retirement/engine/finance_concerns_gaps_test.go is byte-identical to
+  686a5a5 (sha256 17ccbfe74c20eafd222f6378bfbf7562933077cab1261e69ba2a3e535a0ac213 both) and
+  its TestFinanceGap_TaxConstantsLackStatutoryYears prose is now stale: it says "2024 and
+  2026 are seeded ... 2025 itself was never seeded" and its failure message says "the
+  constants store holds two statutory years (%d, %d)" and "2025 itself has no record of its
+  own, so it also resolves as projected". The file carries `//go:build financegaps`, so it is
+  excluded from `go test ./...` and from `make check`; it still compiles
+  ($ go vet -tags financegaps ./internal/services/retirement/engine/ → exit 0). Per the
+  file's own header the closed half should be moved to finance_concerns_golden_test.go.
+  Out of this task's scope; reported for the lead's backlog.

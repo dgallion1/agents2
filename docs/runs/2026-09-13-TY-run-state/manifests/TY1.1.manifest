@@ -1,0 +1,101 @@
+internal/services/retirement/engine/tax.go
+internal/services/retirement/engine/taxyears.go
+internal/services/retirement/engine/taxyears_test.go
+internal/services/retirement/analysis/tax_optimizer_strategies_test.go
+
+VERIFICATION COMMANDS (run in worktree /home/darrell/bin/ai/budget2/.worktrees/tax-tables-2025):
+$ rtk proxy git status --short
+ M internal/services/retirement/analysis/tax_optimizer_strategies_test.go
+ M internal/services/retirement/engine/tax.go
+ M internal/services/retirement/engine/taxyears.go
+ M internal/services/retirement/engine/taxyears_test.go
+
+$ rtk proxy go build ./...
+(no output; exit 0)
+
+$ rtk proxy go vet ./...
+(no output; exit 0)
+
+$ rtk proxy go test -count=1 ./...
+... (all packages)
+ok  	budget2/web	0.011s
+(last line of full run; every package reported ok, none FAIL)
+
+$ grep -rn "206_700\|206700\|96_950\|96950\|48_475\|48475\|103_350\|103350\|31_500\|31500" internal/ cmd/ web/ --include=*.go --include=*.html --include=*.js | grep -v _test.go | grep -v internal/services/retirement/engine/tax.go
+web/static/vendor/plotly.min.js:8:...31441,31471,31500,31530,31559,31...
+NOTE: sole match is a coincidental numeric substring inside a minified
+third-party vendor bundle (chart tick-position data, e.g. "...31471,31500,31530...").
+Pre-existing file, untouched by this task (absent from git status --short
+above), and not a duplicate tax-bracket constant. No other match anywhere
+in internal/ or cmd/.
+
+$ rtk proxy git status --short (post-test, unchanged)
+ M internal/services/retirement/analysis/tax_optimizer_strategies_test.go
+ M internal/services/retirement/engine/tax.go
+ M internal/services/retirement/engine/taxyears.go
+ M internal/services/retirement/engine/taxyears_test.go
+(no testdata/settings/whatif.json or other file dirtied by the test run)
+
+GOLDEN/FIXTURE SHIFT TRACES (method: cp -a the worktree to a scratch dir,
+delete only the inserted 2025 TaxYearRecord block from federalTaxYears via
+a targeted regex removal, then run the affected test with the REAL
+engine/analysis code otherwise unchanged):
+
+1. engine/taxyears_test.go: TestResolveTaxYear_2025IsStatutory (renamed
+   from TestResolveTaxYear_2025NoRecordProjectsWithoutError; flips the
+   Basis assertion from BasisProjected to BasisStatutory per the task spec)
+   With the 2025 record REMOVED, the same test fails:
+     Basis = "projected", want statutory — 2025 has a seeded record
+     DerivedFromYear = 2026, want 2025
+     MFJ 22% ceiling = 211400, want 206700
+     MFJ standard deduction = 32200, want 31500
+     MFJ age-65 addition = 1650, want 1600
+     Single age-65 addition = 2050, want 2000
+     MFJ LTCG 0% ceiling = 98900, want 96700
+     MFS 35% ceiling = 384350, want 375800
+   i.e. every asserted 2025 figure traces to the inserted 2025 record: absent
+   it, ResolveTaxYear(2025,1) falls back to the pre-existing behavior
+   (BasisProjected, DerivedFromYear 2026, and the 2026 statutory figures
+   returned unscaled — the same numbers TestResolveTaxYear_2026IsStatutory
+   pins for calendar year 2026).
+
+2. analysis/tax_optimizer_strategies_test.go: new
+   TestInflatedBracketTopForYear_MFJ22PercentAt2025 (StartDate "2025-01",
+   inflatedBracketTopForYear(s, 0.22, 0) == 206700).
+   With the 2025 record REMOVED, the same test fails:
+     MFJ 22% ceiling at 2025 = 211400, want 206700
+   i.e. inflatedBracketTopForYear falls through to the same pre-existing
+   2026-derived value (211400) shown in trace 1, confirming the 206700
+   result is caused by the inserted 2025 record and not by any change to
+   inflatedBracketTopForYear itself (unchanged in this task).
+
+TestFederalTaxYears_TableInvariants (new) still PASSES with the 2025 record
+removed, as expected — it asserts structural invariants over whatever table
+is present, not the 2025 figures specifically.
+
+No other existing golden/fixture value in the repository changed. Searched
+for every StartDate/StopMonth literal containing "2025" across
+internal/services/retirement, internal/handlers/whatif, internal/models,
+and testdata; the only hits were: ACA PovertyGuidelineFor(2025) tests
+(separate poverty-guideline registry, untouched by this task), a
+LivingSpendingBoost StopMonth fixture ("2025-01", unrelated to tax
+brackets), a SpendingMultiplierAt age-phase fixture ("2025-01", unrelated
+to tax brackets), and the financegaps-tagged
+TestFinanceGap_TaxConstantsLackStatutoryYears (excluded from `go test ./...`
+by its `//go:build financegaps` tag; its prose now describes a closed gap
+but was left unmodified as out of this task's explicit scope — flagged as
+an observation below). models.DefaultWhatIfSettings() anchors StartDate to
+CurrentLocalMonth() (2026-09 today), so the default/no-explicit-StartDate
+fixtures used throughout the analysis package never resolve to calendar
+year 2025 and are unaffected.
+
+NOTES FOR THE LEAD:
+- finance_concerns_gaps_test.go's TestFinanceGap_TaxConstantsLackStatutoryYears
+  (build tag `financegaps`, not part of the default suite) still describes
+  "2025 itself was never seeded" — now stale prose. Left unmodified: the
+  task spec's CHANGES list (1-5) does not name this file, and touching it
+  was judged out of scope rather than assumed. Candidate backlog item: per
+  the file's own header ("delete a test from this file when the gap it
+  documents is closed... move its assertion into
+  finance_concerns_golden_test.go"), TestFinanceGap_TaxConstantsLackStatutoryYears
+  should be updated/retired now that 2024, 2025, and 2026 are all seeded.
