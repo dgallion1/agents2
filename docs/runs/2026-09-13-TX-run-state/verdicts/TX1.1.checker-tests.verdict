@@ -1,0 +1,249 @@
+VERDICT: FAIL
+CHECKER: checker-tests
+FAMILY: anthropic
+TASK: TX1
+ATTEMPT: 1
+---
+FAILING CRITERION: AC9 only. AC1-AC8 all PASS with cited evidence; the
+NOT-ACCEPTABLE list is clean; all six fixture recalibrations are TRACED.
+
+PRELIMINARY — worktree integrity
+  `rtk proxy git diff` in the live worktree, byte-compared to the snapshot
+  TX1.1.patch via python3: "IDENTICAL" (804 lines both). All work verified in
+  `cp -a` copies under /tmp/claude-1000/tx1-checker-tests/. At the end,
+  sha256sum of all 14 manifest files, live worktree vs my start-of-run copy:
+  14/14 "SAME". Live worktree never written to.
+  CAVEAT: a second `rtk proxy git diff` returned 762 lines, silently dropping
+  the entire taxyears.go hunk, and would have read as "LIVE WORKTREE CHANGED".
+  The sha256 comparison refutes that; rtk's git-diff output is not trustworthy
+  as a comparison substrate (matches the project's own rtk memory note).
+
+AC1 — PASS
+  `rtk proxy go build ./...`  -> BUILD_EXIT=0, output 0 bytes
+  `rtk proxy go vet ./...`    -> VET_EXIT=0,   output 0 bytes
+
+AC2 — PASS
+  `rtk proxy go test -count=1 ./internal/services/retirement/... \
+      ./internal/handlers/... ./internal/models/... ./cmd/...`
+  -> TEST_EXIT=0; all 21 packages "ok", including
+     "ok budget2/cmd/server 6.443s" and "ok budget2/internal/handlers/whatif 9.798s".
+  `git status --short` after the run: the same 14 " M" lines as before the run.
+  testdata/settings/whatif.json was NOT dirtied — nothing to report, nothing
+  restored.
+  ALSO (repo's own composite target, not required by the AC):
+  `make check` (vet static vuln css-verify test, test already uses -count=1)
+  -> MAKE_CHECK_EXIT=0, final line "✓ all checks passed", full repo green.
+
+AC3 — PASS. Re-derived from the source text, not from the brief's list.
+  Read of rp-25-32.txt §4.01 Tables 1-4 (lines 416-500), §4.03 (538-556),
+  §4.14 (779-810), compared literal by literal against a probe dump of what
+  the registry actually serves (`go test -v -run TestZZProbe_Registry`):
+  ORD married_joint      10%:24800 12%:100800 22%:211400 24%:403550 32%:512450 35%:768700 37%:UNBOUNDED
+  ORD single             10%:12400 12%:50400  22%:105700 24%:201775 32%:256225 35%:640600 37%:UNBOUNDED
+  ORD head_of_household  10%:17700 12%:67450  22%:105700 24%:201750 32%:256200 35%:640600 37%:UNBOUNDED
+  ORD married_separate   10%:12400 12%:50400  22%:105700 24%:201775 32%:256225 35%:384350 37%:UNBOUNDED
+   vs Table 1 (MFJ) 24,800/100,800/211,400/403,550/512,450/768,700; Table 2
+   (HoH) 17,700/67,450/105,700/201,750/256,200/640,600; Table 3 (Single)
+   12,400/50,400/105,700/201,775/256,225/640,600; Table 4 (MFS)
+   12,400/50,400/105,700/201,775/256,225/384,350.  All 24 bounded edges match;
+   37% unbounded in all four.
+  LTCG married_joint 0%:98900 15%:613700 | single 0%:49450 15%:545500 |
+       head_of_household 0%:66200 15%:579600 | married_separate 0%:49450 15%:306850
+   vs §4.03 table: MFJ 98,900/613,700; MFS 49,450/306,850; HoH 66,200/579,600;
+   "All Other Individuals" 49,450/545,500.  All 8 ceilings match.
+  SD married_joint 32200 | single 16100 | head_of_household 24150 | married_separate 16100
+   vs §4.14(1): MFJ 32,200; HoH 24,150; Unmarried 16,100; MFS 16,100.  4/4 match.
+  AGED married_joint 1650 | married_separate 1650 | single 2050 | head_of_household 2050
+   vs §4.14(3): "$1,650 ... increased to $2,050 if the individual is also
+   unmarried and not a surviving spouse."  Mapping correct (HoH and Single are
+   unmarried -> 2,050; MFJ and MFS -> 1,650).
+
+AC4 — PASS
+  `rtk proxy git diff ff4ff34 -- internal/services/retirement/engine/tax.go`
+  -> `grep -c "^-"` = 1, and that single line is "--- a/internal/services/
+     retirement/engine/tax.go" (the diff header). Zero deletions.
+  -> single hunk header "@@ -123,6 +123,92 @@" — 6 context lines in, 92 out,
+     i.e. 86 pure additions, 0 removals. 2024 literals untouched.
+
+AC5 — PASS
+  Probe TestZZProbe_Registry output:
+    rec[0] year=2024 month=1 source="IRS Rev. Proc. 2023-34 ..." verifiedOn="2024-11-09"
+    rec[1] year=2026 month=1 source="IRS Rev. Proc. 2025-32 (tax year 2026);
+           §4.01 rate tables, §4.03 capital gains, §4.14 standard deduction and
+           §63(f) aged addition" verifiedOn="2026-09-13"
+    ASCENDING=OK Latest= 2026 Earliest= 2024
+  (the probe asserts ascending by (year, month) programmatically and did not
+   fire). Shipped test run by name:
+  `go test -count=1 -v -run TestLatestAndEarliestFederalTaxYear ./...engine/`
+  -> "--- PASS: TestLatestAndEarliestFederalTaxYear"; read its body: it asserts
+     LatestStatutoryFederalTaxYear()==2026 and EarliestFederalTaxYear()==2024.
+  NOTE (not a defect): no SHIPPED test asserts the ascending invariant; I
+  proved it by probe only. Candidate for a V3-style promotion.
+
+AC6 — PASS
+  `grep -n "201_050\|201050\|100_525\|94_300\|47_150\|191_950\|383_900"
+       internal/services/retirement/analysis/*.go` -> exit 1, NO matches at all
+   (glob includes _test.go, so the "nothing outside _test.go" bar is cleared
+   a fortiori). Repo-wide non-test grep for the same literals matches only
+   internal/services/retirement/engine/tax.go:58-59 — the canonical 2024 table.
+   No second bracket table anywhere.
+  Source read: inflatedBracketTopForYear now returns
+   `bracketTopForRate(tc.GetAdjustedBrackets(engine.YearsFromTaxBase(s, projectionYear)), target)`
+   — ceiling derived from GetAdjustedBrackets; the private map literal is deleted.
+  Throwaway probe TestZZProbe_AC6, MFJ plan StartDate "2026-01" (in the copy):
+    year0 0.22 ceiling = 211400.0000000000  exactly211400=true
+    year1 0.22 ceiling = 217742.0000000000 | engine MaxIncome = 217742.0000000000 | EQUAL=true
+   (yearsFromTaxBase(year1)=3 -> calendar 2027, projected 211400x1.03.)
+  MUTATION KILL: in copy mut6 I reverted inflatedBracketTopForYear/bracketTopFor
+   to master's private-2024-table path (keeping bracketTopForRate so tests compile):
+    - shipped test FAILS: "year 10 ceiling = 515929.49803020834, want
+      511205.0663439724 (engine's own 0.24 bracket top)" — so
+      TestInflatedBracketTopForYear_GrowsWithCalendarYear is NOT tautological.
+    - probe FAILS: year0 = 213293.94499999998 (201050x1.03^2) instead of 211400;
+      year1 = 219692.76335 vs engine 217742.
+   i.e. the old code overstated the MFJ 22% conversion ceiling by ~$1,894 in
+   2026. Real defect, genuinely fixed.
+  Regression-surface check: production bracket-fill targets are
+   `taxOptimizerBracketFillTargets = []float64{0.12, 0.22, 0.24}`; probe shows
+   bracketTopFor at yearsFromBase=0 reproduces the deleted table EXACTLY for
+   those rates across all four statuses (MFJ 94300/201050/383900, Single and
+   MFS 47150/100525/191950, HoH 63100/100500/191950), and unknown status still
+   returns ok=false. The only behavior change is 0.32 now returning ok=true,
+   which is unreachable from production.
+
+AC7 — PASS
+  `go test -count=1 -v -run 'TestBuildTax_2026StartPlanRestsOnSeeded2026Statutory|
+   TestBuildTax_ReportsWhichConstantsTheAnswerRestsOn' ./...analysis/`
+  -> both "--- PASS". Read of tax_constants_basis_test.go confirms the new test
+     actually asserts the three things AC7 names:
+       basis.StatutoryYear != 2026 -> Errorf
+       !strings.Contains(basis.Source, "Rev. Proc. 2025-32") -> Errorf
+       basis.FirstProjectedYear != 2027 -> Errorf
+     (it does not assert VerifiedOn; AC7 does not require it.)
+  The sibling test's log line shows the user-facing string:
+   "figures: IRS Rev. Proc. 2025-32 (tax year 2026); ... (verified 2026-09-13);
+    years 2027-2041 projected at 3.0%/yr".
+
+AC8 — PASS. Probe TestZZProbe_Registry, versionedCalculator at 3.0%:
+    RESOLVE 2024 basis=statutory derivedFrom=2024 factor=1     MFJ22ceil=201050.0000 SD_MFJ=29200.0000
+    RESOLVE 2025 basis=projected derivedFrom=2026 factor=1     MFJ22ceil=211400.0000 SD_MFJ=32200.0000  (no error)
+    RESOLVE 2026 basis=statutory derivedFrom=2026 factor=1     MFJ22ceil=211400.0000 SD_MFJ=32200.0000
+    RESOLVE 2027 basis=projected derivedFrom=2026 factor=1.03  MFJ22ceil=217742.0000 SD_MFJ=33166.0000
+  2024 is statutory, factor 1, and still carries the 2024 figures. 2025 returns
+  no error and is BasisProjected. 2027 is BasisProjected derived from 2026.
+  Shipped tests run by name, all "--- PASS": TestResolveTaxYear_2024Unchanged,
+  TestResolveTaxYear_2025NoRecordProjectsWithoutError,
+  TestResolveTaxYear_2026IsStatutory, TestResolveTaxYear_2027ProjectsFrom2026.
+  Read of their bodies confirms they assert what their names claim.
+
+AC9 — **FAIL**
+  File list: PASS. `git status --short | awk '{print $2}' | sort` diffed against
+  the sorted manifest -> "FILE LISTS IDENTICAL (14/14)".
+  Commands: MISSING. `wc -l` on the manifest = 14, and all 14 lines are file
+  paths (`tail -3` = the three whatif/calculator paths). 
+  `grep -inE "go (build|vet|test)|command|ran|\$ " TX1.1.manifest` -> exit 1,
+  no match. The manifest records ZERO commands.
+  WHAT IS MISSING: AC9 requires the manifest to list "every changed file ...
+  AND the commands run". The commands-run section is absent entirely from
+  /home/darrell/work/agents2/.claude/worktrees/roth-conversion-bracket-strategy-a1d3b3/.swarm/manifests/TX1.1.manifest
+  (815 bytes, 14 lines, file paths only). No second manifest file exists for TX1.
+  This is a documentation gap, not a code defect; the code meets AC1-AC8.
+
+NOT-ACCEPTABLE LIST — none present
+  - taxBaseYear: `grep -rn taxBaseYear` -> "engine/tax.go:12: const taxBaseYear = 2024",
+    and AC4 proved tax.go has zero deletions, so it did not move.
+  - IRMAA/§86/NIIT: grep of the three non-test diffs for
+    irmaa|niit|socialSecurityTax|senior -> no hits. tax.go's only hunk is at
+    line 123, wholly additive; monthlyIRMAASurcharge2026 (line 235) and
+    socialSecurityTaxThresholds (line 212) untouched.
+  - 2025 record: probe shows len(federalTaxYears) = 2, years 2024 and 2026 only.
+  - Senior-deduction field: TaxYearRecord struct is unchanged in the taxyears.go
+    diff; its fields are Jurisdiction/Year/EffectiveFromMonth/Provenance/
+    OrdinaryBrackets/LongTermGainBrackets/StandardDeduction/AdditionalDeductionAge65.
+  - New user-facing setting: `git status --short` shows nothing outside
+    internal/services/retirement/** and internal/handlers/whatif/**; no models/,
+    templates/ or web/ file changed.
+  - Second bracket table: see AC6 grep.
+
+SPECIFIC SCRUTINY — fixture recalibrations: ALL SIX TRACED
+  Method: copy mut1 = worker's tree with ONLY the 2026 record block removed from
+  federalTaxYears (optimizer change and all test edits retained); builds clean.
+  Copy mut5 = mut1 plus the two most-changed fixture files restored to ff4ff34.
+
+  1. analysis/failure_bounds_test.go — TRACED.
+     mut1: "rounded threshold = 14.3, want fixed fixture value 14.1" — removing
+     the 2026 record restores master's exact 14.3. The 14.3->14.1 golden is
+     caused by the 2026 tables and nothing else.
+     The new `verifyValue` field (return -1.4->-1.5, portfolio 236000->235000)
+     is also traced: on the worker's code with the ORIGINAL assertion restored
+     (mut2), return and portfolio FAIL ("reported threshold -1.4 must exercise
+     the failing side", same for 236000); with the 2026 record ALSO removed and
+     master's assertions restored (mut3), all four subtests PASS. So the need
+     for the one-step probe arises from the 2026 record moving the true boundary
+     inside the rounding cell.
+     OBSERVATION (not a FAIL): this is a genuine weakening — return and
+     portfolio now assert one rounding step past the reported threshold rather
+     than at it. The assertion still has teeth but is looser by one cell.
+
+  2. handlers/whatif/handlers_sweep_test.go — TRACED.
+     mut1: "rows[3] (amount 75000): Survives = false, want true" — master's
+     0-2/3-8 split returns exactly when the 2026 record is removed. The
+     survive/deplete boundary move from 75k to 100k is caused solely by the
+     2026 tables. Worker's comment matches the observed cause.
+
+  3. analysis/lifestyle_outcomes_test.go — TRACED.
+     mut1: FinalBalance:1.049524798651163e+06 — bit-for-bit master's old pin;
+     worker's new pin is 1049593.547061985. Fixture StartDate is 2026-01.
+
+  4. engine/tax_test.go (std deduction) — TRACED.
+     mut1: "got 34267.070000000000, want 35500.000000000000". 34267.07 =
+     (29200+2x1550)x1.03^2, master's old expectation; 35500 = 32200+2x1650, the
+     real 2026 figures. Correct.
+
+  5. handlers/whatif/failure_bounds_rounding_render_test.go — TRACED (two steps).
+     inflation golden 14.3->14.1: mut1 reports 14.3. Direct trace.
+     portfolio golden 236000->216000: mut1 reports 217000 vs want 216000. Trace.
+     The FIXTURE INPUT changes (return 3_500->3_400/mo, portfolio 2_500->2_300/mo)
+     are the strongest intervention here and I checked them specifically. mut4 =
+     worker's code with this file restored to ff4ff34:
+       return:    "fine transition -1.40958786 must lie between failing rounded
+                   value -1.40000000 and its upper rounding boundary -1.35000000"
+       portfolio: "fine transition 235802.18553543 must lie between failing
+                   rounded value 236000.00000000 and its upper rounding boundary
+                   236500.00000000"
+     i.e. under the 2026 tables master's fixtures put the reported threshold on
+     the SURVIVING side of the true crossing — exactly the precondition this
+     test exists to exercise, now unsatisfiable at those inputs. mut5 (2026
+     record removed + master fixtures) -> all four subtests PASS, clean baseline
+     reproduction. So the input change is traced to the 2026 tables.
+     CAVEAT, disclosed: the resulting "return" golden -2.1 is NOT itself
+     2026-sensitive — under mut1 with the new 3_400 fixture that subtest still
+     PASSES. It traces to the 2026 tables only transitively, via the input
+     change. Evidence exists at each step, but it is a weaker link than the
+     other five.
+
+  6. retirement/calculator_expense_test.go — TRACED.
+     mut4 (worker's code, master's bound 0.5..7.5): "want blended 0/15 crossing
+     rate in (0.5, 7.5), got 0.44". mut5 (2026 record removed, master bound):
+     PASS. So the 0.5->0.1 lower-bound loosening is caused by the 2026 tables.
+     OBSERVATION (not a FAIL): the guard band narrowed. 0.44 is still strictly
+     between pure-0% and pure-15%, so the band (0.1, 7.5) still excludes both
+     degenerate cases and the test's stated claim survives — but it is weaker.
+
+  7. analysis/coverage_gaps_test.go — TRACED to the AC6 optimizer change, not to
+     the 2026 record (0.32 is now a real bounded bracket, so it is no longer a
+     valid "unsupported target" sentinel; 0.99 is). Correct and necessary.
+  8. engine/finance_concerns_gaps_test.go — documentation/gap-test update to
+     latest==2026; consistent with AC5.
+
+SCOPE
+  All 14 changed files are in the manifest and the manifest has no extra entries
+  (14/14 set-identical). Nothing changed outside internal/services/retirement/**
+  and internal/handlers/whatif/**. No production file changed other than
+  engine/tax.go, engine/taxyears.go and analysis/tax_optimizer_strategies.go —
+  all three are the task's subject matter.
+  .swarm/critical.globs DOES cover `internal/services/retirement/engine/**`, and
+  five changed files fall under it (tax.go, taxyears.go, tax_test.go,
+  taxyears_test.go, finance_concerns_gaps_test.go). This is unavoidable — the
+  versioned registry the brief names lives there — and the brief authorizes it
+  explicitly. Flagged for the lead's tier ruling, not asserted as a violation.

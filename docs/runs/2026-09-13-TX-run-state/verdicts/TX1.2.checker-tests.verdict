@@ -1,0 +1,286 @@
+VERDICT: PASS
+CHECKER: checker-tests
+FAMILY: anthropic
+TASK: TX1
+ATTEMPT: 2
+---
+All of AC1-AC9 PASS with cited commands. NOT-ACCEPTABLE list clean. The six
+fixture recalibrations are byte-identical to attempt 1, so attempt 1's tracing
+still holds (proved, not assumed — see FIXTURES below).
+
+PRELIMINARY — tree identity and worktree integrity
+  From the live worktree root:
+  `sha256sum -c .../scratchpad/TX1.2.sha256`
+  -> all 14 lines ": OK" (14/14). Re-run at end of my work: still 14 OK.
+  `git rev-parse --abbrev-ref HEAD; git rev-parse HEAD`
+  -> "feat/tax-tables-2026" / "ff4ff3431110a69ebc606bc0d04c39547cd1c8ab" —
+     unchanged. `rtk proxy git status --short | wc -l` -> 14 before and after.
+  All builds/tests/mutations ran in `cp -a` copies under
+  /tmp/claude-1000/tx1-checker-tests-2/{wt,mut,base_a1}. The live worktree was
+  never written to and no git-state command was run against it.
+  TOOLING CAVEAT (repeat of attempt 1's finding, re-confirmed): plain `diff`
+  in this shell is hooked/falsified by rtk. `diff <(base) <(current)` on
+  engine/tax.go returned exit 0 / zero '<' / zero '>' lines while `wc -l`
+  showed 623 vs 709 lines. I therefore used python3 difflib for every
+  byte comparison. Do not trust a raw `diff` result from this environment.
+
+AC1 — PASS
+  (copy) `go build ./...` -> BUILD_EXIT=0, log 0 bytes.
+  (copy) `go vet ./...`   -> VET_EXIT=0,   log 0 bytes.
+  ALSO, the repo's own composite target (my procedure, not an AC):
+  (copy) `make check` (vet static vuln css-verify test, test uses -count=1)
+  -> MAKE_CHECK_EXIT=0, final line "✓ all checks passed"; full repo green
+     including "ok budget2/internal/services/retirement/analysis 4.253s" and
+     "ok budget2/internal/services/retirement/engine 0.029s".
+
+AC2 — PASS
+  (copy) `go test -count=1 ./internal/services/retirement/... \
+      ./internal/handlers/... ./internal/models/... ./cmd/...`
+  -> TEST_EXIT=0; 21 packages, every line "ok", none "(cached)"; e.g.
+     "ok budget2/internal/handlers/whatif 9.818s", "ok budget2/cmd/server 6.398s".
+  No file was dirtied by the run: I sha256'd all 2847 non-.git files before the
+  run and re-checked after -> "MISMATCH_COUNT=0" and "NO_NEW_OR_DELETED_FILES".
+  (live) `rtk proxy git status --short` -> exactly the 14 intended files
+  (13 " M" + "M  internal/services/retirement/engine/taxyears.go", staged).
+  `git status --short --untracked-files=all | wc -l` -> 14: no stray/untracked
+  files at all.
+  (live) `rtk proxy git status --short testdata/settings/whatif.json`
+  -> empty output. testdata/settings/whatif.json is NOT dirty
+     (sha256 53bc146d6afe98a05b96deaf2d3ce6b31ce75760eff71e4897f6c41b78b18bed).
+     Nothing to report, nothing fixed.
+
+AC3 — PASS. Re-derived from the source text, then compared against what the
+  registry ACTUALLY SERVES (not against the source file's literals).
+  Source read: `sed -n '410,505p;530,565p;775,815p' .../rp-25-32.txt` —
+  §4.01 Tables 1-4, §4.03, §4.14(1) and §4.14(3).
+  Served figures: throwaway probe TestZZProbeRegistry in a copy, dumping
+  tc.ResolveTaxYear(2026,1).Record (probe deleted afterwards):
+    2026 basis= statutory derivedFrom= 2026 factor= 1
+    ORD married_joint      0.10:24800 0.12:100800 0.22:211400 0.24:403550 0.32:512450 0.35:768700 0.37:UNBOUNDED
+    ORD single             0.10:12400 0.12:50400  0.22:105700 0.24:201775 0.32:256225 0.35:640600 0.37:UNBOUNDED
+    ORD head_of_household  0.10:17700 0.12:67450  0.22:105700 0.24:201750 0.32:256200 0.35:640600 0.37:UNBOUNDED
+    ORD married_separate   0.10:12400 0.12:50400  0.22:105700 0.24:201775 0.32:256225 0.35:384350 0.37:UNBOUNDED
+   vs Table 1 (MFJ) 24,800/100,800/211,400/403,550/512,450/768,700; Table 2
+   (HoH) 17,700/67,450/105,700/201,750/256,200/640,600; Table 3 (Unmarried)
+   12,400/50,400/105,700/201,775/256,225/640,600; Table 4 (MFS)
+   12,400/50,400/105,700/201,775/256,225/384,350. All 24 bounded edges match;
+   37% unbounded in all four (math.MaxFloat64, confirmed by the probe's
+   "UNBOUNDED" rendering).
+    LTCG married_joint      0.00:98900 0.15:613700 0.20:UNBOUNDED
+    LTCG single             0.00:49450 0.15:545500 0.20:UNBOUNDED
+    LTCG head_of_household  0.00:66200 0.15:579600 0.20:UNBOUNDED
+    LTCG married_separate   0.00:49450 0.15:306850 0.20:UNBOUNDED
+   vs §4.03: MFJ 98,900/613,700; MFS 49,450/306,850; HoH 66,200/579,600;
+   "All Other Individuals" 49,450/545,500. All 8 ceilings match.
+    SD married_joint 32200 | single 16100 | head_of_household 24150 | married_separate 16100
+   vs §4.14(1): MFJ $32,200; HoH $24,150; Unmarried $16,100; MFS $16,100. 4/4.
+    AGED married_joint 1650 | married_separate 1650 | single 2050 | head_of_household 2050
+   vs §4.14(3): "$1,650 ... increased to $2,050 if the individual is also
+   unmarried and not a surviving spouse." Mapping correct (Single, HoH are
+   unmarried -> 2,050; MFJ, MFS -> 1,650). 4/4.
+
+AC4 — PASS (both required methods).
+  (live) `rtk proxy git diff ff4ff34 -- internal/services/retirement/engine/tax.go | grep -cE '^-[^-]'`
+  -> "0". The only '^-' line in the whole diff is the header
+     "--- a/internal/services/retirement/engine/tax.go"; the single hunk header
+     is "@@ -123,6 +123,92 @@".
+  (live) `git show ff4ff34:internal/.../tax.go` (623 lines, sha256
+  f0478a1d...893454, byte-identical to the `rtk proxy git show` version) vs the
+  working file (709 lines), compared with python3 difflib (plain `diff` is
+  falsified here, see caveat):
+    DELETION_LINES= 0
+    ADDITION_LINES= 86
+    hunks: ['@@ -121,6 +121,92 @@']
+    ndiff '-' count: 0   ndiff '+' count: 86   ndiff '?' count: 0
+  Zero deletions, zero modified lines: 86 pure additions. The 2024 table,
+  taxBaseYear, IRMAA and §86 code in tax.go are untouched.
+
+AC5 — PASS
+  Probe TestZZProbeRegistry output:
+    NUM_RECORDS= 2
+    rec[0] year=2024 month=1 source="IRS Rev. Proc. 2023-34 (tax year 2024); §3.16(2) ..." verifiedOn="2024-11-09"
+    rec[1] year=2026 month=1 source="IRS Rev. Proc. 2025-32 (tax year 2026); §4.01 rate tables, §4.03 capital gains, §4.14 standard deduction and §63(f) aged addition" verifiedOn="2026-09-13"
+    ASCENDING_SORTED= true STRICT_ASCENDING= true
+    LATEST_STATUTORY= 2026
+    EARLIEST= 2024
+    LATEST_PROV year=2026 source="IRS Rev. Proc. 2025-32 ..." verifiedOn="2026-09-13"
+  (ascending checked programmatically on (Year, EffectiveFromMonth), both
+   sorted and strictly-increasing.)
+  Shipped test run by name, in the copy:
+  `go test -count=1 -v -run 'TestLatestAndEarliestFederalTaxYear|...' ./internal/services/retirement/engine/`
+  -> "--- PASS: TestLatestAndEarliestFederalTaxYear (0.00s)". Its body asserts
+     LatestStatutoryFederalTaxYear()==2026 and EarliestFederalTaxYear()==2024.
+  OBSERVATION (unchanged from attempt 1, not a defect): no SHIPPED test asserts
+  the ascending invariant; I proved it by probe only. V3-promotion candidate.
+
+AC6 — PASS (all four sub-parts, including the new anti-tautology mutation).
+  a) (live) `grep -n "201_050\|201050\|100_525\|94_300\|47_150\|191_950\|383_900" internal/services/retirement/analysis/*.go`
+     -> GREP_EXIT=1, no matches at all. The glob includes _test.go, so the
+        "nothing outside _test.go" bar is cleared a fortiori.
+     Repo-wide non-test grep for the same literals matches only
+     "internal/services/retirement/engine/tax.go:58: {94300, 201050, 0.22}" and
+     ":59: {201050, 383900, 0.24}" — the canonical 2024 table. No second copy.
+  b) Source read of tax_optimizer_strategies.go: inflatedBracketTopForYear now
+     returns bracketTopForRate(tc.GetAdjustedBrackets(engine.YearsFromTaxBase(s,
+     projectionYear)), target); bracketTopFor reads
+     tc.GetAdjustedBrackets(0). The private 2024 map literal is deleted (the
+     diff's '-' block). Both read GetAdjustedBrackets — one source.
+  c) Throwaway probe TestZZProbeAC6 (MFJ, StartDate "2026-01", inflation 3.0):
+       year0 0.22 ceiling = 211400.0000000000 ok=true exactly211400=true
+       year1 0.22 ceiling = 217742.0000000000 ok=true  211400*1.03=217742.0000000000 equal=true
+       Single year0 0.12 ceiling = 50400.0000000000 ok=true exactly50400=true
+       bracket-fill targets: [0.12 0.22 0.24]
+     Exact float equality, not tolerance.
+  d) MUTATION KILL (copy /tmp/claude-1000/tx1-checker-tests-2/mut): injected a
+     5% mis-scale into engine `scaleBrackets`
+     ("scaled[i].MaxIncome = bracket.MaxIncome * factor * 1.05"), then
+     `go test -count=1 -v -run 'TestInflatedBracketTopForYear_GrowsWithCalendarYear|TestInflatedBracketTopForYear_SingleFiler12PercentAt2026' ./internal/services/retirement/analysis/`:
+       tax_optimizer_strategies_test.go:187: projection year 1 ceiling = 228629.1,
+         want 217742 (211400 x (1+rate/100)^1), relative error 0.050000000000000024
+       tax_optimizer_strategies_test.go:187: projection year 10 ceiling = 298309.1187230147,
+         want 284103.9225933473 (211400 x (1+rate/100)^10), relative error 0.050000000000000114
+       --- FAIL: TestInflatedBracketTopForYear_GrowsWithCalendarYear (0.00s)
+     The test is NOT tautological: Finding 1 is fixed. (The Single test PASSed
+     under this mutation, correctly — at n=0 the factor is 1 and
+     scaleBracketSets short-circuits, so scaleBrackets is never reached. This
+     is disclosed, not a gap: the Single test guards the statutory literal, not
+     the scaling path.)
+     SECOND MUTATION, to give the Single test its own kill: in the same copy I
+     reverted the scale mutation and moved the statutory Single 2026 12% edge
+     50400 -> 50500 in TaxBrackets2026:
+       tax_optimizer_strategies_test.go:223: Single 12% ceiling at 2026 = 50500, want 50400
+       --- FAIL: TestInflatedBracketTopForYear_SingleFiler12PercentAt2026 (0.00s)
+     Both new/rewritten tests kill the mutation of the thing they guard.
+     Mutations existed only in the /tmp copy; the live worktree's 14 sha256s
+     were re-verified OK afterwards.
+  I also read the rewritten test body: the n=0/1/10 expectations are computed
+  as `mfj22CeilingIn2026 * math.Pow(1+rate/100, float64(n))` from the literal
+  const 211400.0 — no call through GetAdjustedBrackets — and the engine
+  comparison is explicitly labelled and structured as a secondary cross-check.
+  The Single test asserts `math.Abs(got-50400.0) > 1e-6`.
+
+AC7 — PASS
+  (copy) `go test -count=1 -v -run 'TestBuildTax_2026StartPlanRestsOnSeeded2026Statutory|TestBuildTax_ReportsWhichConstantsTheAnswerRestsOn' ./internal/services/retirement/analysis/`
+  -> "--- PASS: TestBuildTax_2026StartPlanRestsOnSeeded2026Statutory (0.00s)"
+     "--- PASS: TestBuildTax_ReportsWhichConstantsTheAnswerRestsOn (0.00s)"
+  Read of the test's assertions (from `rtk proxy git diff ff4ff34 -- .../tax_constants_basis_test.go`):
+     if basis.StatutoryYear != 2026 { t.Errorf("StatutoryYear = %d, want 2026", ...) }
+     if !strings.Contains(basis.Source, "Rev. Proc. 2025-32") { t.Errorf(...) }
+     if basis.FirstProjectedYear != 2027 { t.Errorf("FirstProjectedYear = %d, want 2027", ...) }
+  It asserts exactly the three things AC7 names (it does not assert VerifiedOn;
+  AC7 does not require it — AC5 covers VerifiedOn at the registry).
+
+AC8 — PASS
+  Probe TestZZProbeRegistry, NewTaxCalculator(nil, 3.0):
+    RESOLVE 2024 err=<nil> basis=statutory derivedFrom=2024 factor=1.0000 recYear=2024 MFJ22ceil=201050.0000 SD_MFJ=29200.0000
+    RESOLVE 2025 err=<nil> basis=projected  derivedFrom=2026 factor=1.0000 recYear=2025 MFJ22ceil=211400.0000 SD_MFJ=32200.0000
+    RESOLVE 2026 err=<nil> basis=statutory derivedFrom=2026 factor=1.0000 recYear=2026 MFJ22ceil=211400.0000 SD_MFJ=32200.0000
+    RESOLVE 2027 err=<nil> basis=projected  derivedFrom=2026 factor=1.0300 recYear=2027 MFJ22ceil=217742.0000 SD_MFJ=33166.0000
+    RESOLVE 2023 err= tax constants: no figures on file for 2023; the earliest year available is 2024
+  (2024,1) unchanged statutory — factor 1, still the 2024 figures 201050/29200.
+  (2025,1) no error and BasisProjected. (2027,1) BasisProjected, DerivedFromYear
+  2026, factor 1.03. Shipped tests run by name, all "--- PASS":
+  TestResolveTaxYear_2024Unchanged, TestResolveTaxYear_2025NoRecordProjectsWithoutError,
+  TestResolveTaxYear_2026IsStatutory, TestResolveTaxYear_2027ProjectsFrom2026.
+
+AC9 — PASS (this was attempt 1's sole FAIL; it is fixed).
+  File list set-identity, computed not eyeballed:
+  `rtk proxy git status --short | awk '{print $2}' | sort` vs the manifest's
+  extracted paths, compared as python sets ->
+    gs=14 manifest=14
+    SET_IDENTICAL
+    only_in_git_status: []
+    only_in_manifest: []
+  Commands section: the manifest is now 117 lines / 6381 bytes and contains
+  "(b) VERIFICATION COMMANDS RUN THIS ATTEMPT, WITH FINAL OUTPUT LINE(S)" with
+  ten numbered commands, each followed by a "->" final-output line
+  (go build, go vet, the mutation check, the two targeted test runs, the full
+  `go test -count=1 ./...`, the AC2-scope run, two `git status --short` runs,
+  the AC6 grep, and the AC4 deletion count).
+  Equality-choice rationale: section "(c) RATE-EQUALITY CHOICE" states
+  bracketTopForRate matches Rate with exact float `==` rather than an epsilon
+  because every Rate in the registry is a compile-time literal, never computed,
+  so there is no accumulated drift to guard against. Present and specific.
+  OBSERVATION (not a FAIL): manifest item 6 (the AC2-scope run) omits -count=1
+  and its own reported final line is "ok budget2/cmd/validate (cached)" — a
+  cached result. It is redundant with item 5, which DID use -count=1 over
+  ./... , and I re-ran AC2's exact command with -count=1 myself (see AC2), so
+  the criterion is met on my own evidence.
+
+NOT-ACCEPTABLE LIST — none present
+  - taxBaseYear moved: `grep -rn taxBaseYear --include=*.go . | grep -v _test.go`
+    -> "internal/services/retirement/engine/tax.go:12: const taxBaseYear = 2024";
+    AC4 proved tax.go has ZERO deletions, so the declaration cannot have moved.
+    Its consumers (loop_helpers.go, portfolio_month.go) are not among the 14
+    changed files.
+  - IRMAA/§86/NIIT/2024-literal changes: tax.go has 0 deletions (AC4), so the
+    2024 tables, socialSecurityTaxThresholds and monthlyIRMAASurcharge2026 are
+    bit-identical to base. `grep -niE "irmaa|niit|senior|socialSecurityTax"` on
+    the other two changed non-test files hits only two pre-existing lines in
+    tax_optimizer_strategies.go (:25 and :40, the "IRMAA" anchor label), both
+    far outside that file's single hunk "@@ -290,63 +290,58 @@".
+  - a 2025 record: probe -> "NUM_RECORDS= 2", rec[0] 2024, rec[1] 2026.
+  - senior-deduction field: the taxyears.go diff contains no change to the
+    TaxYearRecord struct — the only '-' lines are in the doc comment above
+    federalTaxYears; the only '+' lines are that comment and the 2026 record.
+  - new settings: `git status --short` shows nothing outside
+    internal/services/retirement/** and internal/handlers/whatif/**; no
+    models/, templates/ or web/ file changed.
+  - second copy of bracket constants: repo-wide non-test grep for the 2026
+    literals (211400|100800|24800|32200|24150|16100) matches ONLY
+    internal/services/retirement/engine/tax.go lines 139-142 and 195-198.
+    One table, one home.
+
+FIXTURES — the six recalibrations still hold, PROVED not assumed
+  I reconstructed attempt 1's tree byte-for-byte and compared:
+    `git archive ff4ff34 | tar -x -C /tmp/.../base_a1`  -> "ARCHIVE_OK 2847 files"
+    `patch -p1 < .../scratchpad/TX1.1.patch`            -> all 14 files patched
+       (dry-run first, no fuzz, no rejects)
+    python3 hashlib sha256, attempt-1 tree vs current live worktree, per file:
+      SAME  internal/handlers/whatif/failure_bounds_rounding_render_test.go
+      SAME  internal/handlers/whatif/handlers_sweep_test.go
+      SAME  internal/services/retirement/analysis/coverage_gaps_test.go
+      SAME  internal/services/retirement/analysis/failure_bounds_test.go
+      SAME  internal/services/retirement/analysis/lifestyle_outcomes_test.go
+      SAME  internal/services/retirement/analysis/tax_constants_basis_test.go
+      SAME  internal/services/retirement/analysis/tax_optimizer_strategies.go
+      DIFFERENT internal/services/retirement/analysis/tax_optimizer_strategies_test.go
+      SAME  internal/services/retirement/calculator_expense_test.go
+      SAME  internal/services/retirement/engine/finance_concerns_gaps_test.go
+      SAME  internal/services/retirement/engine/tax.go
+      SAME  internal/services/retirement/engine/tax_test.go
+      SAME  internal/services/retirement/engine/taxyears.go
+      SAME  internal/services/retirement/engine/taxyears_test.go
+      DIFFERENT COUNT: 1 ['.../tax_optimizer_strategies_test.go']
+  So the lead's claim is verified independently: EXACTLY ONE file changed since
+  attempt 1, and it is the test file. All three production files and all six
+  fixture-recalibration files are byte-identical to attempt 1, so attempt 1's
+  full tracing of those six (each traced to the 2026 record by removing it in a
+  copy and watching master's old golden return) carries over unaltered.
+  The two OBSERVATIONS from attempt 1 stand unchanged and are re-reported as
+  backlog items, not failures:
+   - analysis/failure_bounds_test.go: `verifyValue` asserts one rounding step
+     past the reported threshold rather than at it — still has teeth, looser by
+     one cell.
+   - retirement/calculator_expense_test.go: the blended-crossing guard band
+     widened from (0.5, 7.5) to (0.1, 7.5); still excludes both degenerate
+     pure-0%/pure-15% cases.
+   - handlers/whatif/failure_bounds_rounding_render_test.go: the "return"
+     golden -2.1 is not itself 2026-sensitive; it traces to the 2026 tables
+     only transitively via the fixture-input change. Weaker link than the other
+     five, disclosed again.
+
+SCOPE
+  14 changed files, all inside internal/services/retirement/** and
+  internal/handlers/whatif/**; manifest set-identical (14/14); no untracked
+  files (`--untracked-files=all` count = 14). Only three production files
+  changed — engine/tax.go, engine/taxyears.go, analysis/tax_optimizer_strategies.go
+  — all three the task's named subject matter.
+  .swarm/critical.globs lists `internal/services/retirement/engine/**`, and five
+  changed files fall under it (tax.go, taxyears.go, tax_test.go, taxyears_test.go,
+  finance_concerns_gaps_test.go). Unavoidable — the versioned registry the brief
+  names lives there — and the brief authorizes it explicitly. Reported for the
+  lead's tier ruling, not asserted as a violation.
+  Live worktree read-only discipline observed: no git-state command, no
+  `budget2` binary run, all mutation work in /tmp copies, final `sha256sum -c`
+  14/14 OK and HEAD still ff4ff343.

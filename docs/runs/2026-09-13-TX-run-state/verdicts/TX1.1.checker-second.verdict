@@ -1,0 +1,137 @@
+VERDICT: FAIL
+CHECKER: checker-second
+FAMILY: adversarial
+TASK: TX1
+ATTEMPT: 1
+---
+Setup: confirmed live worktree `git diff` byte-identical to the snapshot
+patch (`diff /tmp/.../live.diff TX1.1.patch` → exit 0). All destructive
+probes run in `cp -a` copies under /tmp/claude-1000/tx1-checker-second/
+(repo, repo2..4); the live worktree at /home/darrell/bin/ai/budget2/.worktrees/tax-tables-2026
+was never mutated. Ground-truth reads used the Read tool (git-diff/git-stash
+text via the shell is rewritten by the rtk hook per the task's own warning —
+confirmed one artifact of this myself, see "Process note" below).
+
+1. Transcription — PASS. Read every 2026 literal in
+   internal/services/retirement/engine/tax.go (TaxBrackets2026,
+   LongTermCapitalGainsBrackets2026, StandardDeduction2026,
+   AdditionalStandardDeduction2026Age65) against rp-25-32.txt Tables 1-4
+   (§4.01, lines ~416-500), §4.03 (~538), §4.14 (~779). Every MFJ/HoH/
+   Single/MFS bracket edge, LTCG ceiling, standard deduction, and aged
+   addition (incl. MFS 35% top = 384,350, not 768,700) matches exactly.
+   IRMAA table (monthlyIRMAASurcharge2026) and §86/NIIT literals are
+   untouched by this diff — confirmed via `git diff ff4ff34 -- .../tax.go`,
+   which shows a single hunk of pure insertion (86 insertions, 0 deletions
+   — `git diff --numstat`).
+
+2. Split source — PASS. `bracketTopFor` and `inflatedBracketTopForYear` in
+   analysis/tax_optimizer_strategies.go now read exclusively through
+   `engine.NewTaxCalculator(...).GetAdjustedBrackets`; the old private
+   {0.12,0.22,0.24}-keyed 2024 table is fully removed (diff shows only that
+   one hunk touched in this file). Enumerated every consumer: grepped every
+   2024/2026 bracket-edge and deduction literal (201050, 94300, 100525,
+   191950, 243725, 609350, 383900, 487450, 731200, 47150, 100500, 16550,
+   63100, 21900, 14600, 1950/1650, 211400, 32200, 16100, 24150, 640600,
+   768700, 384350, 105700, 201775, 256225, 67450, 17700, 201750, 256200)
+   across internal/ and cmd/, excluding _test.go and engine/tax.go itself
+   — zero hits. Grepped mcpsvc/plan and thresholds.go/analysis/tax.go for
+   bracket-shaped literals — zero hits. Grepped for the function names
+   themselves (bracketTopFor, TaxBrackets202x, StandardDeduction202x) —
+   only tax.go/taxyears.go and test files reference them.
+
+3. Rate matching — PASS. `scaleBrackets` copies `Rate` unchanged (read
+   source); every Rate the registry ever emits is a compile-time literal.
+   `taxOptimizerBracketFillTargets = {0.12,0.22,0.24}` are the same Go
+   float64 literals compared by `bracketTopForRate`'s `==`. No drift path.
+
+4. Projection semantics — PASS. loop_helpers.go (irmaaBaseYear=2026,
+   YearsFromTaxBase, PlannerIRMAAInflationFactorForYear) is untouched by
+   this diff (`git diff ff4ff34 -- .../loop_helpers.go` empty) and its
+   offset math is keyed off `taxBaseYear` (still 2024), not off "latest
+   statutory year" — no double-shift. The 2025-falls-back-to-2026-unscaled
+   behavior is documented in the taxyears.go comment and covered by a new
+   test (TestResolveTaxYear_2025NoRecordProjectsWithoutError).
+
+5/6/7. Fixture laundering / causal verification — PASS on the three
+   largest-delta recalibrations, checked empirically by reverting ONLY the
+   appended 2026 registry record (in a cp -a copy) and re-running:
+     - failure_bounds_test.go "inflation" wantThreshold 14.3→14.1: with the
+       2026 record removed, the search reproduces 14.3 exactly (old value)
+       — `go test -run TestFailureThresholdSearchFindsBracketedTransitions`
+       fails with "rounded threshold = 14.3, want fixed fixture value 14.1".
+     - handlers_sweep_test.go survive/deplete split 75k→100k: with the
+       record removed, row index 3 (75k) reports Survives=false, i.e. the
+       OLD split — `go test -run
+       TestHandleWhatIfConversionSweep_SurvivesVsDepletesSplit` fails with
+       "rows[3] (amount 75000): Survives = false, want true".
+     - lifestyle_outcomes_test.go FinalBalance 1049524.798651163→
+       1049593.547061985: with the record removed, FinalBalance reproduces
+       1.049524798651163e+06 exactly (old pinned value) — test fails
+       showing that figure.
+   All three prove the recalibration is caused by the 2026 record alone,
+   not something else riding along. taxyears_test.go's new
+   TestResolveTaxYear_2026IsStatutory/2027ProjectsFrom2026/
+   2025NoRecordProjectsWithoutError/2024Unchanged/LatestAndEarliest pin
+   211400, 32200, 1650, 98900, 201050 as literals (independently re-derived
+   from the RevProc text, not tautological) and 2024 is proven unmoved.
+   `TestVersionedConstants_PreserveExistingValues` correctly isolates via
+   `withFederalTaxYears(t, []TaxYearRecord{federalTaxYears[0]})` so it
+   stays independent of the 2026 addition.
+
+   CONFIRMED DEFECT: `TestInflatedBracketTopForYear_GrowsWithCalendarYear`
+   in analysis/tax_optimizer_strategies_test.go (diff hunk, lines ~184-198)
+   computes its "independent" expected value for year 10 via:
+     tc := engine.NewTaxCalculator(s.TaxConfig, s.InflationRate)
+     wantY10, ok := bracketTopForRate(tc.GetAdjustedBrackets(engine.YearsFromTaxBase(s, 10)), 0.24)
+   which is line-for-line the same call sequence as the implementation
+   under test:
+     func inflatedBracketTopForYear(...) (float64, bool) {
+         tc := engine.NewTaxCalculator(s.TaxConfig, s.InflationRate)
+         return bracketTopForRate(tc.GetAdjustedBrackets(engine.YearsFromTaxBase(s, projectionYear)), target)
+     }
+   Proved empirically in a throwaway copy: injecting a deliberate 5%
+   mis-scale into `engine.GetAdjustedBrackets` (a real, plausible
+   regression in the shared function this task consolidated onto) leaves
+   `TestInflatedBracketTopForYear_GrowsWithCalendarYear` PASSING
+   (`go test -run TestInflatedBracketTopForYear_GrowsWithCalendarYear -v`
+   → PASS) while `internal/services/retirement/engine` tests correctly
+   catch the same injected bug via TestVersionedConstants_PreserveExistingValues
+   (independently derived from StandardDeduction2024/TaxBrackets2024
+   literals). So the analysis-package test no longer protects against a
+   computation regression in the exact function this task rewrote to
+   consolidate the optimizer onto engine.GetAdjustedBrackets — the task's
+   own stated purpose — even though the system as a whole still catches
+   such a bug via the engine package's independent test. This is squarely
+   the pattern the task brief named as a hunt target ("check whether any
+   recalibrated test now merely asserts what the code emits (tautology)
+   instead of an independently derived value"), it is inside this task's
+   diff (analysis/tax_optimizer_strategies_test.go is in the manifest), and
+   the remedy is narrow and cheap: recompute the year-10 expected ceiling
+   from an independently-derived figure (e.g. the literal 2026 MFJ 24%
+   bracket top compounded by the known inflation factor for the number of
+   years past 2026) rather than by re-invoking GetAdjustedBrackets.
+
+8. Build/test — PASS. `go build ./...`, `go vet ./...`, and
+   `go test -count=1 ./...` are all clean in a fresh cp -a copy (every
+   package `ok`, none skipped). No testdata dirtied that I could see in
+   `git status --short` after the run.
+
+Process note: `git diff`/`git stash` text via the Bash tool is rewritten by
+the rtk shell hook (confirmed: two independent `git diff ff4ff34` captures
+of the identical working tree produced different byte streams). All
+decisive comparisons above were re-verified with the Read tool or with
+plain `diff`/`go test` text output, which were checked for consistency
+between `rtk proxy` and direct invocation and found identical.
+
+Observations for backlog (not grounds for FAIL — pre-existing or judged
+non-material):
+- The LTCG-crossing bound in calculator_expense_test.go
+  ("(0.1, 7.5)") is a real, causally-verified widening (actual computed
+  rate today is 0.444568%, previously it would have read >0.5% before the
+  2026 record) but the test is calendar-anchored to DefaultWhatIfSettings'
+  "today" StartDate, a pre-existing fragility this task did not introduce.
+- `bracketTopFor`'s guard tests in coverage_gaps_test.go swapped the
+  "unsupported rate" probe from 0.32 to 0.99 because 0.32 is now a real,
+  bounded bracket in the full engine table (previously the private 2024
+  table intentionally omitted it) — legitimate, since
+  taxOptimizerBracketFillTargets never uses 0.32.

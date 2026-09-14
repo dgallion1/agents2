@@ -1,0 +1,14 @@
+internal/services/retirement/engine/tax.go
+internal/services/retirement/engine/tax_test.go
+internal/services/retirement/engine/taxyears.go
+internal/services/retirement/engine/taxyears_test.go
+internal/services/retirement/engine/finance_concerns_gaps_test.go
+internal/services/retirement/analysis/tax_optimizer_strategies.go
+internal/services/retirement/analysis/tax_optimizer_strategies_test.go
+internal/services/retirement/analysis/coverage_gaps_test.go
+internal/services/retirement/analysis/failure_bounds_test.go
+internal/services/retirement/analysis/lifestyle_outcomes_test.go
+internal/services/retirement/analysis/tax_constants_basis_test.go
+internal/services/retirement/calculator_expense_test.go
+internal/handlers/whatif/failure_bounds_rounding_render_test.go
+internal/handlers/whatif/handlers_sweep_test.go
