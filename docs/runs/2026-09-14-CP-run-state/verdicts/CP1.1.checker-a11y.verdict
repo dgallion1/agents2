@@ -1,0 +1,185 @@
+VERDICT: PASS
+CHECKER: checker-a11y
+FAMILY: anthropic
+TASK: CP1
+ATTEMPT: 1
+---
+SCOPE: web/templates/components/whatif/spending_optimizer_results.html (block
+`whatif-spending-option`), the current-plan card's now-conditionally-rendered
+Apply form/button, and the reworded frontier-intro sentence. Verified via
+`git diff master`-equivalent (base d6c554f) inside the worktree that the
+template is byte-identical except:
+  -<p ...>Failed and current-plan rows remain available for graph inspection only.</p>
+  +<p ...>Failed rows remain available for graph inspection only.</p>
+No CSS/JS files changed (confirmed: manifest lists only the two handler .go
+files, three _test.go files, and this one template).
+
+METHOD (real render, not hand-built HTML):
+1. `cp -a` of the worktree to a scratchpad dir (never touched the worktree
+   itself; sha256sum -c on manifest's five files passed before and — since
+   read-only — trivially still passes after).
+2. Wrote a throwaway Go test `internal/handlers/whatif/cp1_audit_fixture_test.go`
+   in the COPY only, modelled on `TestSpendingOptimizerRenderCurrentPlanApply`
+   / `TestSpendingOptimizerBrowserFixture`, that calls the real
+   `buildSpendingOptimizerView` + `renderer.RenderPartial("whatif-spending-optimizer-results", ...)`
+   with a QUALIFYING current candidate (Qualifies:true) plus a headline
+   flexible option, a non-headline planned option, and a failed frontier row
+   — i.e. the actual production code path, not guessed markup. Ran with
+   `go test ./internal/handlers/whatif -run ^TestCP1AuditFixture$` → PASS,
+   dumped the rendered body to a file.
+3. Wrapped that real rendered body in a light page and a `class="dark"` page,
+   both `<html>`/`<body>` shells matching the REAL ancestor chain (verified
+   from `web/templates/layouts/base.html`, `guardrails.html`,
+   `spending_optimizer.html`: h1 "What-If Analysis" > h2 "Spending plan" >
+   h3#spending-optimizer-heading "How much can I spend?" > the rendered
+   partial), each loading the worktree's ACTUAL BUILT
+   `web/static/css/tailwind.css` and `web/static/css/styles.css` (not
+   source, not guessed CSS; confirmed via `git log` these are committed
+   build output, unmodified by this task).
+4. Ran axe-core (axe.min.js from the machine's @axe-core/cli install,
+   v4.13.0 axe-core) in real Chromium (playwright-core 1.58.0 +
+   ms-playwright chromium-1243) against both file:// pages, both with the
+   default axe.run() and again with
+   runOnly wcag2a/wcag2aa/wcag21aa/wcag22aa/best-practice (this is the
+   "@axe-core" audit the brief calls for; the CLI binary itself uses
+   selenium+chromedriver which was not reliably available, so I drove the
+   same axe-core engine directly in a real browser instead of hand-rolling
+   HTML).
+5. Manual probes on the SAME real render: computed-style contrast/outline
+   check on `[data-spending-apply="current"]` (Playwright `evaluate`/
+   `getComputedStyle`), real keyboard Tab from the Current card's "Inspect
+   evidence" button, bounding-box measurement for target size.
+
+RESULTS
+
+axe, light theme (default + full 2.2AA tag set): 0 violations, 0 incomplete,
+38-39 passes.
+
+axe, dark theme (`class="dark"` on <html>, matching the app's real dark-mode
+toggle mechanism — confirmed the compiled CSS uses `.dark\:text-*:is(.dark *)`
+selectors, i.e. class-strategy, not media-query): 1 violation —
+`color-contrast`, serious, 65 nodes. INVESTIGATED and ATTRIBUTED per
+procedure point 5:
+  - The flagged nodes are `h5`, `strong` (the big dollar figure), several
+    `<p class="mt-1/mt-2/mt-3">` evidence lines, the "Inspect evidence"
+    buttons, the frontier `<th>`/`<td>` cells and frontier section headings
+    — i.e. every element in `whatif-spending-option` and
+    `whatif-spending-frontier` that carries NO `dark:text-*` class at all
+    (only specific muted lines use `text-gray-600 dark:text-gray-300`).
+    Confirmed via computed style: color is plain black (`rgb(0,0,0)`,
+    browser default, since `body{line-height:inherit;margin:0}` sets no
+    color and no ancestor in base.html/guardrails.html sets one either) on
+    a dark card background — invisible in dark mode.
+  - `[data-spending-apply="current"]` (the NEW Apply button/form this task
+    added to the Current card) is ABSENT from the violation list in both
+    themes. Its markup (`bg-accent-strong ... text-white`) uses
+    `--accent-strong: 79 70 229` (indigo-600), which `styles.css` documents
+    as "theme-invariant" — same value inside and outside `.dark`. Computed
+    contrast in both themes: white (L=1.0) vs rgb(79,70,229) (L≈0.117) →
+    ≈6.29:1, clearing the 4.5:1 text threshold (point 7) with margin, in
+    BOTH themes (point 12 parity) — confirmed by axe AND by hand
+    calculation AND by getComputedStyle.
+  - Per procedure point 5, I attribute rather than fail: every flagged node
+    sits on markup BYTE-IDENTICAL to master (base d6c554f) — this
+    `whatif-spending-option`/`whatif-spending-frontier` template renders
+    identically for the Current card, the two Headline cards
+    (planned-8500/flex-9000, already shipping in production today), and
+    both frontier tables. The ONLY line this task changed is the one
+    sentence quoted above, which is itself `text-gray-600 dark:text-gray-300`
+    and correctly NOT in the violation list. This is a PRE-EXISTING,
+    site-wide dark-mode contrast defect in this component (present on every
+    already-deployed card and frontier row), not something CP1 introduced
+    or replicated into new content — CP1 only added the identical Apply
+    button pattern already used (and already contrast-clean) elsewhere, and
+    reused the surrounding text nodes verbatim. Filed as a NOTE below, not a
+    FAIL, per the checker's scope rule ("FAIL only ... this task's change
+    introduced or replicated into new content").
+
+MANUAL CHECKS (acceptance criterion 7)
+
+- Keyboard reachability: `<button type="submit" data-spending-apply="current">`
+  inside `<form data-spending-apply-form>`, a plain focusable native button;
+  no tabindex tricks. Confirmed programmatically: focusing the card's
+  "Inspect evidence" button and pressing Tab moves `document.activeElement`
+  to the new Apply button next in DOM/visual order (`flex flex-wrap gap-2`
+  siblings) — matches point 9 (focus order follows visual order).
+- Visible focus indicator: computed style on focus = `outline: solid 2px,
+  offset 2px`, color `rgb(79,70,229)` (light) / `rgb(165,180,252)` (dark) —
+  identical `focus:outline focus:outline-2 focus:outline-offset-2
+  focus:outline-accent` class already used by every sibling Apply/Inspect
+  button (the sitewide focus-ring token from the prior backlog-a11y-2 run).
+  Non-text contrast of the ring against its card background: ≈6.3:1 (light),
+  ≈7.6:1 (dark) — clears the ≥3:1 UI-boundary bar in point 7, in both
+  themes (point 12).
+- Colour contrast of the button itself: see axe results above — passes both
+  themes, ≈6.29:1.
+- Target size: axe's `target-size` rule is present but disabled by default
+  in this axe-core version; measured directly instead —
+  `boundingBox()` = 160.4×42.5 CSS px, far above the 24×24 minimum (WCAG
+  2.2 SC 2.5.8 / point 7's spirit), same padding classes (`px-3 py-2`) as
+  every sibling Apply button already in production.
+- No duplicate IDs / nested forms: the new `<form data-spending-apply-form>`
+  has no `id` attribute (matches siblings, which key off `data-*` not
+  `id`); it sits inside `<div class="mt-3 flex flex-wrap gap-2">` inside
+  `<article>`, never inside another `<form>` — confirmed the enclosing
+  `#spending-optimizer-form` in `spending_optimizer.html` closes (`</form>`
+  line 94) well before `#spending-optimizer-results` (line 107) opens, so
+  the results partial (and this new form) is never a `<form>` descendant.
+  axe's `duplicate-id`/`duplicate-id-aria` rules: 0 violations in both
+  themes, both tag sets.
+- Enumerated surfaces per the brief: read `buildSpendingOptimizerView` in
+  `internal/handlers/whatif/handlers_spending_optimizer.go` — candidates are
+  routed by an exclusive `switch { case c.Baseline: view.Current = ...;
+  case c.Kind=="planned": view.PlannedRows ...; case c.Kind=="flexible":
+  view.FlexibleRows ...}`, so the current/baseline candidate can NEVER also
+  land in a frontier slice. Confirmed empirically in the audit fixture body
+  (`data-spending-apply="current"` appears exactly once; no
+  `data-spending-row="current"` anywhere) and this is additionally pinned by
+  the task's own new test `TestSpendingOptimizerRenderCurrentPlanApply`,
+  which asserts the same thing across qualifying/non-qualifying states. No
+  duplicate control introduced.
+- Heading/landmark structure: unchanged — `h4[data-spending-outcome]` >
+  `h5` (card titles) / `h5#{kind}-frontier-heading` (frontier section
+  titles), same as master; the parent chain is h1 > h2 "Spending plan" > h3
+  "How much can I spend?" (all pre-existing, outside this diff). axe's
+  `heading-order`/`landmark-*`/`page-has-heading-one` rules: 0 violations.
+- Reworded sentence: "Failed rows remain available for graph inspection
+  only." reads correctly and is now ACCURATE — previously the Current card
+  could never get an Apply token (pre-CP1 rule excluded `Baseline`
+  candidates unconditionally), so calling it graph-only was true; now that
+  a qualifying current plan gets Apply, keeping "and current-plan" in that
+  sentence would have been a false claim. Grepped worktree templates/JS for
+  the old phrase "current-plan rows": 0 hits — fully replaced, no stale
+  copy left anywhere.
+- Motion: no animation/transition markup in the touched partial; nothing to
+  check against `prefers-reduced-motion` here.
+
+NOTES FOR THE LEAD (not a FAIL — pre-existing, out of scope for CP1)
+
+1. Site-wide dark-mode text-contrast gap in `whatif-spending-option` /
+   `whatif-spending-frontier` (web/templates/components/whatif/
+   spending_optimizer_results.html): every `h5` card title, the big dollar
+   `<strong>`, several evidence `<p>` lines, the "Inspect evidence" buttons,
+   and the frontier table headers/cells render with no `dark:text-*` class
+   at all and fall back to default black text against `bg-gray-800`/
+   `bg-gray-900` card backgrounds in dark mode — currently live on the
+   deployed Headline/frontier cards already (byte-identical to master
+   d6c554f), not introduced by CP1. Recommend a follow-up task auditing
+   this whole partial's dark-mode text classes site-wide (axe found 65
+   affected nodes in this one fixture alone).
+2. Multiple sibling Apply buttons across cards/frontier rows share the
+   generic accessible name "Apply this option" / "Apply" with no
+   distinguishing `aria-label` per candidate — again pre-existing across
+   every card (not something CP1 added or changed), flagged here only as a
+   backlog candidate.
+
+COMMANDS RUN (abbreviated; full paths under
+/tmp/claude-1000/.../scratchpad/cp1-audit/):
+  sha256sum -c CP1.1.sha256                         # before + after: OK, OK, OK, OK, OK
+  cp -a .worktrees/current-plan-apply <scratch>/wt
+  go test ./internal/handlers/whatif -run ^TestCP1AuditFixture$ -count=1 -v   # PASS
+  node run_axe.cjs page-light.html / page-dark.html          # 0 / 1 (attributed)
+  node run_axe_full.cjs page-light.html / page-dark.html     # 0 / 1 (attributed, wcag22aa incl.)
+  node measure.cjs page-light.html / page-dark.html          # button box + computed styles
+  node focus.cjs page-light.html / page-dark.html            # outline on :focus
+  git show d6c554f:web/templates/.../spending_optimizer_results.html | diff  # 1-line diff only

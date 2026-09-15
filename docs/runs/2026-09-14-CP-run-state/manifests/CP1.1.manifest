@@ -1,0 +1,45 @@
+internal/handlers/whatif/handlers_spending_optimizer.go
+internal/handlers/whatif/spending_current_apply_test.go
+internal/handlers/whatif/spending_optimizer_render_test.go
+internal/handlers/whatif/spending_optimizer_test.go
+web/templates/components/whatif/spending_optimizer_results.html
+
+VERIFICATION COMMANDS (run in worktree /home/darrell/bin/ai/budget2/.worktrees/current-plan-apply, branch feat/current-plan-apply, base d6c554f):
+$ rtk proxy git status --short
+ M internal/handlers/whatif/handlers_spending_optimizer.go
+ A internal/handlers/whatif/spending_current_apply_test.go
+ M internal/handlers/whatif/spending_optimizer_render_test.go
+ M internal/handlers/whatif/spending_optimizer_test.go
+ M web/templates/components/whatif/spending_optimizer_results.html
+
+$ go build ./... && go vet ./...
+(no output; exit 0)
+
+$ go test ./internal/handlers/whatif/ ./internal/services/retirement/analysis/
+ok  	budget2/internal/handlers/whatif	9.112s
+ok  	budget2/internal/services/retirement/analysis
+
+$ go test -count=1 ./... 2>&1 | grep "^FAIL"
+(no output — every package ok; no testdata file dirtied afterwards)
+
+Author: lead (lean exception, Tier 2). sha256 snapshot of the five files:
+.swarm/manifests/CP1.1.sha256 (same dir as this manifest).
+
+CHANGES:
+1. handlers_spending_optimizer.go spendingCandidateCanApply: Qualifies is
+   required for every kind; Kind=="current" then returns true regardless of
+   Guardrails nil/disabled; other kinds keep `!Baseline && Guardrails != nil
+   && Guardrails.Enabled`. Doc comment explains the rule.
+2. handlers_spending_optimizer.go apply handler: `cfg := *c.Guardrails`
+   replaced by a nil-safe branch (nil candidate rules -> s.Guardrails = nil).
+3. spending_optimizer_results.html: "Failed and current-plan rows remain
+   available for graph inspection only." -> "Failed rows remain available
+   for graph inspection only."
+4. Tests: new spending_current_apply_test.go (rule table; apply of the
+   current plan with enabled/disabled/nil rules asserting revision+1,
+   evidence Kind current + fresh, settings byte-identical except
+   SpendingSearch and AppliedSpendingEvidence, replay 409; render test for
+   qualifying vs non-qualifying current card). spending_optimizer_test.go:
+   new "current-failed" rejection mode; cancellation test token count 2->3
+   (fixture's current plan qualifies). render_test: message reworded, added
+   non-qualifying-current has no Apply + stale-copy assertion.

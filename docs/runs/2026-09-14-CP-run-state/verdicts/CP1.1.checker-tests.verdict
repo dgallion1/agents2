@@ -1,0 +1,211 @@
+VERDICT: PASS
+CHECKER: checker-tests
+FAMILY: anthropic
+TASK: CP1
+ATTEMPT: 1
+---
+All work verified in cp -a copies under /tmp/claude-1000/cp1-verify/; the real
+worktree was never mutated and never had a binary run in it.
+
+SNAPSHOT INTEGRITY (first and last)
+$ cd /home/darrell/bin/ai/budget2/.worktrees/current-plan-apply && sha256sum -c .../CP1.1.sha256
+  FIRST: all 5 files OK, EXIT=0
+  LAST : all 5 files OK, EXIT=0
+$ rtk proxy git status --short  (identical first and last)
+   M internal/handlers/whatif/handlers_spending_optimizer.go
+   A internal/handlers/whatif/spending_current_apply_test.go
+   M internal/handlers/whatif/spending_optimizer_render_test.go
+   M internal/handlers/whatif/spending_optimizer_test.go
+   M web/templates/components/whatif/spending_optimizer_results.html
+  testdata/settings/whatif.json is NOT dirty (all `go test` runs were in copies).
+
+--------------------------------------------------------------------
+CRITERION 1 — canApply rule; both call sites unchanged .............. MET
+$ rtk proxy git diff d6c554f -- internal/handlers/whatif/handlers_spending_optimizer.go
+  Exactly two hunks. Helper body now:
+    if !c.Qualifies { return false }
+    if c.Kind == "current" { return true }
+    return !c.Baseline && c.Guardrails != nil && c.Guardrails.Enabled
+  i.e. Qualifies required for every kind; current returns true regardless of
+  Guardrails nil/disabled; other kinds keep the master rule verbatim.
+$ grep -n "spendingCandidateCanApply" -r internal/
+  Production call sites: handlers_spending_optimizer.go:403 (token minting,
+  inside buildSpendingOptimizerView — verified by `sed -n '395,410p'`:
+  `if spendingCandidateCanApply(c) { row.Token, err = spendingOpaqueToken() ...
+  tokens[row.Token] = ... }`) and :611 (re-check in
+  handleApplySpendingOptimizerWithHook — `sed -n '600,615p'`:
+  `if spendingPreviews.entries[id] != p || ... || !spendingCandidateCanApply(c)`).
+  Neither line appears in the diff => both call sites unchanged.
+$ go test -count=1 -run TestSpendingCandidateCanApplyRule ./internal/handlers/whatif/  -> ok
+  Table covers current x {enabled, disabled, nil rules} = true,
+  current non-qualifying = false, flexible/planned qualifying = true,
+  flexible {non-qualifying, disabled rules, nil rules, Baseline} = false.
+  MUTATION-PROVEN (see MUTATION EVIDENCE M1, M5, M6a, M6b).
+
+CRITERION 2 — data-spending-apply="current" inside the Current card . MET
+  I did NOT trust the worker's whole-body string count. Independent probe
+  (/tmp copy, zz_probe_test.go, deleted afterwards) rendered
+  "whatif-spending-optimizer-results" and decomposed it into <article> cards
+  and frontier <tr> rows:
+$ go test -count=1 -run TestZZProbeCurrentCardStructure -v ./internal/handlers/whatif/
+  ##### qualifies=true   total data-spending-apply=3   current=1
+    CARD[0] heading="Current plan"      applyIDs=[current]    label="Apply this option"
+    CARD[1] heading="Flexible spending" applyIDs=[flex-9000]  label="Apply this option"
+    ROW id="flex-9000" hasApply=true
+  ##### qualifies=false  total data-spending-apply=2   current=0
+    CARD[0] heading="Current plan"      applyIDs=[]           (no control)
+    CARD[1] heading="Flexible spending" applyIDs=[flex-9000]
+    ROW id="flex-9000" hasApply=true
+  => the single `data-spending-apply="current"` is inside the article whose
+  h5 is "Current plan", and it is absent entirely when the current plan does
+  not qualify. The worker's own test asserts the same counts plus token count
+  (2 vs 1) and view.Current.Token presence.
+
+CRITERION 3 — apply succeeds; only SpendingSearch + evidence change ... MET
+  Probe printing the RENDERED header and the reloaded settings:
+$ go test -count=1 -run TestZZProbeRedirectRevision -v ./internal/handlers/whatif/
+  ##### code=200 HX-Redirect="/whatif?spending_applied=3#spending-optimizer"
+        preRevision=2 postRevision=3
+  ##### evidence.Kind="current" Baseline=true fresh=true
+        guardrails=&{MinMonthlySpendingReal:5000 Enabled:true FloorDropPct:20 ...}
+        livingExpenses=8000
+  So the redirect carries the NEW revision (2 -> 3), evidence Kind is
+  "current", and appliedSpendingEvidenceFresh(got) is true.
+  TestSpendingApplyCurrentPlan asserts rev==p.revision+1, HX-Redirect contains
+  spending_applied= and #spending-optimizer, SpendingSearch != nil,
+  evidence Kind=="current" && Baseline && fresh, then nils ONLY those two
+  fields on both sides and byte-compares json.Marshal(got) vs
+  json.Marshal(before); finally a replay must 409.
+  The byte-identity assertion is NOT vacuous (no cache aliasing) — proven by
+  three of my own handler mutations, each caught (MUTATION EVIDENCE M3a/b/c
+  cover exactly the three fields the criterion names: MonthlyLivingExpenses,
+  LivingSpendingBoost, Guardrails). The freshness assertion is live too (M4).
+
+CRITERION 4 — nil Guardrails: no panic, stays nil ................... MET
+$ go test -count=1 -run TestSpendingApplyCurrentPlan ./internal/handlers/whatif/ -> ok
+  Subtest "nil-rules" sets s.Guardrails=nil, saves, InvalidateCache, asserts
+  the fixture really has nil rules, applies, and asserts got.Guardrails==nil
+  after save (line 116-118) in addition to the full byte-identity compare.
+  MUTATION-PROVEN: M2 (restore `cfg := *c.Guardrails`) -> SIGSEGV nil pointer
+  dereference, ONLY in the nil-rules subtest.
+
+CRITERION 5 — inspect-only copy updated; nothing else in template .... MET
+$ rtk proxy git diff d6c554f -- web/templates/.../spending_optimizer_results.html
+  Exactly one changed line (1 +/1 -):
+  -"... Failed and current-plan rows remain available for graph inspection only."
+  +"... Failed rows remain available for graph inspection only."
+  No other line, class or element changed => no layout change.
+  Asserted on the RENDERED string by my probe, both fixtures:
+    COPY: "Qualification uses the final validation futures. Failed rows remain
+           available for graph inspection only."
+    stale phrase "current-plan rows remain available" present: false
+  Post-redirect announcement unchanged: the announcement is produced at
+  handlers_spending_optimizer.go:769 (`r.URL.Query().Get("spending_applied")`)
+  and the redirect at :681; neither line is in either diff hunk (hunks are at
+  ~343 and ~626), and no other file is modified.
+
+CRITERION 6 — existing tests updated not deleted; build/vet/test green MET
+$ rtk proxy git diff d6c554f -- ..._test.go
+  spending_optimizer_test.go: "current-failed" ADDED to the rejection-mode
+  table (nothing removed); cancellation token count 2 -> 3 with a comment.
+  spending_optimizer_render_test.go: message reworded + TWO assertions ADDED
+  (non-qualifying current must not offer Apply; stale copy must be gone).
+  No test function or table row was deleted (the pre-existing "baseline",
+  "failed" and "missing-policy" rejection modes all survive and still pass).
+$ go build ./...  EXIT=0 (no output)
+$ go vet ./...    EXIT=0 (no output)
+$ go test -count=1 ./internal/handlers/whatif/... ./internal/services/retirement/analysis/...
+  ok budget2/internal/handlers/whatif 9.301s
+  ok budget2/internal/services/retirement/analysis 2.867s
+$ go test -count=1 ./...
+  FAIL lines: 0 ; 50 packages ok. NO FAIL LINE TO REPORT.
+$ make check        (composite target: vet static vuln css-verify test)
+  ... "✓ all checks passed" ; MAKE_CHECK_EXIT=0
+  (css-verify included => no stale generated CSS.)
+
+CRITERION 7 — a11y: deferred to checker-a11y. Observations below.
+
+--------------------------------------------------------------------
+MUTATION EVIDENCE (all in cp -a copies; a test that survives is reported)
+
+M1 REQUIRED — restore the old one-line helper body
+   `return c.Qualifies && !c.Baseline && c.Kind != "current" && c.Guardrails != nil && c.Guardrails.Enabled`
+$ go test -count=1 ./internal/handlers/whatif/   -> FAIL
+  --- FAIL: TestSpendingCandidateCanApplyRule
+      current qualifies enabled rules: got false want true
+      current qualifies disabled rules: got false want true
+      current qualifies nil rules: got false want true
+  --- FAIL: TestSpendingApplyCurrentPlan/{rules,disabled-rules,nil-rules}
+      apply 409 "" ... "This recommendation is unavailable. Nothing was saved."
+  --- FAIL: TestSpendingOptimizerRenderCurrentPlanApply
+      qualifies=true: current apply controls = 0 / apply tokens = 1 / token ""
+  --- FAIL: TestSpendingOptimizerCancellationDoesNotDeleteNewSearch
+      old search deleted/replaced fresh preview   (the 2->3 token update)
+  => every new/updated positive test dies with the fix removed.
+
+M2 REQUIRED — restore `cfg := *c.Guardrails; s.Guardrails = &cfg`
+$ go test -count=1 -run TestSpendingApplyCurrentPlan ./internal/handlers/whatif/
+  --- FAIL: TestSpendingApplyCurrentPlan/nil-rules
+  panic: runtime error: invalid memory address or nil pointer dereference
+  [signal SIGSEGV] at spending_current_apply_test.go:89
+  (rules and disabled-rules subtests still pass => the nil branch is exactly
+  what the nil-rules subtest guards.)
+
+M5 (mine) — let current bypass Qualifies (move the Kind check above it).
+  This is the user's "Only when it qualifies" sign-off condition.
+$ go test -count=1 ./internal/handlers/whatif/   -> FAIL, caught by FOUR tests:
+  TestSpendingCandidateCanApplyRule: "current does not qualify: got true want false"
+  TestSpendingOptimizerRenderCurrentPlanApply: "qualifies=false: current apply controls = 1"
+  TestSpendingOptimizerRenderResultsEvidence: "non-qualifying current plan must not offer Apply"
+  TestSpendingApplyRejections/current-failed: "status 200" (expected 409)
+
+M6a (mine) — drop `!c.Baseline` from the non-current rule
+  --- FAIL: TestSpendingCandidateCanApplyRule "non-current baseline: got true want false"
+  --- FAIL: TestSpendingApplyRejections/baseline "status 200"
+M6b (mine) — drop `.Enabled` from the non-current rule
+  --- FAIL: TestSpendingCandidateCanApplyRule "flexible disabled rules: got true want false"
+  => the "other kinds keep the existing rule verbatim" half of criterion 1 is
+  guarded, not merely asserted in prose.
+
+M3a/b/c (mine) — prove criterion 3's byte-identity compare is not vacuous
+  (i.e. `got` and `before` are not the same cached pointer):
+  M3a `s.MonthlyLivingExpenses = c.BaseMonthlyLivingExpenses + 1`
+      -> FAIL in all three subtests
+  M3b `cfg.MinMonthlySpendingReal += 1` before saving the rules
+      -> FAIL in rules + disabled-rules (nil-rules has no rules to perturb — correct)
+  M3c `s.LivingSpendingBoost = nil`
+      -> FAIL in all three subtests
+M4 (mine) — `evidenceHash := getSettingsHash(s) + "stale"`
+      -> FAIL in all three subtests => appliedSpendingEvidenceFresh is a real
+         assertion, not a tautology.
+
+NO mutation of the changed behavior survived. Every new test I mutated died.
+
+--------------------------------------------------------------------
+SCOPE
+$ rtk proxy git diff --stat d6c554f --
+  5 files changed, 205 insertions(+), 7 deletions(-) — exactly the manifest's
+  five paths, nothing else. Working tree has no other modified or untracked
+  files. None of .swarm/critical.globs (internal/services/storage/**,
+  dataloader/**, retirement/engine/**, transfers/**, accounts/accounts.go,
+  mcpsvc/confirm/**) is touched.
+
+--------------------------------------------------------------------
+NOTES FOR THE LEAD (observations, not FAIL reasons)
+1. a11y (for checker-a11y): with the Current card applyable there can now be
+   TWO visible buttons with the identical accessible name "Apply this option"
+   (Current plan card + a headline card) differing only by their containing
+   article's h5. Master could already render two such buttons across the two
+   headline cards, so this is not new, but the Current-plan case is newly
+   reachable. Markup/classes for the new control are byte-identical to the
+   existing one (same `whatif-spending-option` template block), so focus ring
+   and target size are inherited unchanged.
+2. Test-strength note: criterion 3's compare is `json.Marshal` of
+   models.WhatIfSettings, which omits three `json:"-"` fields
+   (CurrentAge, SpouseAge at internal/models/whatif.go:113-114, and
+   BracketFillFeedback at :1737). Drift confined to those derived/non-
+   persisted fields would not be caught. The apply handler does not assign
+   them, and all three fields the criterion names are mutation-proven, so
+   this is a residual-risk note only.
+3. `make check` takes ~2 min (storage package alone is 71s); worth knowing
+   before the final pass.

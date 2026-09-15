@@ -1,0 +1,99 @@
+VERDICT: PASS
+CHECKER: checker-second
+FAMILY: adversarial
+TASK: CP1
+ATTEMPT: 1
+---
+sha256sum -c on the manifest's five files: OK at start AND at end (worktree
+untouched by my probes; all probing done in a cp -a copy under /tmp, deleted
+after use).
+
+Criterion 1 (helper, both call sites): read handlers_spending_optimizer.go.
+spendingCandidateCanApply (line 355-363): `!c.Qualifies -> false`; then
+`Kind=="current" -> true`; else `!Baseline && Guardrails!=nil && Enabled`.
+Called at line 403 (buildSpendingOptimizerView, token minting) and line 611
+(handleApplySpendingOptimizerWithHook re-check) -- one helper, no duplicated
+logic. Mutation test: replaced the helper with the old one-line body in a
+cp -a copy -> TestSpendingCandidateCanApplyRule (3 cases),
+TestSpendingApplyCurrentPlan (all 3 modes), and
+TestSpendingOptimizerRenderCurrentPlanApply all fail exactly as expected.
+Restored non-current baseline case ("baseline" mode in
+TestSpendingApplyRejections, Kind stays "flexible") still rejects under the
+new rule via `!Baseline` -- confirms the other-kinds branch is unchanged in
+practice, not just in text.
+
+Criterion 2 (rendered marker): TestSpendingOptimizerRenderCurrentPlanApply
+asserts exactly 1 occurrence of `data-spending-apply="current"` when
+qualifying, 0 when not; ran it directly (PASS). Confirmed template path:
+spending_optimizer_results.html:82 renders `.Current` through the
+"whatif-spending-option" define, whose Apply form (line 42) is gated on
+`$row.Token`, which is only set when spendingCandidateCanApply(c) is true
+(handlers_spending_optimizer.go:403-409).
+
+Criterion 3 (apply response + byte-identical diff): TestSpendingApplyCurrentPlan
+checks 200 + HX-Redirect containing "spending_applied=" and
+"#spending-optimizer", revision+1, then nils SpendingSearch and
+AppliedSpendingEvidence on both got/before and marshals to compare byte-for-
+byte -- ran it directly, PASS, for rules/disabled-rules/nil-rules. Confirmed
+this fixture-pinned-date pattern (UseCurrentMonth=false before the
+byte-identity comparison) is pre-existing practice, not new evasion:
+identical pattern already used in spending_optimizer_test.go (line ~151,
+~910), guardrail_optimizer_test.go, roth_recommendations_apply_test.go.
+
+Criterion 4 (nil-Guardrails apply, no panic): mutation test reverting the
+nil-safe branch (lines 631-636) back to the naive `cfg := *c.Guardrails`
+deref reproduces exactly the described SIGSEGV on the nil-rules subtest only
+(rules/disabled-rules subtests still pass, since those have non-nil rules) --
+confirms the fix is load-bearing and the fixture actually exercises nil.
+Also wrote a throwaway end-to-end probe (cp -a copy): apply a current
+candidate with nil Guardrails via handleApplySpendingOptimizer, then GET
+/whatif/spending/applied/graph (handleAppliedSpendingGraph) -- 200, no
+panic, candidate_label "Current plan ...". Confirms the graph-route consumer
+(handlers_spending_graph.go, unchanged file) already handles Kind=="current"
+correctly (spendingGraphCandidateLabel switch already has a "current" case),
+so the full evidence-graph pipeline (used by spendingOptimizerFormData /
+"Selected spending plan" block in spending_optimizer.html, and by
+whatif-spending-optimizer.js which is kind-agnostic, driven only by data
+attributes) works for a currently-applied current-kind candidate with nil
+rules.
+
+Criterion 5 (copy, no other template diff): `git diff d6c554f --
+spending_optimizer_results.html` shows exactly one line changed, old text
+"Failed and current-plan rows remain available..." -> new "Failed rows
+remain available for graph inspection only."; no other template hunk.
+render_test.go asserts the announcement/heading strings are unchanged
+elsewhere (forbidden-terms list untouched).
+
+Criterion 6 (tests updated not deleted, green build): diff of
+spending_optimizer_render_test.go and spending_optimizer_test.go is
+additive/modifying only (no deletions of assertions); new "current-failed"
+mode added to TestSpendingApplyRejections's existing table (drives a full
+apply-handler round trip, not just a direct helper call); cancellation test
+token-count assertion updated 2->3 with an explanatory comment matching the
+fixture's now-qualifying current plan. `go build ./...`, `go vet ./...` both
+clean; `go test -count=1 ./...` has zero FAIL lines; `go test -count=1
+./internal/handlers/whatif/ ./internal/services/retirement/analysis/` both
+ok. `git status --short` after the full run shows only the manifest's 5
+files dirty (no unexpected testdata drift).
+
+Angles investigated and found NOT a defect (in-scope):
+- Current-candidate Guardrails carry the SAVED MinMonthlySpendingReal
+  (guardrailOptimizerCloneConfig(s.Guardrails) in
+  spending_candidate.go:47-61), not req.FloorMonthlyReal. This predates CP1
+  (candidate construction unchanged) and applying the current plan re-saves
+  Guardrails verbatim from what was already on disk -- no new mismatch is
+  introduced; the form already reflected this floor before CP1 could even
+  apply the card. Not an in-scope defect; not flagged as a NOTES item either
+  since CP1 touches nothing here.
+- TOCTOU between mint and apply: tokens map stores a JSON-cloned (deep-copy)
+  candidate at mint time; apply re-runs the same helper on that same
+  immutable value. No path for a non-current candidate to reach apply with
+  nil/disabled rules once gated at mint (missing-policy/failed rejection
+  modes in TestSpendingApplyRejections still 409 as before).
+- Baseline vs Kind/staleness: loadSpendingSnapshot's revision+fingerprint+
+  scenario check runs unconditionally in the apply handler regardless of
+  Kind, so a stale "current" token still 409s on any settings edit
+  (TestSpendingApplyRejections "revision"/"fingerprint"/"scenario" modes
+  unchanged and still passing).
+
+No reproducible defect found within CP1's stated scope.
