@@ -1,0 +1,2 @@
+# task_id	tier	checks	status	attempt	worker	reason
+CP1	2	tests,second,a11y	accepted	1	lead	gate-ok-tier2-attempt-1; lead-authored, tests+second+a11y all PASS first attempt
