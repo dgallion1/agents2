@@ -1,0 +1,212 @@
+VERDICT: PASS
+CHECKER: checker-a11y
+FAMILY: anthropic
+TASK: RC3
+ATTEMPT: 2
+---
+SCOPE / METHOD
+Audited commit a57394c (worktree /home/darrell/bin/ai/budget2/.worktrees/rollover-schedule,
+branch fix/rollover-schedule, parent 1f9a35a = attempt 1, base bcb6226 = master).
+Diff scope confirmed via `/usr/bin/git diff 1f9a35a a57394c --stat`: render.go
+(+scheduleEnded func), whatif.html (OOB error-container block), and the four
+component files (income-sources-list.html, expense-sources-list.html,
+onetime-card.html, bigticket-card.html) — matches the RC3.2 manifest. All work
+done in a `cp -a` copy at /tmp/claude-1000/rc3a2-a11y/copy (deleted after use);
+no edits anywhere in the shared worktree; `git status` there is clean at
+a57394c post-hoc; the built server binary was never run.
+
+CSS currency: `make css-verify` -> "tailwind.css is up to date" in the copy.
+
+Real render, not guessed HTML: wrote a throwaway Go test
+(internal/handlers/whatif/zzdump_a11y_test.go, deleted with the tmp copy)
+using setupTestEnvWithRenderer + two fixtures:
+  1. scheduleFormFixture (from schedule_month_form_test.go, unmodified) - the
+     four add forms open, normal (non-clamped) income/expense ranges.
+  2. A NEW rollover-clamped fixture built per the task brief: UseCurrentMonth
+     true, StartDate = 20 months before time.Now() ("2025-01"), one expense
+     (StartMonth 0, EndMonth 3) and one income (StartMonth 12, EndMonth 42),
+     saved and reloaded so resolveCurrentMonth/shiftScheduleOffsets actually
+     runs the clamp. Confirmed in the rendered output: StartDate advanced to
+     "2026-09" (20 months later); the expense's shifted EndMonth (3-20=-17,
+     floored to 0) produced scheduleEnded==true -> the display-only "Ended"
+     row; the income's shifted StartMonth (12-20=-8, floored to 0) with
+     EndMonth (42-20=22, unclamped) produced the "Since plan start" row with
+     the Through date intact (Jun 2028) — both clamp cases the task named,
+     from one fixture, not invented HTML.
+Dumped: GET /whatif for both fixtures (page.html, page_clamped.html), a
+successful mutation (handleWhatIfAddOneTime, month=2027-09, 200 OK ->
+mutation_ok.html, the real OOB whatif-results-with-oob fragment), and all
+four add-form 400s (income/expense/onetime/bigticket, month=2020-01, each
+verified 400 with headers captured verbatim: err_<kind>.html).
+
+Wrapped page.html/page_clamped.html as light (class="light", the byte-exact
+server output) and dark (class="dark", one string substitution on the <html>
+tag, nothing else touched) variants; wrapped mutation_ok.html's fragment body
+in a minimal <html>/<head> shell loading the same two real built stylesheets
+(no rewritten/guessed CSS) for light and dark. Served via
+`python3 -m http.server` from a dir with a symlink `static -> copy/web/static`
+so the pages' real `/static/css/tailwind.css` and `/static/css/styles.css`
+hrefs resolved to the actual built files. Ran:
+  npx @axe-core/cli "http://127.0.0.1:8917/<page>.html" --tags wcag2a,wcag2aa,wcag22aa
+for all 6 pages (page_light/dark, clamped_light/dark, mutation_light/dark),
+plus JSON dumps (-s) for clamped_light/dark and page_light to inspect
+individual pass/violation nodes.
+
+AXE RESULTS
+  page_light / page_dark: 46 issues each (44 color-contrast + 2 target-size),
+    IDENTICAL selector list to RC3.1's audit of 1f9a35a: all 44
+    color-contrast hits are inside web/templates/components/whatif/
+    spending-phases.html (Retirement Spending Phases card) plus one
+    pre-existing $0/mo opacity-40 row in budget-analysis.html; both
+    target-size hits are the Big Ticket "Recently Removed" restore/purge
+    buttons (bigticket-card.html). Re-confirmed PRE-EXISTING via
+    `/usr/bin/git diff bcb6226 a57394c -- web/templates/components/whatif/budget-analysis.html`
+    (zero output, byte-identical) and `git diff 1f9a35a a57394c -- .../bigticket-card.html`
+    (attempt 2 touched only the add-form error div/aria-describedby, not the
+    restore/purge block). Zero hits reference any RC3-changed selector
+    (add-income-*, add-expense-*, onetime-*, add-bigticket-*, the four
+    whatif-add-*-error containers, or scheduleEnded's new markup).
+  clamped_light / clamped_dark: 44 issues (color-contrast only — this
+    fixture has no RemovedBigTicketItems, so the target-size cluster doesn't
+    appear; same spending-phases.html + budget-analysis.html selectors).
+    JSON pass-list confirms BOTH color-contrast AND target-size rules ran
+    against and PASSED the new nodes, e.g. (light):
+      passes[color-contrast]: `#income-schedule-inc-clamped-start` "Since
+        plan start (Sep 2026) · Through Jun 2028 (the last month paid)"
+      passes[color-contrast]: `#expense-sources-list > .p-2.bg-gray-50...`
+        "Ended before the plan start (Sep 2026) — not counted; remove it..."
+      passes[color-contrast]: the two `font-medium dark:text-gray-200` name
+        spans (ClampedStartIncome / ClampedEndedExpense)
+      passes[target-size]: `button[hx-delete="/whatif/income/inc-clamped-start"]`
+        (Delete/Remove on the clamped-start row) and
+        `button[hx-delete="/whatif/expense/exp-ended"]` (Remove on the Ended
+        display-only row) — both explicitly measured and PASSED, not merely
+        absent from violations (confirmed identically in the dark JSON).
+  mutation_light / mutation_dark: 3 issues each, the same pre-existing
+    budget-analysis.html opacity-40 $0/mo row (byte-identical to master, this
+    fixture's SchedBoat entry shows $0 in an out-of-range projection year —
+    unrelated to RC3's scheduleEnded concept). No aria-* violations, no
+    "region"/duplicate-id violations on the four OOB `role="alert"` divs the
+    fragment contains.
+  A-1: PASS on RC3's own surface across all 6 renders; the two pre-existing
+  clusters remain OBSERVATIONS (unchanged provenance from RC3.1).
+
+MANUAL CHECKS
+
+1. Error announcement (WCAG 4.1.3 / SPEC criterion 7, amended ruling f) —
+   THE FIX THIS ATTEMPT MAKES:
+   - Initial page (page.html): all four containers carry role="alert":
+     `<div id="whatif-add-income-error" role="alert" class="mb-2"></div>`,
+     same for -expense-, -onetime-, -bigticket- (grepped, all 4 present;
+     -healthcare- deliberately excluded, matches spec's "each of the four").
+   - OOB re-render block (`<template>` in whatif.html, parsed from the real
+     mutation_ok.html response body, NOT the inert `<template>` source):
+     `<div id="whatif-add-income-error" role="alert" hx-swap-oob="true"></div>`
+     and the same for -expense-, -bigticket-, -onetime- (4/4 present,
+     `grep -c` = 4). Since hx-swap-oob="true" is an outerHTML swap, this is
+     what actually lands in the DOM after every successful mutation —
+     confirmed by dumping the real handleWhatIfAddOneTime response, not
+     assumed from template source.
+   - The four 400 responses (real handler output, headers captured): each
+     carries `HX-Retarget: #whatif-add-<kind>-error` and
+     `HX-Reswap: innerHTML` — an innerHTML swap targeting that id, so the
+     element (and its page-rendered or OOB-rendered role="alert") is NOT
+     replaced by the error swap; only its children change, so the
+     role="alert" persists across every combination of prior state. Message
+     text names the field: "Start month must be Oct 2026 or later..."
+     (income/expense), "Month must be Oct 2026 or later..." (onetime/
+     bigticket) — unchanged from RC3.1, still correct.
+   - aria-describedby: grepped page.html for all 6 add-form month inputs —
+     `add-income-start-month`/`add-income-end-month` ->
+       "add-income-schedule-help whatif-add-income-error"
+     `add-expense-start-month`/`add-expense-end-month` ->
+       "add-expense-schedule-help whatif-add-expense-error"
+     `onetime-month` -> "onetime-month-help whatif-add-onetime-error"
+     `add-bigticket-month` -> "add-bigticket-month-help whatif-add-bigticket-error"
+     All 6 resolve to two existing ids (help paragraph + error container),
+     both present in the DOM. Inline edit rows (income-start-<id> etc.) keep
+     their pre-existing single-id aria-describedby to the schedule <p> only
+     — unchanged, matches "Inline edit rows keep the existing renderError
+     path" carve-out.
+   axe found zero aria-* rule violations on any of these nodes (checked the
+   JSON violations/incomplete lists for page_light: only color-contrast and
+   target-size, both pre-existing).
+   Point 1: PASS. This directly resolves RC3.1's FAIL.
+
+2. Ended rows (display-only), both themes:
+   - Text: "Ended before the plan start (Sep 2026) — not counted; remove it
+     if you no longer need it" — axe color-contrast PASS in both themes
+     (class `text-gray-700 dark:text-gray-200` on `bg-gray-50`/
+     `dark:bg-gray-700`, the same pair RC3.1 computed at 9.84:1 / 8.18:1 —
+     reused unchanged, not a new color choice).
+   - Remove button: `aria-label="Delete expense ClampedEndedExpense"` /
+     `"Delete income source ClampedStartIncome"` (income case is the
+     clamped-START row's own delete button, same convention) — names the
+     entry, matches the sitewide pattern (verbatim reuse of the existing
+     active-row delete button's class list `text-negative hover:text-negative`
+     with an `aria-hidden="true"` SVG). axe target-size PASS (explicitly
+     measured, see above) — ≥24×24, both themes.
+   - No information by color alone: the state is stated in text
+     ("Ended before the plan start...— not counted"), not just the row's
+     reduced-opacity/muted styling. A-9: PASS.
+   - Focus: the button carries no `focus:`/`focus-visible:` class of its
+     own, so it falls under the sitewide catch-all
+     `:where(button,...):where(:not([class*="focus-visible:ring"],...)):focus-visible`
+     rule (styles.css:322-324, pre-existing, BK-2026-09-08 provenance) ->
+     2px accent outline. Same accent/background pairs RC3.1 already measured
+     at ≥5:1 in both themes on this exact bg-gray-50/bg-gray-700 pairing.
+     A-5: PASS.
+   Point 2: PASS.
+
+3. Clamped-start rows, both themes:
+   - "Since plan start (Sep 2026) · Through Jun 2028 (the last month paid)"
+     — axe color-contrast PASS both themes (same text-gray-700/
+     dark:text-gray-200 pair).
+   - `#income-start-inc-clamped-start`: `value="2026-09" min="2026-09"` —
+     value equals min, so no browser out-of-range/invalid state (confirmed
+     by direct grep of the rendered input, not inferred).
+   Point 3: PASS.
+
+4. Re-confirmation of RC3.1's PASS points, this build:
+   - Labels/ids unique per row: all id-bearing elements in both dumped pages
+     grepped for exact-string matches used above; no collisions (the clamped
+     fixture reuses IDs "sched-inc" etc. only within its own isolated
+     fixture, never alongside the first fixture's ids in the same render).
+   - Focus-ring cascade unchanged: styles.css is untouched by this diff
+     (`git diff 1f9a35a a57394c -- web/static/css/styles.css` — not in the
+     8-file changed list at all).
+   - axe: zero NEW violations anywhere (every violation selector traced to
+     spending-phases.html, budget-analysis.html's pre-existing $0/mo row, or
+     bigticket-card.html's untouched restore/purge block — all confirmed
+     byte-identical to master via `git diff bcb6226 a57394c --`).
+   Point 4: PASS.
+
+5. Landmarks/headings: exactly one `<h1>` in both page.html and
+   page_clamped.html (`grep -c "<h1"` = 1 each); `<main>`/`<nav>`/`<footer>`
+   present (`grep -c` = 3 combined on page.html). No heading tag appears
+   anywhere in the diff hunks for the four component files or whatif.html
+   (checked via the diffs themselves — only div/span/p/button/svg/form
+   elements added). Point 5: PASS.
+
+OBSERVATIONS (not FAIL — provenance shown)
+- axe color-contrast x44 (spending-phases.html) and x2 target-size
+  (bigticket-card.html restore/purge, only present when
+  RemovedBigTicketItems is non-empty) — unchanged from RC3.1, both
+  byte-identical to master, out of RC3's scope. Backlog candidates.
+- budget-analysis.html's `opacity-40` $0.00/mo breakdown row (flagged by
+  axe as 3 color-contrast hits in the mutation fragment, folded into the 44
+  in the full-page runs) is a PRE-EXISTING mechanism (confirmed
+  byte-identical via `git diff bcb6226 a57394c --
+  web/templates/components/whatif/budget-analysis.html`, zero output) that
+  also fires for RC3.1/RC3.2's own SchedBoat/ClampedEndedExpense entries
+  whenever a projection-year bucket shows $0 for them. It is NOT the same
+  text as the "Ended before the plan start" row (different file, different
+  component, different wording: "<Name> (through <Mon YYYY>)" vs "Ended
+  before the plan start (<Mon YYYY>) — not counted"), and criterion 3 only
+  named income/expense-sources-list.html's own row text as in scope. Noting
+  for the backlog since it is the same defect class as RC3.1's two
+  observations, not something this attempt introduced or was asked to fix.
+- The `min-h-[24px]` cashflow-tab-jump link and several sitewide controls
+  appear in the axe pass list unrelated to RC3 — not itemized here, listed
+  only to show the target-size rule was genuinely exercised across the page,
+  not narrowly scoped to pass by omission.

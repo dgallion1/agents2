@@ -1,0 +1,148 @@
+VERDICT: FAIL
+CHECKER: checker-second
+FAMILY: adversarial
+TASK: RC2
+ATTEMPT: 1
+---
+Work inspected: commit f479de3 in a `cp -a` copy at /tmp/rc2work/rc2-second
+(never mutated the shared worktree; no `git checkout/restore/stash/reset`
+run there; binary never invoked; no data/ dir created).
+
+Oracle baseline: `bash .swarm/tier3/RC2/accept.sh /tmp/rc2work/rc2-second`
+ends `ORACLE PASS` (O1-O4 all green, mutation noticed by 4 shipped tests).
+Confirmed independently before attacking.
+
+REFUTED — criterion 7 (display) / "every HTMX partial that renders
+one-time/big-ticket ... entries" (attack angle: dict-scoped bigticket item)
+
+`web/templates/components/whatif/bigticket-card.html`'s RC2 diff changed
+`whatif-bigticket-item`'s calling contract: it used to take the raw
+`models.BigTicketItem` as dot; RC2 wraps it in `{{with .Item}}` and requires
+callers to pass `(dict "Settings" $.Settings "Item" .)` so the calendar
+label (`calendarMonthLabel $.Settings.StartDate .Month`) can reach
+`.Settings.StartDate`. The worker updated ONE of its two template callers
+(`whatif-bigticket-list` inside bigticket-card.html itself) but missed the
+other, pre-existing one:
+
+  web/templates/pages/whatif.html:341-343 (inside `{{define
+  "whatif-results-with-oob"}}`, the "Big ticket items list OOB update"
+  block):
+    {{range .Settings.BigTicketItems}}
+    {{template "whatif-bigticket-item" .}}     <- raw item, NOT the dict
+
+`whatif-results-with-oob` is rendered by `renderWhatIfResults` /
+`renderRecalcWithExtra` (internal/handlers/whatif/handlers.go:195,446),
+documented in handlers.go's own comment as "Used by every user-initiated
+mutation" on the what-if page (add/edit/delete income, expense, healthcare,
+one-time, big-ticket, etc. — not merely the big-ticket handlers).
+
+Reproduced dynamically. Added a throwaway test (not committed, not part of
+any manifest) in the copy:
+
+  internal/handlers/whatif/rc2_probe_test.go — builds a fixture settings
+  object with one BigTicketItem, calls buildResultsPartialData +
+  renderer.RenderPartial(w, "whatif-results-with-oob", data), exactly the
+  path handlers.go:195/446 take.
+
+  $ go test ./internal/handlers/whatif/ -run TestRC2ProbeBigTicketOOBRender -v
+  Error rendering partial whatif-results-with-oob: template:
+  bigticket-card.html:31:7: executing "whatif-bigticket-item" at <.Item>:
+  can't evaluate field Item in type models.BigTicketItem
+  --- FAIL: TestRC2ProbeBigTicketOOBRender (0.02s)
+
+Impact: `internal/templates/render.go`'s RenderPartial writes directly to
+the http.ResponseWriter as it executes (no buffering) and the error is
+DISCARDED by renderResultsTemplate (`_ = renderer.RenderPartial(...)`), so
+in production this is not a clean 500 — it is a response that already
+started at 200 OK, gets truncated mid-stream at the big-ticket list (which
+renders before the removed-bigticket and one-time-list OOB swaps later in
+the same define block), corrupting every OOB swap that follows in the same
+response for ANY mutation made while the plan holds at least one
+BigTicketItem. Big-ticket items are an existing, reachable, non-exotic
+feature (the add-bigticket form ships in the same file); this is not an
+edge case.
+
+Why this is in RC2's scope, not a pre-existing/backlog item: `git diff
+ec42346 f479de3 -- web/templates/components/whatif/bigticket-card.html`
+shows the worker's own commit introduced the `{{with .Item}}` / dict
+requirement (before RC2, `.Year` was read directly off the raw item and the
+raw-dot caller in whatif.html worked correctly). The regression is a direct
+side effect of RC2's own display change (criterion 7: "Every DISPLAY of a
+scheduled date on the one-time card, big-ticket card and lists prints the
+calendar label ... instead of any year figure") and RC2's own explicit
+attack angle ("does `$` inside `{{with .Item}}` reach Settings in EVERY
+caller of that template?") — answer: no, one caller was missed.
+
+Test-gap note: the shipped suite (`go test ./internal/handlers/whatif/...`)
+stays green because no shipped test renders `whatif-results-with-oob` with
+a non-empty `BigTicketItems`; the oracle doesn't touch templates either.
+This is exactly the "enumerate every caller, don't trust the diff" class
+CLAUDE.md calls out, and it was invisible to both O1-O4 and the shipped
+suite.
+
+Other criteria checked and NOT refuted (evidence, so this isn't a rubber
+stamp FAIL):
+- Criterion 1 (legacy decode / new-key-wins / marshal drops year keys):
+  read ExpenseSource/OneTimeExpense/BigTicketItem UnmarshalJSON in
+  internal/models/{income_source,one_time_expense,whatif}.go — all three
+  use `raw[key] present` on a json.RawMessage map (so an explicit JSON
+  `null` counts as "present", a defensible literal reading of "absent");
+  legacy end_year==0 -> nil EndMonth; new keys win. Oracle's
+  TestRC2OracleLegacyDecode covers mixed docs and marshal round-trip; I did
+  not find a counterexample beyond the null-key corner (not tested either
+  way by spec or oracle, and not a plausible real-file shape).
+- Criterion 3 (shift): read shiftScheduleOffsets/resolveCurrentMonth in
+  settings_current_month.go — exactly one `shiftScheduleOffsets(settings,
+  elapsed)` call line; clamps income/expense at 0, retains negative
+  one-time/big-ticket; fixed-date plans skip resolveCurrentMonth's shift
+  entirely. Oracle's TestRC2OracleShift exercises forward, backward, same-
+  month no-op, past, ended, and fixed-date; all pass against the real code
+  (not just described).
+- Cache-clone / double-shift: traced every caller of resolveCurrentMonth /
+  cloneForCurrentMonth in settings.go (loadInternalContext, saveInternal,
+  LoadContext, LoadContextWithRevision, cache double-check branches). Each
+  clone computes elapsed from the manager's cached (already-shifted, fixed
+  until the next real Load/Save) StartDate, so repeated clones in the same
+  month are no-ops and are not cumulative — confirmed by
+  TestRC2OracleManagerRoundTrip's load->save->reload->cached-load chain,
+  which asserts identical offsets and an unmoved anchor on disk.
+- Criterion 4/5 (engine, chain, present_value): diffed
+  engine/{expense.go,loop_helpers.go,stepper.go},
+  analysis/{present_value.go,budget_fit.go}, chain.go against ec42346.
+  OneTimeExpensesForMonth/ApplyBigTicketItemsForMonth use `float64(month)`
+  (not `/12`), identical to the old `float64(currentYear*12)` for
+  year-aligned months; the stepper calls both after the chain-transition
+  reassignment of `s` and before returnsFor; chain.go's rebase* functions
+  take/sort by Month and drop `Month-transitionMonth < 0` exactly as years
+  were dropped; present_value.go skips `<0 || >=months`. Oracle's O2d/O2e
+  assert firing at month 11 and non-firing at 10/12, plus year-aligned
+  equivalence (12360.00) directly against these functions.
+- Criterion 6 (validation): diffed prepare/validate.go — the `Year < 0`
+  check is deleted outright, not narrowed; grepped the whole tree for any
+  other negative-year/month rejection (MCP overrides.go, handlers_rates.go)
+  — the only Year-based validators left are Roth's (out of scope, unrelated
+  struct).
+- Criterion 7 templates (onetime-card.html, expense-sources-list.html):
+  onetime-card.html has one caller pattern throughout (dict-based, no
+  `{{with .Item}}` re-scope) and both its callers (bigticket-card.html's
+  own list block is the analog; onetime is invoked identically from
+  bigticket-card... correction: onetime's two invocations, in
+  onetime-card.html's own list and in whatif.html:352, both correctly pass
+  `(dict "Settings" $.Settings "Item" .)`) — onetime is NOT affected by
+  this class of bug, only big-ticket, because only the big-ticket template
+  added the `{{with .Item}}` re-scope. yearOf/div funcmap registration
+  confirmed in render.go, ruling 2026-09-16a's amendment respected exactly
+  as specified (int yearOf, `ge (yearOf .Item.Month) .Settings.ProjectionYears`,
+  inline-edit inputs left as `div ... 12` per the ruling).
+- Green (criterion 9): `go build ./... && go vet ./internal/...` and the
+  oracle's shipped-suite run both green in my copy — the defect above is a
+  template-execution-time error that neither `go build`/`go vet` (untyped
+  html/template) nor the existing test suite exercises, which is exactly
+  why it survived to this review.
+
+Observations (not FAIL, beyond today's criteria):
+- RC3 is already scoped to touch these same templates for calendar-month
+  <input type="month">; the fix for the above (pass `(dict "Settings"
+  $.Settings "Item" .)` from whatif.html:342, matching bigticket-card.html's
+  own list block) is a one-line, same-pattern fix and should not require
+  redesigning RC3.

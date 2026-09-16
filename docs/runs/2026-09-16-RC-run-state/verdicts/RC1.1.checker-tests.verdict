@@ -1,0 +1,157 @@
+VERDICT: PASS
+CHECKER: checker-tests
+FAMILY: anthropic
+TASK: RC1
+ATTEMPT: 1
+---
+Working copy: cp -a of /home/darrell/bin/ai/budget2/.worktrees/rollover-schedule ->
+.../scratchpad/rc1-copy. `/usr/bin/git -C <copy> status --porcelain` empty at start and
+at end; HEAD = ec4234620d301458ee9be12b43bcdca6af31e606 (parent bcb6226). Go 1.26.6.
+The shared worktree was never written to; no git checkout/restore/stash/reset anywhere;
+no server binary executed.
+
+CRITERION 1 — model field + Apply persists the RAW form value for every kind: MET.
+  `/usr/bin/git diff bcb6226 ec42346 -- internal/models/spending_optimizer.go` shows:
+    + FloorMonthlyReal      float64 `json:"floor_monthly_real,omitempty"`
+  inside `type SpendingSearchPreferences struct` (internal/models/spending_optimizer.go:39).
+  `/usr/bin/git diff bcb6226 ec42346 -- internal/handlers/whatif/handlers_spending_optimizer.go`
+  shows line 638 inside handleApplySpendingOptimizerWithHook:
+    - s.SpendingSearch = &models.SpendingSearchPreferences{MaxShortfallPct: p.form....
+    + s.SpendingSearch = &models.SpendingSearchPreferences{FloorMonthlyReal: p.form.FloorMonthlyReal, MaxShortfallPct: p.form....
+  `sed -n '540,660p'` of the same file shows this assignment is unconditional on the single
+  apply path, downstream of the `if c.Guardrails != nil { ... } else { s.Guardrails = nil }`
+  branch — i.e. it runs for every candidate kind, current included (there is no per-kind
+  branch around it; grep shows exactly one SpendingSearch write site, line 638).
+  RAW-vs-NORMALIZED proved, not inferred: throwaway probe TestProbeRawFormFloorPersisted
+  (added to my copy, then deleted) set p.request.FloorMonthlyReal=1234 and
+  p.form.FloorMonthlyReal=7000 and applied the current-plan token:
+    zz_checker_probe_test.go:25: PROBE A saved floor = 7000 (form 7000, request 1234)
+    --- PASS: TestProbeRawFormFloorPersisted (0.01s)
+  (The shipped test sets both fields to 7000, so it alone would not have distinguished them.)
+
+CRITERION 2 — one resolution path: search floor > 0, else policy floor > 0, else absent: MET.
+  handlers_spending_optimizer.go:704-709 (`sed -n '695,780p'`):
+    var floor any
+    if s.SpendingSearch != nil && s.SpendingSearch.FloorMonthlyReal > 0 { floor = s.SpendingSearch.FloorMonthlyReal }
+    else if s.Guardrails != nil && s.Guardrails.MinMonthlySpendingReal > 0 { floor = s.Guardrails.MinMonthlySpendingReal }
+  `grep -n MinimumAboveCurrent internal/handlers/whatif/handlers_spending_optimizer.go` →
+  exactly one site, line 768: `if floorValue, ok := floor.(float64); ok { data["MinimumAboveCurrent"] = floorValue > actual }`
+  — the SAME `floor` variable feeds data["FloorMonthlyReal"] (line 720) and MinimumAboveCurrent.
+  Key-absence proved by probe TestProbeMinimumAboveCurrentKeyAbsent:
+    PROBE B none                   floor=<nil> MinimumAboveCurrent present=false value=<nil>
+    PROBE B legacy-prefs-no-policy floor=<nil> MinimumAboveCurrent present=false value=<nil>
+    PROBE B search-floor           floor=9000 MinimumAboveCurrent present=true value=true
+    PROBE B policy-only            floor=6000 MinimumAboveCurrent present=true value=false
+    --- PASS: TestProbeMinimumAboveCurrentKeyAbsent (0.00s)
+  ("search-floor" 9000 > base 8000 → MinimumAboveCurrent=true derived from the SEARCH floor,
+  i.e. the single path demonstrably drives both keys.)
+  "blank input" for the absent case proved by probe TestProbeBlankFloorRenders, which rendered
+  the real partial and logged the actual tag:
+    <input id="spending-minimum" name="floor_monthly_real" ... required value="" ...>
+
+CRITERION 3 — handler tests exist and pass: MET.
+  Test read in full at internal/handlers/whatif/spending_current_apply_test.go:170-232
+  (TestSpendingApplyKeepsComparisonMinimum). Its three subtests assert, after applying with
+  p.form.FloorMonthlyReal=7000: got.SpendingSearch.FloorMonthlyReal == 7000 (line 204);
+  current-with-rules → got.Guardrails.MinMonthlySpendingReal == 5000 (line 209);
+  current-nil-rules → got.Guardrails == nil (line 213); searched → candidate rules kept,
+  MinMonthlySpendingReal == 6000 (line 217); then spendingOptimizerFormData(got, nil)
+  form["FloorMonthlyReal"] == 7000.0 (line 222) and the JSON round-trip contains
+  `"floor_monthly_real":7000` (line 227). Fixture floors confirmed real, not assumed:
+  spendingFixture sets Guardrails.MinMonthlySpendingReal: 5000 (spending_optimizer_test.go:43)
+  and spendingAccepted's candidate carries MinMonthlySpendingReal: 6000 (line 65).
+  `go test -count=1 -run '...' -v ./internal/handlers/whatif/`:
+    --- PASS: TestSpendingApplyKeepsComparisonMinimum (0.03s)
+      (subtests current-with-rules, current-nil-rules, searched all RUN and PASS)
+
+CRITERION 4 — legacy cases: MET.
+  internal/handlers/whatif/spending_optimizer_test.go:831-869, table
+  TestSpendingOptimizerFormMinimumRequiresSavedFloor rows:
+    {name: "legacy-prefs-policy-floor", guardrails MinMonthlySpendingReal: 6000,
+     prefs: &SpendingSearchPreferences{MaxShortfallPct: 20}, want: 6000.0}
+    {name: "legacy-prefs-no-policy", prefs: &SpendingSearchPreferences{MaxShortfallPct: 20}}  (want nil)
+  Assertion is reflect.DeepEqual(form["FloorMonthlyReal"], tc.want) plus, for want==nil, that
+  the marshalled form contains `"FloorMonthlyReal":null`. Verbose run:
+    --- PASS: TestSpendingOptimizerFormMinimumRequiresSavedFloor (0.00s)
+      subtests no-policy, no-floor, saved-floor, search-floor-wins, search-floor-no-policy,
+      legacy-prefs-policy-floor, legacy-prefs-no-policy — all PASS.
+
+CRITERION 5 — rendered value through the template's single %.2f formatter: MET.
+  `sed -n '15,25p' web/templates/components/whatif/spending_optimizer.html` shows the ONLY
+  formatter on that input: value="{{with $form.FloorMonthlyReal}}{{printf "%.2f" .}}{{end}}".
+  The file is NOT in the diff (`git diff --name-only bcb6226 ec42346` lists no template), so no
+  second formatter was introduced. TestSpendingOptimizerFormRendersSavedMinimum
+  (spending_current_apply_test.go:236-251) renders "whatif-spending-optimizer" with
+  Guardrails floor 5000 + SpendingSearch floor 7000 and asserts the body contains
+  `name="floor_monthly_real"` and `value="7000.00"` and NOT `value="5000.00"`:
+    --- PASS: TestSpendingOptimizerFormRendersSavedMinimum (0.01s)
+  Anchoring checked (a bare substring could in principle match another input): probe
+  TestProbeSavedFloorRenders logged the extracted tag and the counts —
+    PROBE D floor input tag: <input id="spending-minimum" ... value="7000.00" ...>
+    PROBE D 7000.00 count=1  5000.00 count=0
+  i.e. value="7000.00" occurs exactly once in the whole rendered form, on the minimum input.
+
+CRITERION 6 — gates green: MET.
+  In the copy: `go build -buildvcs=false ./...` → BUILD_EXIT=0; `go vet ./...` → VET_EXIT=0;
+  `go test -count=1 ./internal/handlers/whatif/... ./internal/models/...` →
+    ok  budget2/internal/handlers/whatif  9.064s
+    ok  budget2/internal/models          0.005s
+  Composite target: `GOFLAGS=-buildvcs=false /usr/bin/make check` (vet static vuln css-verify test)
+  — log .../scratchpad/makecheck2.log, 76 lines, zero lines containing "FAIL", tailwind rebuild
+  ran ("Rebuilding... Done in 631ms"), govulncheck "No vulnerabilities found", last two lines:
+    ✓ all checks passed
+    EXIT=0
+
+CRITERION 7 — MUTATION CHECK: MET (both mutations kill shipped tests).
+  Mutation A (Apply write reverted to `SpendingSearchPreferences{MaxShortfallPct`), then
+  `go test -count=1 -run TestSpendingApplyKeepsComparisonMinimum -v ./internal/handlers/whatif/`:
+    spending_current_apply_test.go:205: saved search preferences &{FloorMonthlyReal:0 ...}   (x3)
+    --- FAIL: TestSpendingApplyKeepsComparisonMinimum (0.03s)
+        --- FAIL: .../current-with-rules   --- FAIL: .../current-nil-rules   --- FAIL: .../searched
+    FAIL  budget2/internal/handlers/whatif
+  All THREE subtests fail, as required.
+  Mutation B (handler restored from backup, then the form resolution reduced to
+  `if s.Guardrails != nil && s.Guardrails.MinMonthlySpendingReal > 0` only — the RC1 branch
+  deleted), `go test -count=1 ./internal/handlers/whatif/`:
+    --- FAIL: TestSpendingApplyKeepsComparisonMinimum (+ all 3 subtests)
+    --- FAIL: TestSpendingOptimizerFormRendersSavedMinimum
+    --- FAIL: TestSpendingOptimizerFormMinimumRequiresSavedFloor
+        --- FAIL: .../search-floor-wins   --- FAIL: .../search-floor-no-policy
+    FAIL  budget2/internal/handlers/whatif
+  Three shipped tests die, well beyond the "at least one" bar.
+  Copy restored from the pre-mutation backup afterwards: `git status --porcelain` empty and
+  `go test -count=1 ./internal/handlers/whatif/... ./internal/models/...` → ok / ok.
+
+CRITERION 8 — scope: MET.
+  `/usr/bin/git diff --stat bcb6226 ec42346` and `/usr/bin/git show --stat ec42346` agree:
+    internal/handlers/whatif/handlers_spending_optimizer.go |  8 +-
+    internal/handlers/whatif/spending_current_apply_test.go | 88 +++++++++++
+    internal/handlers/whatif/spending_optimizer_test.go     | 14 +-
+    internal/models/spending_optimizer.go                   |  5 +
+    4 files changed, 110 insertions(+), 5 deletions(-)
+  Production files touched = exactly the two named. `git diff --name-only bcb6226 ec42346`
+  lists those four paths and nothing else — set-identical to the manifest
+  .swarm/manifests/RC1.1.files. testdata untouched: `git diff bcb6226 ec42346 -- testdata/`
+  produces 0 lines and the blob ids match —
+    bcb6226:testdata/settings/whatif.json = a63a1541ef58be7d0d419b31b28c0a8caa50c4db
+    ec42346:testdata/settings/whatif.json = a63a1541ef58be7d0d419b31b28c0a8caa50c4db
+  No path in .swarm/critical.globs (storage, dataloader, retirement/engine, transfers,
+  accounts.go, mcpsvc/confirm) is touched. Working tree of the real worktree is clean
+  (`/usr/bin/git -C ... status --porcelain` empty), so the commit IS the whole delta.
+  Only production behaviour change beyond the diff's two hunks: none — the 8-line handler
+  change is 1 modified line + 5 added lines of resolution/comment.
+
+OBSERVATIONS (not failures, for the backlog):
+  O1. `json:"floor_monthly_real,omitempty"` makes a saved 0 indistinguishable from a legacy
+      record with no field, so a 0 always falls back to the policy floor. Harmless today —
+      the input is `required` with min="0.01" and normalizeSpendingRequest/OptimizeSpending
+      reject floors < .01 — but it means the field can never record "explicitly zero", unlike
+      its sibling MaxShortfallPct which deliberately has no omitempty for that reason.
+  O2. The sibling guardrail-optimizer form (web/templates/components/whatif/guardrail_optimizer.html:6)
+      still hardcodes value="7500" for its own floor_monthly_real input and has no saved-preference
+      prefill. Different feature, untouched by RC1, out of scope — noted only because the two
+      forms share the field NAME and a user may expect the same memory there.
+  O3. TestSpendingApplyKeepsComparisonMinimum sets p.request and p.form to the same 7000, so it
+      does not by itself pin the "raw form, not normalized request" contract stated in criterion 1;
+      my PROBE A did. Promoting that probe (request 1234 / form 7000) into the shipped test would
+      make the contract mutation-resistant against a future switch to p.request.

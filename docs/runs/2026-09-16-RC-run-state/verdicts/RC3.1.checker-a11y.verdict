@@ -1,0 +1,202 @@
+VERDICT: FAIL
+CHECKER: checker-a11y
+FAMILY: anthropic
+TASK: RC3
+ATTEMPT: 1
+---
+SCOPE / METHOD
+Audited commit 1f9a35a (worktree /home/darrell/bin/ai/budget2/.worktrees/rollover-schedule,
+branch fix/rollover-schedule) against ACCESSIBILITY.md + WCAG 2.2 AA + SPEC.md
+"RC3 acceptance criteria" (criterion 7). All work done in a `cp -a` copy at
+/tmp/claude-1000/rc3-a11y/copy; no edits made anywhere; no server binary run.
+
+Real render, not guessed HTML: wrote a throwaway Go test
+(internal/handlers/whatif/zzdump_a11y_test.go, deleted with the tmp copy, never
+touched the shared worktree — confirmed clean via `git status` post-hoc) using
+setupTestEnvWithRenderer + the fixture from schedule_month_form_test.go
+(scheduleFormFixture: StartDate 2026-10, ProjectionYears 12, UseCurrentMonth
+false, income StartMonth 11/EndMonth 24, expense StartMonth 11/EndMonth 24,
+one-time Month 11 and Month -1, big-ticket Month 11). Dumped:
+  - GET /whatif full page body (198KB, real base.html layout, "Money In/Out"
+    collapse group server-renders aria-expanded="true" with no `hidden` class
+    or display:none in CSS, so the four RC3 forms are open with NO js needed)
+  - POST /whatif/income with start_month=2020-01 (before plan start) -> 400
+  - POST /whatif/onetime with month=2020-01 (before plan start) -> 400
+Wrapped the two page dumps (light: class="light", dark: class="dark" on
+<html>) with file:// links to the REAL built web/static/css/tailwind.css and
+styles.css (verified current via `make css-verify` -> "tailwind.css is up to
+date") and web/static/vendor/*.js, then ran:
+  npx @axe-core/cli "file://.../whatif_light.html" --tags wcag2a,wcag2aa,wcag22aa
+  npx @axe-core/cli "file://.../whatif_dark.html"  --tags wcag2a,wcag2aa,wcag22aa
+
+AXE RESULTS (both themes identical: 46 issues each)
+  - color-contrast x44: every node is inside the Retirement Spending Phases /
+    quick-adjust card (label[for="phase-N-..."], #phase-N-start-age, etc.) —
+    file web/templates/components/whatif/spending-phases.html, NOT in RC3's
+    18-file manifest, NOT touched by 1f9a35a. PRE-EXISTING, out of scope.
+  - target-size x2: `.hover\:text-positive` and `button[title="Permanently
+    delete"]` resolve to the Big Ticket "Recently Removed" restore/purge
+    buttons (bigticket-card.html, whatif-removed-bigticket block — no `p-1`
+    padding, unlike the equivalent expense-sources-list restore/purge which
+    does have it). Confirmed via `git diff bcb6226 -- bigticket-card.html`
+    that this exact block (restore/purge buttons) has ZERO diff lines —
+    byte-identical to master. PRE-EXISTING, out of scope.
+  - Zero axe hits anywhere in the RC3-changed markup: none of the reported
+    selectors reference income-start-*, income-end-*, expense-start-*,
+    expense-end-*, onetime-month, add-bigticket-month, add-income-*-month,
+    add-expense-*-month, *-schedule-*, *-schedule-help, or the four
+    whatif-add-*-error containers.
+  A-1 (automated audit clean on RC3's own surface): PASS. The two pre-existing
+  clusters are OBSERVATIONS, not FAILs (byte-identical-to-master rule).
+
+MANUAL CHECKS
+
+A-2/A-3 Contrast, both themes, against the PROJECT'S OVERRIDDEN warm-stone
+gray palette (tailwind.config.js — NOT default Tailwind gray; verified the
+override is real and the built CSS reflects it):
+  gray-50 #fafaf9, gray-200 #e7e5e4, gray-700 #44403c, gray-800 #292524,
+  white #ffffff. Sizes: text-gray-700/dark:text-gray-200 is small text
+  (12-14px), so 4.5:1 is the bar. Computed (WCAG relative-luminance formula):
+    text-gray-700 on bg-gray-50  (light, inline-edit row + its "Starts"/
+      "Through" labels + schedule <p>)           = 9.84:1
+    text-gray-700 on bg-white    (light, add-form labels/help)  = 10.27:1
+    dark:text-gray-200 on dark:bg-gray-700 (dark, inline-edit row)  = 8.18:1
+    dark:text-gray-200 on dark:bg-gray-800 (dark, add-form + the month
+      input's own fill, which is also dark:bg-gray-800)          = 12.08:1
+  All clear 4.5:1 by a wide margin in both themes. For reference the PRIOR
+  colors (text-gray-600/dark:text-gray-300) computed to 7.30:1 / 6.90:1 —
+  RC3's swap to -700/-200 is a strict improvement, not a regression.
+  A-2/A-3: PASS.
+
+A-4/A-5 Keyboard + focus, both themes (cascade trace, not a live Tab press
+per the task's own instruction):
+  All 10 new month inputs are plain <input type="month">, no tabindex,
+  inside ordinary <form> flow — natively focusable/operable, no trap.
+  Class lists on every RC3 month input (checked all 10 in the rendered
+  output) carry only border/bg/text/padding utilities — no `focus:` Tailwind
+  classes, no inline `outline:none`. The one rule that applies is sitewide,
+  web/static/css/styles.css:143-149:
+    input:focus, select:focus, textarea:focus {
+        outline: none;
+        box-shadow: 0 0 0 2px rgb(var(--accent));
+    }
+  --accent is 79/70/229 (indigo-600, #4f46e5) in :root and 165/180/252
+  (indigo-300, #a5b4fc) in .dark (styles.css lines 35/63; comment there
+  documents this was deliberately re-picked in BK1 2026-09-08 after
+  indigo-500 measured 2.3:1 in dark mode). Computed ring contrast:
+    light ring #4f46e5 vs input fill bg-gray-50 (inline row)   = 6.02:1
+    light ring #4f46e5 vs card bg-white (add-form)             = 6.29:1
+    dark ring  #a5b4fc vs input fill dark:bg-gray-800          = 7.61:1
+    dark ring  #a5b4fc vs surrounding row fill dark:bg-gray-700 = 5.15:1
+  All clear the 3:1 bar (A-5) by 2x+ in both themes. This is inherited,
+  unmodified sitewide CSS (not part of RC3's diff) but its effect on the
+  NEW inputs was explicitly what the task asked me to verify, and it holds.
+  A-4/A-5: PASS.
+
+A-6 Structure: page has exactly one <h1> ("What-If Analysis"), <nav>/<main>
+present; heading levels under the four RC3 cards are unchanged plain <h2>
+("Income Sources", "Big Ticket Items", "One-Time Expenses", "Additional
+Expenses") — RC3 touched none of that structure. PASS (unaffected).
+
+A-8/A-9: all delete/restore/purge icons in the four files keep
+aria-hidden="true" on the <svg> plus aria-label on the button (unchanged
+pattern). Horizon warning, "(past)" marker, and the Starts/Through schedule
+line are plain text, not color-only. PASS.
+
+Labels (SPEC criterion 7 "programmatic label"): grepped the rendered page
+for every `<label for=...>`/`<input id=...>` pair for all 10 month inputs —
+all 10 match exactly (income-start-sched-inc, income-end-sched-inc,
+add-income-start-month, add-income-end-month, expense-start-sched-exp,
+expense-end-sched-exp, add-expense-start-month, add-expense-end-month,
+onetime-month, add-bigticket-month). PASS.
+
+aria-describedby-to-HELP wiring (part of SPEC criterion 1): all 10
+aria-describedby values resolve to a present <p id=...> with matching text
+(income-schedule-sched-inc, add-income-schedule-help,
+expense-schedule-sched-exp, add-expense-schedule-help, onetime-month-help,
+add-bigticket-month-help). PASS.
+
+A-15 Target size: axe's target-size rule (a real rendered-box measurement,
+not a class-name guess) audited the whole page and did NOT flag any of the
+10 month inputs, their labels, or the delete/restore buttons immediately
+adjacent to the RC3 forms — it flagged only the two pre-existing Big Ticket
+restore/purge buttons discussed above. PASS for RC3's own controls.
+
+FAILURE
+
+WCAG 4.1.3 Status Messages (AA) / SPEC.md RC3 criterion 7 ("error messages
+associated with the field"):
+  Traced the actual error path end to end (not assumed): all four add forms
+  (income, expense, one-time, big-ticket) POST to handlers that call
+  renderRetargetedError(w, msg, 400, "#whatif-add-<kind>-error")
+  (internal/handlers/whatif/handlers_income_expense.go:41,164,245,310), which
+  sets HX-Retarget/HX-Reswap headers and writes a plain
+  `<div class="p-4 bg-negative-soft ...">` with NO role="alert" and NO
+  aria-live (renderError, internal/handlers/whatif/handlers.go:1096-1113).
+  Verified the actual response bytes from the harness:
+    POST /whatif/income {start_month: 2020-01} -> 400,
+      HX-Retarget: #whatif-add-income-error, HX-Reswap: innerHTML,
+      body: "<p ...>Start month must be Oct 2026 or later (the plan starts
+      that month)</p>"
+    POST /whatif/onetime {month: 2020-01} -> 400,
+      HX-Retarget: #whatif-add-onetime-error, HX-Reswap: innerHTML,
+      body: "<p ...>Month must be Oct 2026 or later (the plan starts that
+      month)</p>"
+  The message text DOES name the field ("Start month...", "Month..."), but:
+    - none of the 10 new month inputs' aria-describedby points at the error
+      container (they all point at the help <p>, confirmed above) — the
+      error is not programmatically associated with the input;
+    - the error <div>s (#whatif-add-income-error, #whatif-add-expense-error,
+      #whatif-add-onetime-error, #whatif-add-bigticket-error) carry no
+      role="alert"/role="status"/aria-live, and #whatif-results (the target
+      the inline-edit-row PUT errors swap into) likewise has none;
+    - traced web/static/js/base.js's htmx:responseError/beforeSwap/afterSwap
+      handlers: they only preserve scroll position and console.error — no
+      focus move, no live-region wiring for this path (unlike, e.g.,
+      whatif-roth-conversion.js or whatif-spending-optimizer.js elsewhere in
+      the app, which DO move focus to `[role="alert"]` on their own error
+      paths).
+  Net effect: a screen-reader user who submits a month before the plan start
+  gets a visually-appearing error box with no announcement and no
+  programmatic link from the field they just left — they have no way to
+  discover why the add silently "failed" short of manually re-exploring the
+  DOM. This is exactly the SC 4.1.3 case in WCAG's own understanding doc
+  (inline validation error, no context change, no live region).
+
+  PROVENANCE (git diff bcb6226): the error <div> markup and renderError/
+  renderRetargetedError are 100% BYTE-IDENTICAL to master — this exact
+  non-live, non-associated error mechanism already existed and is reused
+  unchanged by other untouched forms (healthcare, scenario, sync, sweep).
+  By the letter of the byte-identical-to-master rule this mechanism itself
+  is PRE-EXISTING. What is NOT pre-existing is the pairing: RC3's 10 brand
+  new month inputs are new content wired with aria-describedby for the
+  FIRST time on these forms (master's year inputs had no aria-describedby
+  at all), and RC3's own SPEC.md criterion 7 explicitly promises "error
+  messages associated with the field" as this task's acceptance bar. That
+  promise is unmet for the new inputs. I'm reporting this as a FAIL against
+  the task's own written acceptance criterion rather than downgrading it to
+  an observation, because criterion 7 names it explicitly as in-scope — but
+  the lead should weigh the pre-existing-mechanism provenance above in any
+  CONCEDE/overrule decision; this is not a regression RC3 introduced, it's
+  a pre-existing sitewide gap RC3 had the opportunity (per its own spec) to
+  close for these fields and didn't.
+
+  Suggested minimal fix (not prescriptive): add `role="alert"` (or
+  `aria-live="assertive"`) to the four `#whatif-add-<kind>-error` divs, and/or
+  add the error-container id to each field's aria-describedby (space-
+  separated with the existing help id) — consistent with the pattern already
+  used elsewhere in this codebase (whatif-roth-conversion.js,
+  whatif-spending-optimizer.js).
+
+OBSERVATIONS (not FAIL — provenance shown)
+- axe color-contrast x44 in the Retirement Spending Phases / quick-adjust
+  card: web/templates/components/whatif/spending-phases.html, not in RC3's
+  manifest, not touched by 1f9a35a. Backlog candidate for a future a11y run.
+- axe target-size x2 on the Big Ticket "Recently Removed" restore/purge
+  buttons (bigticket-card.html): byte-identical to master (git diff
+  bcb6226 shows zero changes to that block). The sibling expense-sources
+  restore/purge already has the `p-1` padding fix; big-ticket's equivalent
+  block does not. Backlog candidate.
+- Reduced motion / animate-spin, animate-pulse, transition-* utilities seen
+  in whatif.html are all outside RC3's diff (scenario buttons, collapse
+  chevrons, loading skeleton) — pre-existing, unaffected.

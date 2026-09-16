@@ -1,0 +1,121 @@
+VERDICT: PASS
+CHECKER: checker-second
+FAMILY: adversarial
+TASK: RC2
+ATTEMPT: 2
+---
+Work inspected: commit ee7af8a in a `cp -a` copy at /tmp/rc2work2/rc2-second
+(parent f479de3 = attempt 1; base bcb6226; never mutated the shared
+worktree; only `/usr/bin/git checkout --` and `/usr/bin/git status` run,
+always in my private copy; binary never invoked; no data/ dir created).
+Manifest RC2.2.files (3 files) matches `git show --stat ee7af8a` exactly.
+
+Attempt-1 FAIL (missed second caller of whatif-bigticket-item in
+pages/whatif.html:342, causing the OOB partial to truncate mid-response for
+any mutation on a plan holding a big-ticket item) — RE-ATTACKED and REFUTED
+on attempt 2:
+
+  web/templates/pages/whatif.html:342 now reads
+    {{template "whatif-bigticket-item" (dict "Settings" $.Settings "Item" .)}}
+  matching bigticket-card.html:20's own caller exactly.
+
+  Mutation-kill proof: reverted the line back to the bare-item form
+  (`{{template "whatif-bigticket-item" .}}`) in my copy and re-ran the
+  shipped test:
+    go test ./internal/handlers/whatif/ -run
+      'TestMutationOOBPartial_RendersScheduleListsCompletely|TestWhatIfPage_RendersScheduleListsCompletely'
+  → TestMutationOOBPartial_RendersScheduleListsCompletely FAILS with the
+  exact "Error rendering" / truncation signature the attempt-1 FAIL
+  described (leaked "Internal Server Error" text into the response body,
+  #onetime-list missing). Restored via `git checkout --` in my copy and the
+  test passes again. This is not a vacuous test — it drives the REAL
+  handler (handleWhatIfAddBigTicket) through httptest, not a hand-built
+  render.
+
+Surface enumeration for "every render path that includes schedule
+entries" (not trusting the diff):
+- `grep -rn 'whatif-bigticket-item\|whatif-onetime-item' web/templates/` →
+  exactly 4 call sites total (bigticket-card.html's own list + whatif.html
+  OOB block, for each of bigticket and onetime); all 4 now pass the
+  `(dict "Settings" $.Settings "Item" .)` shape. No fifth caller anywhere
+  (MCP tools do not render templates directly — grepped internal/mcp/ for
+  RenderPartial/whatif-content/whatif-results-with-oob: zero hits; MCP
+  drives the same HTTP handlers).
+- `whatif-removed-bigticket` (both callers pass raw `.`, not a dict) is a
+  DIFFERENT contract — it expects the caller's dot to already carry
+  `.Settings` as a field (root page/OOB data), which both whatif.html:348
+  and bigticket-card.html:11 satisfy; `$.Settings` inside its `{{range}}`
+  resolves to that same object. Confirmed no regression here: this
+  template's shape was not touched by the RC2 diff and both its callers
+  were already correct at attempt 1.
+- `grep -rn 'RenderPartial(w, "whatif-' internal/handlers/whatif/` →
+  enumerated every partial name rendered by production code
+  (handlers_rates.go, handlers_sweep.go, spending_trajectory.go, sync.go,
+  handlers_guardrail_optimizer.go, handlers_roth_recommendations.go); none
+  render whatif-bigticket-item/whatif-onetime-item/whatif-removed-bigticket
+  directly — only whatif-results-with-oob (mutation path, handlers.go:195/
+  446) and the full-page whatif-content path do, both now fixed and both
+  covered by the new shipped tests.
+
+Rendered-HTML diff probe (year-aligned item, month=24): built a throwaway
+test (not committed) rendering the full GET /whatif page with a
+year-aligned BigTicketItem and inspected the delete button's
+`aria-label`/svg markup — identical structure to what attempt-1's
+inspection showed for ec42346; only the schedule label field changed, no
+other attribute regressed. Probe file deleted after use; copy left clean
+(`git status --porcelain` empty).
+
+Criterion 11 (scenario re-anchoring, revised) — attacked directly:
+- Confirmed `LoadScenarioSettings` (settings.go:794) → `decodeSettings` →
+  `normalizeLoadedWhatIfSettings` (settings.go:366) calls
+  `resolveCurrentMonth(settings, time.Now())` unconditionally at line 419,
+  and `LoadScenarioSettings` never calls `saveInternal`/write — read-only,
+  as documented.
+- Ran the three shipped tests in settings_scenario_current_month_test.go:
+  all PASS (`TestLoadScenarioSettingsResolvesCurrentMonth`,
+  `...LeavesFixedDateScenarioAlone`, `...ConvertsAndShiftsLegacyKeys`).
+- Mutation-kill: replaced the `resolveCurrentMonth(settings, time.Now())`
+  call at settings.go:419 with a no-op in my copy → both the
+  current-month-resolve test and the legacy-decode-and-shift test FAIL
+  with the exact stale-offset symptom (StartDate stuck at the file's own
+  date, offsets un-shifted). Restored from backup; not vacuous.
+- Chain-frame question (linked file `use_current_month:false` while
+  primary is `true`): traced prepareChainedSettings (chain.go:20-34) —
+  `prepared.StartDate = primary.StartDate`, and it rebases
+  `linked.IncomeSources`/`ExpenseSources`/`BigTicketItems` by
+  `transitionMonth = transitionYear*12`, counted in the PRIMARY's frame.
+  A fixed-date linked scenario's own Month/StartMonth values stay expressed
+  relative to ITS OWN StartDate (never touched by resolveCurrentMonth, per
+  the fixed-date no-op rule), so if the linked file's fixed StartDate
+  differs from the primary's, the transition rebase is frame-mismatched.
+  This is NOT new: the pre-RC2 code did `rebaseExpenseSources(sources,
+  transitionYear)` with the identical `prepared.StartDate = primary.StartDate`
+  assumption and Year-based (not Month-based) offsets already suffered the
+  same frame-alignment dependency — chain linking has always assumed the
+  linked scenario's schedule offsets are meant to be read in the primary's
+  frame at the transition point, independent of whether either plan is
+  current-month or fixed-date. RC2 criterion 11's text explicitly documents
+  "a fixed-date scenario file is untouched" as the intended contract, so
+  this is a pre-existing chain-composition property, not a regression
+  introduced or claim contradicted by attempt 2. Reporting as an
+  observation, not a FAIL.
+
+Green / oracle (criterion 9/10, re-run from scratch on ee7af8a):
+- `go build ./...`, `go vet ./...`, `go test -count=1 ./...` — all green,
+  full package list checked (68 packages incl. whatif, retirement,
+  retirement/analysis, retirement/engine, models, templates).
+- `bash .swarm/tier3/RC2/accept.sh /tmp/rc2work2/rc2-second` → O1-O4 all
+  green including the new O2t template-lane oracle test
+  (TestRC2OracleTemplatesRenderWithScheduledEntries), ends `ORACLE PASS`.
+- `git status --porcelain -- testdata` empty after the full suite run.
+
+No numbered criterion was refuted on attempt 2. The attempt-1 defect is
+fixed at its actual root (both template callers now agree on the dict
+contract) with tests that drive the real handler/page paths and are
+proven non-vacuous by mutation.
+
+Observations (not FAIL):
+- Chain-transition rebase frame mismatch when a linked scenario is
+  fixed-date and the primary is current-month (see above) — pre-existing,
+  out of RC2's scope; worth a backlog note for whoever next touches
+  chain.go/prepareChainedSettings.

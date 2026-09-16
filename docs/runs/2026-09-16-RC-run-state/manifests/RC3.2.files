@@ -1,0 +1,8 @@
+internal/templates/render.go
+internal/templates/render_schedule_month_test.go
+internal/handlers/whatif/schedule_month_form_test.go
+web/templates/components/whatif/income-sources-list.html
+web/templates/components/whatif/expense-sources-list.html
+web/templates/components/whatif/onetime-card.html
+web/templates/components/whatif/bigticket-card.html
+web/templates/pages/whatif.html

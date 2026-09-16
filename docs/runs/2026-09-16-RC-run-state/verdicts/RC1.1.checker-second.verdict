@@ -1,0 +1,141 @@
+VERDICT: PASS
+CHECKER: checker-second
+FAMILY: adversarial
+TASK: RC1
+ATTEMPT: 1
+---
+Worked in /tmp/rc1-second-work (cp -a of the rollover-schedule worktree). Used /usr/bin/git throughout. Never ran the built server binary. Restored every mutation I introduced (verified via diff against a saved-off copy) before finishing.
+
+1. FloorMonthlyReal persisted from raw form for every candidate kind.
+   handlers_spending_optimizer.go:638 writes `p.form.FloorMonthlyReal` into
+   the new SpendingSearchPreferences literal on the ONE code path that
+   builds it, unconditional on candidate Kind (current/flexible/planned all
+   flow through the same handleApplySpendingOptimizerWithHook). Confirmed
+   `p.form` is `models.SpendingOptimizerRequest`, the raw parsed form (never
+   the normalized request) — comment at line 637 states this and
+   TestSpendingApplySavesSearchPreferences's "explicit" case tests p.request
+   is discarded in favor of p.form. `floor_monthly_real` is `required: true`
+   in parseSpendingRequest (line 115), so it is always present at Prepare
+   time for every candidate kind, including current. PASS.
+
+2. Prefill resolution order + single path.
+   spendingOptimizerFormData (line 701-710): one `floor any` variable set
+   from SpendingSearch.FloorMonthlyReal (if >0) else Guardrails.MinMonthly-
+   SpendingReal (if >0) else absent (nil interface -> `{{with}}` renders
+   nothing). Same `floor` variable feeds both `data["FloorMonthlyReal"]`
+   (line 720) and, via the `floorValue, ok := floor.(float64)` type-assert
+   at line 767, `data["MinimumAboveCurrent"]`. No second read of either
+   source anywhere else in this function. PASS.
+
+3. Three Apply scenarios (TestSpendingApplyKeepsComparisonMinimum, ran with
+   `go test -run TestSpendingApplyKeepsComparisonMinimum -v`, all 3 subtests
+   PASS):
+   - current-with-rules: floor entered 7000, saved Guardrails.MinMonthly-
+     SpendingReal stays 5000 (fixture), form reloads FloorMonthlyReal=7000.
+   - current-nil-rules: Guardrails nil'd on the fixture before apply, apply
+     writes no rules, form reloads FloorMonthlyReal=7000 anyway (from
+     SpendingSearch, not Guardrails).
+   - searched: spendingAccepted() candidate carries
+     Guardrails.MinMonthlySpendingReal=6000; apply saves that AND
+     FloorMonthlyReal=7000 separately; form reloads 7000, not 6000.
+   PASS.
+
+4. Legacy fallback: TestSpendingOptimizerFormMinimumRequiresSavedFloor
+   table covers "legacy-prefs-policy-floor" (prefs present, no
+   FloorMonthlyReal field, policy floor 6000) -> want 6000, and
+   "legacy-prefs-no-policy" -> want nil (absent/blank). Ran this test
+   explicitly, all 7 subtests PASS. Confirmed via mutation (see #7) that
+   removing the SpendingSearch-first branch breaks the "search-floor-wins"
+   and "search-floor-no-policy" cases specifically, i.e. the ordering is
+   load-bearing and tested, not accidental.
+
+5. Single %.2f formatter. Only one template site renders
+   `$form.FloorMonthlyReal`: web/templates/components/whatif/
+   spending_optimizer.html:20, `{{printf "%.2f" .}}` inside `{{with}}`
+   (falsy-safe, matches how floor is only ever set >0). Grepped every other
+   FloorMonthlyReal occurrence in the tree (handlers_spending_graph.go,
+   handlers_guardrail_optimizer.go, handlers_guardrail_graph.go) — these are
+   a DIFFERENT struct/field entirely (the live per-request search value fed
+   into the graph/optimizer at run time, not the persisted prefill this task
+   touches), so they are not a second formatter for the SAME value.
+   TestSpendingOptimizerFormRendersSavedMinimum asserts the rendered HTML
+   contains exactly `value="7000.00"` and explicitly asserts NOT
+   `value="5000.00"` (the pre-fix bug's value) — ran it, PASS. A second
+   table case in TestSpendingOptimizerFormMinimumRequiresSavedFloor uses a
+   fractional saved-floor value 6250.25 and asserts the map value (not
+   rendered string, but 6250.25 is exactly representable in float64 so
+   %.2f is deterministic here; no dual-formatter risk exists since there is
+   only one call site).
+
+6. Build/vet/tests: `go build -buildvcs=false ./...` clean; `go vet ./...`
+   clean; `staticcheck ./internal/handlers/whatif/... ./internal/models/...`
+   clean; `govulncheck ./...` reports 0 vulnerabilities in this module's own
+   code (8 in imported deps, pre-existing, unrelated to this change); full
+   `go test ./...` — every package ok, including internal/handlers/whatif
+   (12.1s) and internal/models. This covers every Makefile `check` target
+   except css-verify, which is a no-op here since NO template file changed
+   in this commit (`git diff bcb6226 ec42346 -- web/templates/` is empty —
+   the template's existing FloorMonthlyReal binding predates RC1).
+
+7. Mutation kills, both verified live in the copy then reverted:
+   - Reverted the Apply write (dropped `FloorMonthlyReal: p.form.
+     FloorMonthlyReal` from the SpendingSearchPreferences literal at line
+     638): TestSpendingApplyKeepsComparisonMinimum (all 3 subtests) and
+     TestSpendingApplySavesSearchPreferences (all 3 subtests) FAIL.
+   - Reverted the resolution order (dropped the SpendingSearch-first branch,
+     falling back to Guardrails-only, i.e. the original bug):
+     TestSpendingApplyKeepsComparisonMinimum (all 3), TestSpendingOptimizer-
+     FormRendersSavedMinimum, and 2 of 7 TestSpendingOptimizerFormMinimum-
+     RequiresSavedFloor subtests (search-floor-wins, search-floor-no-policy)
+     FAIL.
+   Restored the file after each mutation; `diff` against the pre-mutation
+   copy confirmed byte-identical restoration.
+
+8. Scope: `git diff bcb6226 ec42346 --stat` shows exactly 4 files: the 2
+   production files named in the task plus 2 test files (spending_current_
+   apply_test.go new, spending_optimizer_test.go extended). testdata/
+   settings/whatif.json does not appear in the diff at all — unchanged.
+   Manifest RC1.1.files lists the same 4 files, nothing more.
+
+Additional adversarial probes (all held up):
+- Every other reader/writer of SpendingSearch or the comparison minimum
+  enumerated: handlers_guardrail_optimizer.go, handlers_rates.go (guardrail
+  policy settings form), handlers_spending_graph.go — none read or write
+  models.SpendingSearchPreferences.FloorMonthlyReal; they use unrelated
+  request-scoped floor values from live form posts. No split-classification
+  or leak found.
+- appliedSpendingEvidenceFresh / getSettingsHash: confirmed s.SpendingSearch
+  (now carrying FloorMonthlyReal) is assigned at line 638, BEFORE
+  s.AppliedSpendingEvidence is nil'd and the hash computed (lines
+  648-651), and the same post-hash settings object is what gets saved --
+  so the extra field cannot cause spurious staleness. Not specifically
+  covered by a dedicated new assertion, but TestSpendingApplyKeepsComparison
+  Minimum's "current-with-rules"/"searched" runs call
+  spendingOptimizerFormData(got, nil) after Apply and get the expected
+  values, which would not happen if the hash/settings pairing were broken
+  in a way that mattered to this path; separately
+  TestSpendingApplySavesSearchPreferences explicitly asserts
+  appliedSpendingEvidenceFresh(got) is true post-apply.
+- omitempty/0 floor: parseSpendingRequest rejects `n <= 0` for
+  floor_monthly_real (required=true), so FloorMonthlyReal can never be a
+  legitimately-saved 0 that omitempty would silently drop from JSON. Also
+  directly asserted by TestSpendingOptimizerFormMinimumRequiresSavedFloor's
+  "no-policy"/"no-floor" cases expecting `"FloorMonthlyReal":null` in the
+  JSON-encoded form data.
+- Prepare/Cancel flow: grepped every write of `s.SpendingSearch` in
+  handlers_spending_optimizer.go -- exactly one, at line 638, inside Apply.
+  Prepare is read-only re preferences persistence; nothing writes
+  SpendingSearch before Apply.
+- Scenario save: SaveWithRevisionIfScenario receives the same `s` that
+  carries the new SpendingSearch, same call already exercised by
+  TestSpendingApplyKeepsComparisonMinimum via rm.Load()/LoadContextWithRevision
+  after Apply, which round-trips through the real storage layer (JSON file),
+  not a mock -- confirms the field survives a real save/load cycle.
+- No reflect.DeepEqual/JSON-record comparison test was weakened to make
+  this pass: TestSpendingApplyCurrentPlan's byte-identical-except-two-fields
+  check and TestSpendingApplySavesSearchPreferences's analogous check both
+  explicitly null out SpendingSearch/AppliedSpendingEvidence on both sides
+  before comparing, which is the correct scoping (asserting no OTHER field
+  changed), not a weakening.
+
+No defect found against any numbered criterion. No beyond-scope findings.

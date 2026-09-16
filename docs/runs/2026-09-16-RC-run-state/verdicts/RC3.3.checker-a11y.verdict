@@ -1,0 +1,200 @@
+VERDICT: PASS
+CHECKER: checker-a11y
+FAMILY: anthropic
+TASK: RC3
+ATTEMPT: 3
+---
+SCOPE / METHOD
+Audited commit 5d4c10f (worktree /home/darrell/bin/ai/budget2/.worktrees/rollover-schedule,
+branch fix/rollover-schedule, parent a57394c = attempt 2 which this lane PASSed
+(.swarm/verdicts/RC3.2.checker-a11y.verdict), base bcb6226 = master).
+`/usr/bin/git diff a57394c 5d4c10f --stat` confirmed against the RC3.3.files
+manifest: internal/models/income_source.go(+test), internal/templates/render.go,
+internal/handlers/whatif/handlers.go(+schedule_month_form_test.go),
+internal/services/retirement/analysis/{budget_fit,spending_funding}.go(+tests),
+internal/services/retirement/calculator_expense_test.go, and the two UI files
+web/templates/components/whatif/{income,expense}-sources-list.html. All work
+done in a `cp -a` copy at
+/tmp/claude-1000/.../scratchpad/rc3a3/copy (left in place under the session
+scratchpad, not the shared tree); no edits anywhere in the shared worktree;
+the built server binary was never run.
+
+The UI-file diff is a pure call-site swap: `{{if scheduleEnded .EndMonth}}` ->
+`{{if .ScheduleEnded}}` and `{{if eq .StartMonth 0}}` -> `{{if .SinceStart}}`.
+Text nodes, classes, ids, aria-* attributes are byte-identical to a57394c in
+both files (only the two `{{if}}` conditions changed). render.go only drops
+the now-dead `scheduleEnded` func map entry. The new model methods
+(IncomeSource/ExpenseSource .ScheduleEnded/.SinceStart) and the budget_fit.go/
+spending_funding.go/handlers.go behavior changes (omit an ended expense from
+Budget Fit; no "starts" event/marker for a SinceStart source) are Go-only,
+consumed by templates only through the two conditions already covered above.
+
+CSS currency: `make css-verify` -> "tailwind.css is up to date" in the copy.
+`go test ./internal/...` in the copy: all packages ok (including
+internal/handlers/whatif, internal/services/retirement/analysis,
+internal/models, internal/templates).
+
+Real render, not guessed HTML: wrote a throwaway Go test
+(internal/handlers/whatif/zzdump_a11y_test.go, TestZZDumpA11y, deleted with the
+tmp copy) using setupTestEnvWithRenderer + the SHIPPED `clampedFixture` helper
+(internal/handlers/whatif/schedule_month_form_test.go:488, added this attempt,
+matches the manifest's own test file) — built through the real 20-month
+rollover exactly as the task brief specifies: start_date 20 months before
+time.Now(), exp-ended (StartMonth 0->0, EndMonth 3->0), exp-clamped
+(StartMonth 4->0, EndMonth 30->10), inc-clamped (StartMonth 12->0, EndMonth
+42->22), inc-ended (StartMonth 0->0, EndMonth 2->0) — saved and reloaded so
+shiftScheduleOffsets actually ran the clamp (fixture's own assertions on the
+loaded offsets passed). Dumped GET /whatif (page.html) and a real successful
+mutation (handleWhatIfAddOneTime, month=2027-09 -> 200 OK, the actual OOB
+whatif-results-with-oob fragment, mutation.html).
+
+Wrapped page.html as light (its own server-rendered `class="light"` on
+`<html>`, untouched) and dark (one string substitution to `class="dark"` on
+that same tag, nothing else touched) variants, and wrapped mutation.html's
+fragment body in a minimal shell for light/dark, all loading the real built
+`/static/css/tailwind.css` and `/static/css/styles.css` via a symlink into the
+copy's `web/static`. Served via `python3 -m http.server`. Ran:
+  npx @axe-core/cli "http://127.0.0.1:8927/<page>.html" --tags wcag2a,wcag2aa,wcag22aa
+for page_light/dark and mutation_light/dark, plus JSON dumps (-s) for
+page_light/dark to inspect individual pass/violation nodes.
+
+AXE RESULTS
+  page_light / page_dark: 41 issues each, ALL "color-contrast", ALL inside
+    web/templates/components/whatif/spending-phases.html (phase-N-* selectors,
+    identical cluster class to RC3.1/RC3.2's audits). No target-size hits at
+    all this run (clampedFixture sets RemovedBigTicketItems = nil, so the
+    Big-Ticket "Recently Removed" restore/purge buttons RC3.2 saw don't
+    render here — the clamped-only fixture used at RC3.2 for its own
+    clamped_light/dark pages showed the same 44-contrast/0-target-size
+    shape). Confirmed PRE-EXISTING via
+    `/usr/bin/git diff bcb6226 5d4c10f -- web/templates/components/whatif/spending-phases.html`
+    (zero output, byte-identical) — same file, same provenance as RC3.1/RC3.2.
+    Zero violation selectors reference any RC3-changed id/class (income/
+    expense-sources-list rows, budget-analysis.html, the clamped fixture's
+    exp-ended/exp-clamped/inc-clamped/inc-ended ids).
+  JSON pass-list confirms BOTH color-contrast AND target-size rules ran
+  against and explicitly PASSED every clamped-fixture node, both themes:
+    color-contrast passes (14 nodes/theme) — the clamped-start rows' name
+      spans, labels, start/end month inputs and the schedule <p> for both
+      `inc-clamped` and `exp-clamped`.
+    target-size passes (8 nodes/theme) — `button[hx-delete=".../income/
+      inc-clamped"]`, `.../income/inc-ended"]`, `.../expense/exp-ended"]`,
+      `.../expense/exp-clamped"]` (all four delete/remove buttons, both the
+      display-only ended rows AND the clamped-start rows, income AND
+      expense), plus the clamped-start rows' month inputs.
+  mutation_light / mutation_dark: 0 violations, 0 issues (all four
+    role="alert" OOB error divs present, no aria-*/duplicate-id hits).
+  A-1: PASS on RC3's own surface across all 4 renders; the spending-phases.html
+  cluster remains an OBSERVATION (unchanged provenance from RC3.1/RC3.2).
+
+MANUAL CHECKS
+
+1. Ended rows (income AND expense), both themes — re-confirmed with the NEW
+   income-ended case this attempt's fixture adds:
+   - GET /whatif (page.html), income (`inc-ended`, name ClampOldAnnuity):
+     "Ended before the plan start (Sep 2026) — not counted; remove it if you
+     no longer need it", `aria-label="Delete income source ClampOldAnnuity"`.
+   - Same page, expense (`exp-ended`, name ClampOldLease): identical wording
+     structure, "Ended before the plan start (Sep 2026) — not counted...",
+     `aria-label="Delete expense ClampOldLease"`.
+   - Both rows: no form, no schedule/amount inputs (grepped page.html: no
+     `hx-put="/whatif/income/inc-ended"` or `.../expense/exp-ended"`, matching
+     criterion 3's "DISPLAY-ONLY row ... no htmx form").
+   - Text contrast: axe color-contrast PASS both themes (same
+     `text-gray-700 dark:text-gray-200` on `bg-gray-50`/`dark:bg-gray-700`
+     pair RC3.1/RC3.2 already computed and reused unchanged, not a new color
+     choice — confirmed via the template diff showing these classes
+     untouched).
+   - Target size: axe target-size PASS both themes, explicitly measured (see
+     JSON pass-list above) for both `button[hx-delete=".../income/inc-ended"]`
+     and `.../expense/exp-ended"]` — A-15: PASS.
+   - No information by color alone: state is in text ("Ended before the plan
+     start...— not counted"), not just row styling — A-9: PASS.
+   - Reproduced identically in the mutation OOB partial (mutation.html):
+     both ended rows and text present, byte-for-byte the same wording as the
+     full-page render.
+   Point 1: PASS. Income ended row (new this fixture) matches the expense
+   one exactly in structure and wording.
+
+2. Budget Fit card (budget-analysis.html), with the ended expense omitted:
+   - `exp-ended`/ClampOldLease does NOT appear anywhere in the Budget Fit
+     breakdown (grepped the card's rendered region in page.html: only
+     "Living Expenses", "Healthcare", "You (Medicare)" and "ClampGym
+     (through Jun 2027)" — ClampGym is `exp-clamped`, correctly included and
+     carrying its Through note).
+   - No empty/orphan element: the `{{range .Analysis.BudgetFit.
+     ExpenseBreakdown}}` loop in `whatif-expense-rows` simply emits one
+     fewer `<div class="flex justify-between py-0.5 pl-4">` — inspected the
+     rendered HTML around the loop (budget-analysis.html:342-364, unchanged
+     by this diff) and found no dangling wrapper, no duplicate/empty
+     `opacity-40` row, headings and section structure (Expenses/Income
+     labels, totals) intact and matching the pre-change shape.
+   - The clamped-start INCOME (`inc-clamped`/ClampPension) shows no "starts"
+     note in the breakdown — grepped: `ClampPension` appears alone with no
+     trailing `(starts ...)` span, confirming budget_fit.go's
+     `!source.SinceStart()` gate. `git diff` of budget_fit.go shows this is
+     exactly the pinned change (was `source.StartMonth > 0`).
+   - `opacity-40` zero-amount-row mechanism itself untouched (`budget-
+     analysis.html` byte-identical to master, see A-1 above); this fixture's
+     items are all non-zero at month 0 so no $0/mo row rendered here — not a
+     regression, just not exercised by this fixture.
+   Point 2: PASS.
+
+3. Re-confirmation (unchanged surfaces since RC3.2's PASS):
+   - All four add-form error containers (`whatif-add-income-error`,
+     `-expense-`, `-onetime-`, `-bigticket-`) carry `role="alert"` on
+     page.html (grepped, 4/4) AND on mutation.html's OOB block (grepped,
+     4/4) — confirmed via `/usr/bin/git diff a57394c 5d4c10f -- web/templates/
+     pages/whatif.html` returning EMPTY: this attempt did not touch
+     whatif.html at all, so RC3.2's PASS on point 1 (error announcement)
+     carries forward unchanged, not merely re-asserted.
+   - Every month input's `aria-describedby` resolves: grepped page.html for
+     all 6 add-form month inputs (income/expense start+end, onetime, big-
+     ticket) — all list `<field>-schedule-help whatif-add-<kind>-error`,
+     both ids present in the DOM (same as RC3.2).
+   - Labels unique per row: grepped id-bearing elements in page.html and
+     mutation.html for exact-string collisions across the two source lists
+     (inc-clamped/inc-ended/exp-clamped/exp-ended) — none.
+   - Focus cascade for `type=month` unchanged: `git diff a57394c 5d4c10f --
+     web/static/css/styles.css` is EMPTY — styles.css untouched this
+     attempt, so the sitewide focus-visible catch-all rule (unchanged since
+     BK-2026-09-08) still applies identically.
+   - Landmarks/headings (A-6): `grep -c "<h1"` = 1, `grep -c "<main\|<nav\|
+     <footer"` = 3 on page.html — unchanged shape.
+   - axe zero NEW violations in both themes: the only violations found (41
+     color-contrast, spending-phases.html) are byte-identical to master
+     (`git diff bcb6226 5d4c10f -- .../spending-phases.html` empty) — same
+     provenance as RC3.1/RC3.2, not introduced or replicated by this
+     attempt.
+   Point 3: PASS.
+
+TRACED (not executed): the timeline-event change in handlers.go
+(`buildProjectionChartEvents` now skips `source.SinceStart()` sources before
+computing a "Pension starts"/"Social Security starts" chart-marker label) is
+Plotly chart-event data assembled into a JSON trace and rendered client-side
+by JS — this checker traced the Go change (confirmed via
+`/usr/bin/git diff a57394c 5d4c10f -- internal/handlers/whatif/handlers.go`:
+`if source.SinceStart() { continue }` added before the event is built) and
+confirmed in the rendered page.html that no "Pension starts" or "Social
+Security starts" text appears anywhere, consistent with the trace. Executing
+the chart's client-side JS to inspect the Plotly canvas/SVG output is the
+tests lane's job. No new a11y surface is introduced by this change (it only
+removes a marker from a chart whose textual/accessible affordances are
+unchanged from master); noting as an OBSERVATION rather than a checked point.
+
+OBSERVATIONS (not FAIL — provenance shown)
+- axe color-contrast x41 (spending-phases.html, Retirement Spending Phases
+  card) — unchanged from RC3.1/RC3.2, byte-identical to master, out of RC3's
+  scope. Backlog candidate (carried forward).
+- Chart "Key events" trace (Plotly, client-rendered): this attempt removes
+  the "Pension starts"/"Social Security starts" marker for a SinceStart
+  source (traced in handlers.go, not executed — see TRACED above). The
+  chart's own accessibility affordances (or lack thereof) are unchanged from
+  master and were not introduced by RC3; flagging for the tests lane to
+  confirm the trace's runtime behavior, not a FAIL here.
+- budget_fit.go / spending_funding.go / handlers.go changes are Go-only with
+  no template surface beyond what's already covered by points 1-3 (the model
+  methods `.ScheduleEnded`/`.SinceStart` are called only from the two
+  source-list templates already audited); the oracle discipline (checker-
+  tests lane) is the right venue for asserting the omission/no-marker
+  behavior itself, not this lane.

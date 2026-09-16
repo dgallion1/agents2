@@ -1,0 +1,240 @@
+VERDICT: PASS
+CHECKER: checker-tests
+FAMILY: anthropic
+TASK: RC3
+ATTEMPT: 3
+---
+Verified against SPEC.md "### RC3 attempt 3 — contract rewrite" items 1-5 and
+the surviving "### RC3 acceptance criteria" 1-8. All work done in a `cp -a`
+copy of /home/darrell/bin/ai/budget2/.worktrees/rollover-schedule at
+5d4c10f (copy: $SCRATCH/a3/tree, md5 of internal/models/income_source.go
+matches the worktree byte for byte). No git checkout/restore/stash/reset was
+run anywhere; the worktree is unchanged (`git rev-parse HEAD` = 5d4c10f,
+`git status --porcelain` empty, re-checked at the end of the run). The
+built server binary was never executed and no data/ was created.
+
+ATTEMPT-LEVEL GATES
+- Oracle, run by me on my own copy:
+  `bash .swarm/tier3/RC3/accept.sh $SCRATCH/a3/tree`
+  → O1 build+vet clean; O2 all five planted tests PASS
+  (TestRC3OraclePageShowsCalendarMonths, ...EditRoundTrip, ...AddAndValidation,
+  ...RolloverDisplay, ...ClampedRowsRoundTrip); O3 shipped suites ok and
+  testdata clean; O4 no year wording; O5 no display comparison outside the
+  model. Last line `ORACLE PASS`, `EXIT=0`.
+- Oracle FAIL-END re-validated by me, not taken on trust. I extracted
+  a57394c with `git archive a57394c | tar -x -C $SCRATCH/a3/a2tree` (no
+  worktree mutation) and ran the same accept.sh against it:
+  `rc3_oracle_test.go:316: Budget Fit still names an invented month for the
+  ended expense` → `--- FAIL: TestRC3OracleClampedRowsRoundTrip` →
+  `ORACLE FAIL: oracle tests`, EXIT=1. The failing check is the ruling-h
+  defect itself, not a harness error.
+  Separately, an accidental run against a stale attempt-1-era copy failed
+  five distinct checks (lines 296/299/302/306/316), so the clamped test is
+  non-vacuous at more than one point.
+- Full gates on my copy, exit codes captured:
+  `go build ./...` → BUILD=0; `go vet ./...` → VET=0;
+  `go test -count=1 ./...` → GOTEST_EXIT=0 (0 occurrences of "FAIL" in the
+  raw log); `make check` → MAKECHECK_EXIT=0 (tail shows `ok` for every
+  package incl. budget2/internal/handlers/whatif 17.012s).
+- testdata / generated-asset drift: `git status --porcelain` inside the copy
+  AFTER `make check` is EMPTY — no regenerated CSS and no rewritten testdata.
+
+ITEM 1 — one status source in the model
+- `git show 5d4c10f -- internal/models/income_source.go` shows VALUE-receiver
+  `func (is IncomeSource) ScheduleEnded() bool { return is.EndMonth != nil &&
+  *is.EndMonth <= 0 }`, `func (is IncomeSource) SinceStart() bool { return
+  is.StartMonth == 0 }` and the twin `(es ExpenseSource)` pair. Value receivers
+  confirmed necessary and pinned by a shipped assertion
+  (income_source_test.go:236 "predicates must be callable on a non-addressable
+  slice element").
+- `scheduleEnded` removed from render.go: the diff deletes both the FuncMap
+  entry (line 90) and the function body; `grep -rn "scheduleEnded"
+  --include=*.go --include=*.html .` over the whole tree returns NO hits.
+- Templates call the methods: `{{if .ScheduleEnded}}` and `{{if .SinceStart}}`
+  in income-sources-list.html and expense-sources-list.html (diff hunks at
+  lines 84/145 and 21/88 of the old files).
+- O5 grep run standalone by me in the worktree:
+  `grep -rn 'scheduleEnded\|eq \.StartMonth 0\|StartMonth == 0\|EndMonth <= 0\|
+  EndMonth == 0' web/templates internal/handlers internal/services
+  internal/templates | grep -v '_test\.go'` → no output (exit 1 = no hits).
+  The same grep on the a57394c tree returns 6 hits (render.go:90,721,729;
+  income-sources-list.html:84,145; expense-sources-list.html:21,88), so the
+  check discriminates.
+- A BROADER grep I wrote myself (`StartMonth|EndMonth (==|<=|<|>=) 0` outside
+  internal/models, non-test) finds exactly two hits: the comment line in
+  spending_funding.go:128 and `entry.StartMonth < 0` in
+  handlers_spending_graph.go:235 — the latter is `addProjectedSSFundingMarkers`
+  over `retirement.ProjectedSSEntries`, which are optimizer-PROJECTED Social
+  Security entries derived from claim age, not IncomeSource/ExpenseSource
+  schedules, so outside the rewritten contract's enumerated surfaces. Listed
+  under Observations.
+
+ITEM 2 — every surface, verified on the REAL 20-month rollover fixture
+I did not rely on the worker's tests for this. I wrote my own probe
+($SCRATCH/a3/probe/.../zz_checker_probe_test.go) that writes a plan file with
+start_date 20 months before time.Now() and lets the LOAD path clamp it, then
+renders the real page, the real OOB partial and calls the real timeline
+builder. Fixture actually clamped (printed from the loaded settings):
+    PROBE expense exp-ended start=0 end=0 ended=true since=true
+    PROBE expense exp-run   start=0 end=<nil> ended=false since=true
+    PROBE income  inc-run   start=0 end=22   ended=false since=true
+    PROBE income  inc-ended start=0 end=0    ended=true since=true
+Rendered page counts (whitespace-collapsed body, plan start Sep 2026):
+    "Ended before the plan start (Sep 2026)"      = 2   (BOTH the ended
+                                                        income and expense)
+    "Since plan start (Sep 2026)"                 = 2   (BOTH clamped-start
+                                                        income and expense)
+    hx-put="/whatif/expense/exp-ended"            = 0
+    hx-put="/whatif/income/inc-ended"             = 0
+    hx-delete="/whatif/expense/exp-ended"         = 1
+    hx-delete="/whatif/income/inc-ended"          = 1
+    "(through Aug 2026)"                          = 0
+    "(starts Aug 2026)"                           = 0
+    "ProbeOldLease (through"                      = 0
+    "Pension starts"                              = 0
+  → list rows, page: ended = display-only with the Remove control only, for
+    BOTH branches; clamped start = "Since plan start"; no month before the
+    plan start is named anywhere on the page.
+- OOB partial (real mutation POST to handleWhatIfUpdateExpense, status 200):
+    "Ended before the plan start (Sep 2026)" = 2
+    "Since plan start (Sep 2026)"            = 2
+    hx-put=".../exp-ended" = 0, hx-put=".../inc-ended" = 0
+    "(through Aug 2026)"   = 0
+    role="alert"           = 4
+  → the OOB partial carries the same rule AND the four add-form error
+    containers keep role="alert" (ruling f re-confirmed at the rendered level).
+- Budget Fit (analysis/budget_fit.go rendered into budget-analysis.html). I
+  regexed the breakdown row spans out of the page body:
+    PROBE budgetfit rows = [" ProbeGym ", " ProbeGym ", " ProbeRunningPension "]
+  The ended expense (ProbeOldLease) and the ended income (ProbeOldAnnuity) are
+  ABSENT; the still-running siblings are present, so the card rendered and the
+  omission is targeted, not a collapsed card. The clamped-start income's
+  breakdown row is `<span ...> ProbeRunningPension </span><span
+  class="text-positive">$900.00/mo</span>` — NO note element at all. Every
+  lowercase "starts <Mon YYYY>" occurrence on the page (4) is add-form help
+  text ("The plan starts Sep 2026."); `grep -o 'through [A-Z][a-z][a-z]
+  20[0-9][0-9]'` over the page returns NOTHING.
+- Timeline events: `buildProjectionChartEvents(loaded, ...)` called directly on
+  the clamped settings returned `[{Year:9 Label:RMD starts}]` — no
+  "Pension starts", no "Social Security starts" for the SinceStart sources.
+- Spending-funding markers: shipped
+  TestSpendingFundingMarkers_SkipSourcesRunningSincePlanStart builds
+  clamped-start + ended + later sources and asserts exactly one marker,
+  "Deferred Pension starts" at month 7 — I read it and mutation-graded it (M3
+  below). A late source still marks.
+- Restore path: shipped TestScheduleForms_RestoredEndedExpenseRendersAsEnded
+  removes and restores exp-ended, re-Loads to assert *EndMonth == 0, and
+  requires the restored row to render "Ended before the plan start (Sep 2026)"
+  with no hx-put and no "ClampOldLease (through". Mutation-graded (M4 below).
+
+ITEM 3 — mutation grading (each rule reverted individually in its own copy)
+| # | mutation                                              | shipped test that FAILS |
+|---|-------------------------------------------------------|-------------------------|
+| M1| budget_fit.go: delete `if source.ScheduleEnded() {continue}` | TestCalculateBudgetFit_ClampedSchedulesNameNoLostMonths (calculator_expense_test.go:1528 "an ended expense must be omitted from the breakdown, got {Name:OldLease ... Note:through Dec 2026}") AND TestScheduleForms_ClampedRowsAreHonestAboutLostMonths (schedule_month_form_test.go:632 `a surface still renders "(through Aug 2026)"`, :652 "the ended expense is still a Budget Fit breakdown row") |
+| M2| budget_fit.go: income "starts" note made unconditional | TestCalculateBudgetFit_ClampedSchedulesNameNoLostMonths (:1554 `must carry no starts note, got "starts Jan 2027"`), plus pre-existing TestCalculateBudgetFitIncomeStartMonth (:1318) and TestCalculateBudgetFit_IncomeAtMonth0WithStartDelay (coverage_gaps_test.go:2189) |
+| M3| spending_funding.go: `source.SinceStart()` → `source.StartMonth < 0` | TestSpendingFundingMarkers_SkipSourcesRunningSincePlanStart (:235 got "Clamped Pension starts" at month 0) AND TestSpendingFundingBenefitTimingInflationAndCalendarScope (:145) |
+| M4| models: `ScheduleEnded()` → `return false` (both types) | TestScheduleStatePredicates (income_source_test.go:201/223/236), TestCalculateBudgetFit_ClampedSchedulesNameNoLostMonths, TestScheduleForms_ClampedRowsAreHonestAboutLostMonths (:560 ended row missing the wording; :573 renders hx-put and value="2026-08"; :614 ended INCOME row renders hx-put), and TestScheduleForms_RestoredEndedExpenseRendersAsEnded (:735/:743) |
+| M5| models: `SinceStart()` → `return false` (both types) | TestScheduleStatePredicates (:204/:226/:236), TestCalculateBudgetFit_ClampedSchedulesNameNoLostMonths (:1554), TestSpendingFundingMarkers_SkipSourcesRunningSincePlanStart (:235), TestSpendingFundingBenefitTimingInflationAndCalendarScope (:145), TestCalculateBudgetFitIncomeStartMonth, TestCalculateBudgetFit_IncomeAtMonth0WithStartDelay |
+| M6| handlers.go: remove the `if source.SinceStart() {continue}` skip AND weaken the floor to `year < 0` | TestClampedSchedules_TimelineSkipsAlreadyRunningSources (schedule_month_form_test.go:681 `[Pension starts Social Security starts Pension starts]`, :686 year 0, :691 two pension events) and pre-existing TestBuildProjectionChartEvents_EventAtZeroOrBeyondMax (handlers_test.go:3830) |
+All six reverts were applied with an asserted-unique string replacement
+(python assert count==1) so no mutation silently no-op'd.
+DISCLOSURE (the brief anticipated this): M7 — removing ONLY the SinceStart
+skip while leaving the pre-existing `year <= 0` floor intact leaves
+TestClampedSchedules_TimelineSkipsAlreadyRunningSources PASSING. The new
+timeline guard is therefore defence-in-depth rather than the sole producer of
+the behaviour, and the shipped test does not independently mutation-kill that
+one line. The behaviour the criterion states (a SinceStart source yields no
+"starts" event) IS pinned by the test and confirmed by my direct builder probe,
+and the combined mutation the brief prescribed does fail it. Not a criterion
+failure; recorded because it is the kind of thing a later refactor of the floor
+would silently un-guard.
+
+ITEM 4 — existing tests edited, not deleted; no assertion weakened
+`git show 5d4c10f --numstat` for test files: schedule_month_form_test.go
+158/1, income_source_test.go 62/0, spending_funding_test.go 52/1,
+calculator_expense_test.go 107/0. `git show 5d4c10f -- '*_test.go' | grep
+'^-[^-]'` returns exactly TWO removed lines: one fixture comment line and the
+old marker assertion
+  `if len(got.Markers) != 1 || ...Kind != "configured_income_start" ||
+   ...Label != "Pension starts" {`
+replaced by a STRICTLY STRONGER one that also pins Month:
+  `...Label != "Second Pension starts" || got.Markers[0].Month != 9`.
+No test function was deleted. I read the restructured
+TestSpendingFundingBenefitTimingInflationAndCalendarScope in full: its subject
+(the optimizer hook suppressing a CONFIGURED Social Security marker) is still
+proved, and better — the old fixture's SS source was at month 0, which
+SinceStart() now suppresses for an unrelated reason, so the worker added
+"Spouse Social Security" at month 8 and "Second Pension" at month 9; the test's
+single-marker assertion can only hold if the late SS source was recognised as
+SS (engine.IsSocialSecurityIncomeSource) AND suppressed by the hook, while the
+late pension survives. The two added sources start at months 8/9 and every
+arithmetic assertion in that test reads Months[0], Months[1] and
+AnnualAverages[0] (2026 = months 0-1), so none of them was perturbed or
+loosened; AnnualAverages[1]/[2] carry no income figure. Mutation M3 confirms
+the restructured assertion still bites.
+
+ITEM 5 — scope
+- `git show --stat 5d4c10f` = 11 files, exactly the 11 lines of
+  .swarm/manifests/RC3.3.files (verified by eye, list matches one-for-one).
+- Union of RC3.1+RC3.2+RC3.3 manifests vs `git diff --name-only ee7af8a
+  5d4c10f` (RC2's accepted commit → attempt 3): computed the set difference in
+  python — `range only (not in manifests): []`, `manifest only (not changed):
+  []`, `counts range/manifest: 23 23`. Exact match; nothing unmanifested.
+- .swarm/critical.globs: `git diff --name-only ee7af8a 5d4c10f | grep -E
+  'internal/services/storage/|internal/services/dataloader/|internal/services/
+  retirement/engine/|internal/services/transfers/|internal/services/accounts/
+  accounts.go|internal/services/mcpsvc/confirm/'` → NO hits at all across all
+  three RC3 commits (the brief's engine/** carve-out was not even needed).
+- testdata: `git diff --name-only ee7af8a 5d4c10f | grep -i testdata` → none;
+  and the tree is still clean after a full `make check`.
+- No foreign territory touched: my only write outside my scratchpad copy is
+  this verdict file.
+
+ITEM 5 (contract) — attempts 1-2 facts re-confirmed
+- Single conversion path: `grep -rn "MonthOffset(\|monthsBetween("
+  internal/ --include=*.go | grep -v _test` → the ONLY form-side converter is
+  `parseMonthOffset` (month_input.go:39), which calls
+  `retirement.MonthOffset` (settings_current_month.go:30 →
+  monthsBetween:13); `parseMonthRange` delegates to it for both start_month
+  and end_month; the only other callers are the two one-time/big-ticket
+  `month` fields. No second conversion.
+- Single formatter pair: `internal/models/calendar_month.go:12
+  CalendarMonth` / `:23 CalendarMonthLabel`, bound once each in render.go:91-92
+  as `calendarMonth` / `calendarMonthLabel`. RC3 attempt 3 added no formatter.
+  The only other `func calendarMonthLabel` is
+  analysis/spending_funding.go:203 (pre-existing SP2-era ISO formatter,
+  already on the backlog); `git diff ee7af8a 5d4c10f --
+  internal/services/retirement/analysis/spending_funding.go` shows attempt 3
+  changed ONE guard line plus comments and did not touch it.
+- Roth inputs exactly once each: oracle
+  TestRC3OraclePageShowsCalendarMonths asserts
+  `strings.Count(body, 'name="start_year"') == 1` and the same for
+  `end_year` (rc3_oracle_test.go:98/102) — PASS in my run.
+- Exact round trip for a future-dated entry: oracle
+  TestRC3OracleEditRoundTrip — PASS in my run.
+- role="alert" containers survive the OOB re-render: shipped
+  schedule_month_form_test.go:826/848/860 (`<div id="whatif-add-<kind>-error"
+  role="alert" hx-swap-oob="true">` must appear in the OOB partial, and
+  HX-Reswap must be innerHTML), all green; independently confirmed by my probe
+  — the real OOB response body contains role="alert" four times.
+
+Observations (not FAIL)
+1. `internal/handlers/whatif/handlers_spending_graph.go:235`
+   (`addProjectedSSFundingMarkers`) still gates on `entry.StartMonth < 0` and
+   will emit an "X starts" marker at month 0 for an already-claiming projected
+   Social Security entry. This is `retirement.ProjectedSSEntries`, derived from
+   the claim age, NOT a rollover-clamped IncomeSource, so it is outside the
+   enumerated surfaces of the attempt-3 contract and outside the O5 grep's
+   scope. Same cosmetic class as the marker rule though; backlog candidate.
+2. The new timeline guard is not independently mutation-killed (M7 above) —
+   only the combined skip+floor mutation fails the test. If the `year <= 0`
+   floor in appendEvent is ever relaxed, that test is the only thing standing
+   between the clamped fixture and a "Pension starts" at year 0, and it would
+   still pass on the skip alone. A test that pins the SinceStart skip without
+   depending on the floor (e.g. asserting on a source at StartMonth 0 with a
+   projection whose maxYear permits year 0) would close it.
+3. Backlog item "RC3.2/checker-tests: rc3_oracle_test.go:301 bans two ids no
+   template renders" still stands in the attempt-3 oracle (the `hx-put=`
+   clause is what grades); the shipped handler test does not have that gap —
+   it bans `id="income-start-inc-ended"` / `id="income-end-inc-ended"` /
+   `id="income-schedule-inc-ended"`, and M4 proves all three of those bans fire.
