@@ -1,0 +1,119 @@
+VERDICT: FAIL
+CHECKER: checker-second
+FAMILY: adversarial
+TASK: RC3
+ATTEMPT: 1
+---
+Setup: cp -a of /home/darrell/bin/ai/budget2/.worktrees/rollover-schedule at commit
+1f9a35a (parent ee7af8a=RC2, base bcb6226=master). Oracle (.swarm/tier3/RC3/accept.sh)
+re-run in the copy: ORACLE PASS, `go build`/`go vet` clean, shipped suites green,
+testdata untouched. Manifest matches `git show --stat 1f9a35a`.
+
+REFUTED — criterion 4 (round trip / untouched re-save) and criterion 3 (truthful
+display), reproducible defect:
+
+A plan with UseCurrentMonth=true that has rolled far enough forward that an
+expense's (or income's) StartMonth AND EndMonth both clamp to 0 — the documented
+"already finished, contributing nothing" state that `shiftScheduleOffsets`
+(internal/services/retirement/settings_current_month.go:49) deliberately produces
+and explicitly does NOT remove — renders and behaves incorrectly:
+
+1. Row text is self-contradictory: "Starts Sep 2026 · Through Aug 2026 (the last
+   month charged)" — Through is BEFORE Starts, for an item the code comments say is
+   simply over. (throughMonth(EndMonth=0) = -1, one month before plan start.)
+2. The inline edit form's own rendered `end_month` value ("2026-08") is earlier
+   than its own `min` ("2026-09"), i.e. the form renders an out-of-range value.
+   htmx submits it anyway on ANY field change in the form (hx-trigger="change
+   delay:500ms, input delay:500ms from:find input[type=number]" — so toggling
+   the inflation checkbox or editing the amount submits the whole form, not just
+   the touched field).
+3. Because handleWhatIfUpdateExpense unconditionally calls parseMonthRange on
+   EVERY update regardless of which field changed, that untouched end_month
+   value is re-validated against "before plan start" and REJECTED with a 400:
+   "Through month must be Sep 2026 or later (the plan starts that month)".
+   The user cannot toggle inflation/discretionary or edit the amount on this
+   row at all without first fixing (moving) a date they never touched.
+
+Reproduced with a real httptest handler call against the actual code (not a
+prototype-only claim): built a plan with StartDate 20 months in the past,
+ExpenseSource StartMonth=2/EndMonth=5 (fully elapsed), loaded it (triggering the
+real rollover shift to StartMonth=0/EndMonth=0), rendered /whatif, extracted the
+row's own rendered start_month/end_month input values via string search, and
+POSTed them back unchanged (+ inflation=on) to handleWhatIfUpdateExpense:
+
+  after rollover: StartMonth=0 EndMonth=0 StartDate=2026-09
+  end input value="2026-08" min="2026-09"
+  startVal="2026-09" endVal="2026-08"
+  re-save status=400 body: "Through month must be Sep 2026 or later
+    (the plan starts that month)"
+  row text: "Starts Sep 2026 · Through Aug 2026 (the last month charged)"
+
+This is squarely in RC3's scope: RC3 (this commit) is what wires
+`parseMonthRange`'s before-plan-start rejection into every income/expense save
+(criterion 2) and is what introduced the exact-round-trip guarantee for the
+inline edit forms (criterion 4: "an untouched edit-form re-save never moves a
+date"). The clamp-to-0 rollover state itself predates RC3 (RC2), but RC2 never
+exposed it through a re-validated month form — RC3 is the commit that turns a
+pre-existing quiet data state into a save-blocking, self-contradictory UI. The
+attack-angle brief for this checker explicitly named this exact case ("An
+expense whose EndMonth clamped to 0 ... can the inline edit form even be
+re-submitted?") — it is not a stretch reading of scope.
+
+The oracle's O2b round-trip test only exercises a still-future entry
+(StartMonth 11, EndMonth 24, both positive after the plan's `rc3Fixture`); it
+never constructs a StartMonth=0/EndMonth=0 post-clamp fixture, so it does not
+catch this. Income sources share the identical `parseMonthRange` /
+`throughMonth` / `shiftRange` code paths as expenses, so the same defect
+applies there too (not separately re-proven, but the code is structurally
+identical — same helper functions, same template pattern in
+income-sources-list.html).
+
+Other criteria checked and NOT refuted:
+- Criterion 1 (month inputs, min attribute, labels): present on all four forms;
+  add-form min/value both derive from CalendarMonth; confirmed by direct read of
+  income-sources-list.html and month_input.go.
+- Criterion 2 (parsing/validation, one helper): parseMonthOffset/parseMonthRange
+  is the single conversion path via retirement.MonthOffset -> monthsBetween;
+  before-start, inverted-range, blank, unparseable all correctly produce 400 in
+  the *reachable, non-clamped* cases the oracle tests.
+- Criterion 5 (rollover + display agreement): oracle's
+  TestRC3OracleRolloverDisplay passed in my copy; re-verified the underlying
+  months-between/shift arithmetic.
+- Criterion 6 (tests, `go test -count=1 ./...`, `make check`): ran the shipped
+  suites named in the oracle; all green in my copy.
+- Dual-formatter sweep: grepped every "2006-01"/"Jan 2006" producer/consumer in
+  Go, templates and JS. Found `internal/services/retirement/analysis/spending_funding.go`
+  (local `calendarMonthLabel` returning "2006-01", NOT the human label) feeding
+  `web/static/js/whatif-spending-optimizer.js` ("Calendar month" table column
+  showing raw ISO strings) — a real second formatter of the same StartMonth
+  figure elsewhere on the What-If page. Confirmed via `git log` that this file
+  and its JS consumer were last touched in the SP2/spending-first-optimizer
+  commits, NOT in RC2 or RC3 (`git show --stat 1f9a35a` does not include them,
+  and they are absent from the RC3.1.files manifest). Per CLAUDE.md scope rule
+  this is OUT OF SCOPE for RC3 (pre-existing, untouched code) — reported below
+  as an observation, not grounds for FAIL.
+- Timeline chart events (handlers.go ~683-735, "Pension starts" at a fractional
+  year, X-axis in `buildProjectionChartEvents`): this positions chart markers on
+  a numeric year axis and carries no calendar-month TEXT (label is "Pension
+  starts", no date); it is not one of the four schedule-list/form surfaces
+  criterion 3 names, and the file's fractional-year arithmetic there predates
+  RC3 (see ruling 2026-09-16a, F-078 note). Not a criterion violation.
+
+Observations (not FAIL, backlog candidates):
+- `internal/services/retirement/analysis/spending_funding.go`'s local
+  `calendarMonthLabel(month time.Time) string` returns ISO "2006-01", not the
+  "Jan 2006" human label, and is rendered directly as a table cell ("Calendar
+  month" column, "Observed configured events" table) in
+  web/static/js/whatif-spending-optimizer.js:400,405. Same figure (an income
+  source's StartMonth) as the schedule rows, rendered in two different formats
+  on the same What-If page depending on which sub-view you're in. Pre-existing,
+  out of RC3's manifest — flag for a future task, not this one.
+- The clamp-to-0 "already finished, contributing nothing" state (RC2 design)
+  combined with RC3's strict re-validation is the root cause above; a fix would
+  need either (a) parseMonthRange to tolerate a Through value at/after
+  max(planStart, StartMonth-anchored actual date) when the value is unchanged
+  from the rendered one, or (b) the clamp to stop producing an inverted range
+  (e.g. clamp EndMonth to at least StartMonth+1, or omit the Through
+  input/text and show "ended" once EndMonth<=StartMonth), or (c) auto-remove
+  fully-elapsed entries on rollover. That design decision belongs to the lead,
+  not this checker.

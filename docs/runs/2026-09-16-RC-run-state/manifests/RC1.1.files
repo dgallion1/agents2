@@ -1,0 +1,4 @@
+internal/models/spending_optimizer.go
+internal/handlers/whatif/handlers_spending_optimizer.go
+internal/handlers/whatif/spending_current_apply_test.go
+internal/handlers/whatif/spending_optimizer_test.go

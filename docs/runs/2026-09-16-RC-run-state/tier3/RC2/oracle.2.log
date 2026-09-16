@@ -1,0 +1,32 @@
+== O1 build + vet
+== O2 planted oracle tests (package retirement)
+=== RUN   TestRC2OracleLegacyDecode
+--- PASS: TestRC2OracleLegacyDecode (0.00s)
+=== RUN   TestRC2OracleShift
+--- PASS: TestRC2OracleShift (0.00s)
+=== RUN   TestRC2OracleManagerRoundTrip
+--- PASS: TestRC2OracleManagerRoundTrip (0.00s)
+=== RUN   TestRC2OracleEngineMonthFiring
+--- PASS: TestRC2OracleEngineMonthFiring (0.00s)
+=== RUN   TestRC2OracleBigTicketMonth
+--- PASS: TestRC2OracleBigTicketMonth (0.00s)
+PASS
+ok  	budget2/internal/services/retirement	0.007s
+== O2t planted template-lane oracle test (package whatif; added after ruling 2026-09-16b)
+=== RUN   TestRC2OracleTemplatesRenderWithScheduledEntries
+--- PASS: TestRC2OracleTemplatesRenderWithScheduledEntries (0.04s)
+PASS
+ok  	budget2/internal/handlers/whatif	0.040s
+== O3 shipped suites + testdata untouched
+ok  	budget2/internal/models	0.005s
+ok  	budget2/internal/services/retirement	2.888s
+ok  	budget2/internal/services/retirement/analysis	3.231s
+ok  	budget2/internal/services/retirement/completeness	0.003s
+ok  	budget2/internal/services/retirement/engine	0.016s
+ok  	budget2/internal/services/retirement/history	0.003s
+ok  	budget2/internal/services/retirement/overrides	0.007s
+ok  	budget2/internal/services/retirement/prepare	0.007s
+ok  	budget2/internal/handlers/whatif	9.572s
+== O4 mutation: shift neutralised must be noticed by SHIPPED tests
+   mutation noticed: 6 failing test(s)
+ORACLE PASS

@@ -1,0 +1,139 @@
+VERDICT: FAIL
+CHECKER: checker-second
+FAMILY: adversarial
+TASK: RC3
+ATTEMPT: 2
+---
+Worked in a `cp -a` copy at
+/tmp/claude-1000/-home-darrell-work-agents2--claude-worktrees-budget2-rollover-comparison-issues-19c20a/8fc54391-4def-4e4a-a6fc-8c1439e4eaaa/scratchpad/rollover-schedule-copy
+(branch fix/rollover-schedule at a57394c, clean, matches the assignment's
+commit). All probes below ran against this commit. No file outside the copy
+and my own verdict file was written.
+
+## Attempt-1 defect (ruling 2026-09-16e) re-verified fixed
+Re-ran the RC3.1 reproduction on a57394c: a rollover-clamped, already-ended
+expense (StartMonth 0 / EndMonth 0) now renders as a display-only card
+("Ended before the plan start (<label>)") with no hx-put/inputs, and a
+clamped-start row (StartMonth 0, EndMonth>0) reads "Since plan start
+(<label>)" with its Starts input carrying the plan-start month. Confirmed via
+the shipped `TestRC3OracleClampedRowsRoundTrip` (oracle.2.log ends "ORACLE
+PASS") and my own re-derivation of the same fixture. The specific attempt-1
+symptom (Through input below its own min, 400 on an untouched re-save) is
+gone: `git diff 1f9a35a a57394c -- .../expense-sources-list.html` shows the
+`{{if scheduleEnded .EndMonth}}` branch (`scheduleEnded` = `EndMonth != nil
+&& *EndMonth <= 0`, added in internal/templates/render.go) producing the
+display-only markup, byte-identical treatment mirrored in
+income-sources-list.html.
+
+## Attacks that did NOT find a defect (evidence the fix is otherwise solid)
+Wrote throwaway probes (`rc3_adversarial_probe_test.go` in
+internal/handlers/whatif, `rc3_adversarial_probe_test.go` in
+internal/services/retirement/analysis) run with
+`go test ./internal/handlers/whatif/... -run TestProbe -v` — all PASSED:
+- **Boundary EndMonth==1** (clamped through = plan start, `throughMonth(1)==0`,
+  input value == min): NOT classed as ended (scheduleEnded only fires on
+  `<=0`, so 1 is safe), page carries `value="<plan-start>"`, and re-posting
+  the row's own values round-trips StartMonth/EndMonth unchanged (200, no
+  drift). `TestProbeBoundaryEndMonthOne` PASS.
+- **role="alert" persistence on the mutation OOB response** (not just the
+  static GET): posted a real add-onetime mutation and inspected the returned
+  body's four OOB error-clear divs (income/expense/bigticket/onetime) — each
+  still carries `role="alert"` on the swapped-in element (criterion 7 /
+  ruling f, confirmed on the *response* HTML, not just page load).
+  `TestProbeOOBErrorRoleAlertOnMutation` PASS.
+- **Ended row is actually deletable**: `handleWhatIfDeleteExpense` on an
+  ended row (StartMonth 0/EndMonth 0) returns 200, removes it from
+  ExpenseSources and moves it into RemovedExpenseSources — the Remove button
+  criterion 3 requires is wired end-to-end. `TestProbeEndedRowDeletable`
+  PASS.
+
+## Defect found — criterion 3, budget_fit.go note is NOT honest about a clamped/ended entry
+Criterion 3 explicitly extends the "must not invent the lost month" rule to
+`budget_fit.go`: "`budget_fit.go` notes 'starts <Mon YYYY>' / 'through <Mon
+YYYY>' derived through the same function." Ruling 2026-09-16e's own wording
+("the rollover clamps a past start to 0 and a past end to 0, losing the
+original months, so the row must not invent them") is figure-agnostic — it
+is about the ENTRY's classification, not about one specific template.
+
+`internal/services/retirement/analysis/budget_fit.go` (touched by RC3
+attempt 1, 1f9a35a, untouched by attempt 2 — `git diff 1f9a35a a57394c --
+internal/services/retirement/analysis/budget_fit.go` is empty) still builds
+the expense-breakdown note unconditionally from `source.EndMonth`:
+
+    if source.EndMonth != nil {
+        note = scheduleNote("through", s.StartDate, *source.EndMonth-1)
+    }
+
+For a clamped/ended entry (EndMonth == 0, the only value `scheduleEnded`
+tests for), this computes `scheduleNote("through", StartDate, -1)` — i.e.
+"through <the month immediately before the plan start>". That is not the
+entry's real end month (the clamp discarded that), it is an artifact of the
+`-1` offset arithmetic on a sentinel value. This is the EXACT fabrication
+pattern ruling 2026-09-16e forbade in the templates for this same entry
+class, just in a different surface.
+
+Reproduced twice:
+1. Analysis-package unit probe (`TestProbeBudgetFitEndedExpenseNoteIsHonest`,
+   internal/services/retirement/analysis/rc3_adversarial_probe_test.go):
+   built a WhatIfSettings with StartDate "2026-10" and one ExpenseSource
+   {StartMonth:0, EndMonth:&0}, called `BudgetFit`, read the returned note:
+       note for ended item OldLease: "through Sep 2026"
+   FAILED the assertion that an ended/clamped note must say "ended" rather
+   than fabricate a specific through-month.
+2. Full page render, same clamp mechanics used by the shipped oracle
+   (StartDate 20 months old, real rollover applied via `resolveCurrentMonth`,
+   `TestProbeBudgetFitPageShowsFabricatedThroughNote`,
+   internal/handlers/whatif/rc3_adversarial_probe2_test.go): GET /whatif on
+   a plan holding a clamped/ended expense "PageLease" (StartMonth 0, EndMonth
+   0 after the real 20-month shift) renders it correctly as "Ended before the
+   plan start" in the expense-sources-list card (attempt-2's fix, working as
+   intended) AND, twice more in the SAME response body — the Budget Fit /
+   cash-flow-breakdown card (`web/templates/components/whatif/budget-analysis.html:31,352`,
+   both the main render and its OOB-mirrored copy) — as:
+
+       PageLease <span class="text-xs italic">(through Aug 2026)</span>
+       $0.00/mo
+
+   "Aug 2026" is the month before the (20-months-shifted) plan start, not
+   the entry's real, discarded end month. The $0.00/mo and opacity-40
+   styling correctly signal "not counted", but the parenthetical still
+   states a specific, fabricated calendar month as fact next to the item's
+   name — the same entry the schedule card, three lines away in the same
+   response, correctly describes as having ended before the plan start with
+   the month unknown.
+
+This is a split-classification defect in the terms CLAUDE.md names directly:
+one surface (expense/income-sources-list.html, via `scheduleEnded`) was
+updated for the clamped/ended entry class; a second surface rendering the
+SAME entry's schedule status (budget_fit.go's expense-breakdown note, wired
+to budget-analysis.html) was not enumerated and still fabricates a month.
+Both are within RC3's own introduced code (both the ExpenseSource
+month-offset model and `scheduleNote` were introduced by RC3 attempt 1,
+1f9a35a) and criterion 3 names budget_fit.go by name as in scope.
+
+Remedy the fix would need: guard the expense-breakdown loop with
+`scheduleEnded(source.EndMonth)` (or equivalent) and substitute an honest
+note ("ended before the plan start" / omit the note entirely) instead of
+`scheduleNote("through", …, -1)| for that case — mirroring the guard already
+applied in the two list templates. That remedy is a small, in-scope change
+to a file the task's own criterion 3 names; it is not a pre-existing,
+unrelated defect.
+
+## Other checks run, no defect
+- `scheduleEnded` is the one new helper (`internal/templates/render.go`);
+  no second month formatter/parser was added in a57394c
+  (`git diff 1f9a35a a57394c -- internal/handlers/whatif/month_input.go`
+  is empty — parseMonthOffset unchanged this attempt).
+- Mutation-kill spot check on shipped tests: manually verified (by reading,
+  not mutating the binary) that `TestRC3OracleClampedRowsRoundTrip` asserts
+  on the exact `value="…"` strings and offsets, not just substring presence
+  of "Since plan start"; a reverted `scheduleEnded` (`<` instead of `<=`, or
+  dropped) would flip `TestProbeBoundaryEndMonthOne`'s classification
+  assertion and the shipped oracle's "no schedule inputs" assertion.
+- `go build ./...` clean in the copy at a57394c.
+
+## Scope note
+This defect sits inside RC3's own explicit criterion-3 text and inside code
+RC3 attempt 1 introduced; it is not a pre-existing/foreign-territory issue
+and is not a "beyond scope" observation — it belongs in this FAIL, not the
+backlog.

@@ -1,0 +1,311 @@
+VERDICT: PASS
+CHECKER: checker-tests
+FAMILY: anthropic
+TASK: RC3
+ATTEMPT: 2
+---
+Verified at a57394c (RC3 = 1f9a35a + a57394c; base ee7af8a/RC2). All work done in
+a `cp -a` copy at $SCRATCH/copy; the shared worktree was never written to
+(`git -C .../rollover-schedule status --porcelain` empty, HEAD still a57394c at
+the end). No git checkout/restore/stash/reset was run anywhere.
+
+=====================================================================
+GATES
+=====================================================================
+ORACLE (criterion 8) — `bash .swarm/tier3/RC3/accept.sh $SCRATCH/copy`
+  ORACLE EXIT=0, last line `ORACLE PASS`. All five planted tests PASS:
+    --- PASS: TestRC3OraclePageShowsCalendarMonths
+    --- PASS: TestRC3OracleEditRoundTrip
+    --- PASS: TestRC3OracleAddAndValidation
+    --- PASS: TestRC3OracleRolloverDisplay
+    --- PASS: TestRC3OracleClampedRowsRoundTrip      <-- new at this attempt
+  Fail-end re-validated by me: the same oracle against a copy with
+  `scheduleEnded` stubbed to `return false` prints
+    rc3_oracle_test.go:296: ended expense row does not say it ended before the plan start
+    rc3_oracle_test.go:299: ended row invents a Through month before the plan start
+    rc3_oracle_test.go:302: ended expense row still renders schedule inputs or an update form
+    --- FAIL: TestRC3OracleClampedRowsRoundTrip
+    ORACLE FAIL: oracle tests
+  i.e. the new check fails for the defect, not a harness error.
+
+BUILD / VET / SUITE — in $SCRATCH/copy, GOFLAGS=-buildvcs=false:
+  `go build ./...`            -> BUILD_OK
+  `go vet ./...`              -> VET_OK
+  `go test -count=1 ./...`    -> FULL_TEST_EXIT=0, 50 `ok` packages, zero FAIL/panic
+  (cache defeated with -count=1; the copy was git-clean at the time — my probe
+  files were removed before this run and `git status --porcelain` was empty.)
+
+MAKE CHECK — `make check` (vet static vuln css-verify test):
+  MAKE_CHECK_EXIT=0, final line `✓ all checks passed`.
+  `git status --porcelain` in the copy is STILL EMPTY after make check, which
+  also proves css-verify found no stale generated asset and that testdata was
+  not rewritten.
+
+TESTDATA UNTOUCHED (criterion 6) — two independent commands:
+  `git diff --name-only ee7af8a a57394c | grep -i testdata` -> none
+  oracle O3's own `git status --porcelain -- testdata` guard passed.
+
+=====================================================================
+CRITERIA 1-8
+=====================================================================
+1. INPUTS — PASS.
+   Oracle O2a on the real GET /whatif body asserts `type="month"`,
+   `min="2026-10"`, `value="2027-09"`, `value="2028-09"` and bans
+   `name="year"`, `add-income-start-year`, `add-expense-start-year`,
+   `add-bigticket-year`, `onetime-year` — PASS.
+   My own probe (handler-level, real templates) enumerated all six add-form
+   month inputs and found each rendered with its help id:
+     add-income-start-month / add-income-end-month / add-expense-start-month /
+     add-expense-end-month / onetime-month / add-bigticket-month
+   Inline edit inputs confirmed by rendered id: `income-start-inc-1`,
+   `income-end-inc-1`, `expense-start-live`. Shipped
+   TestRenderExpenseSourcesList_MonthInputsFromMonthOffsets pins the exact
+   attribute string `... name="start_month" value="2027-09" min="2026-10"`.
+
+2. PARSING — PASS.
+   `internal/handlers/whatif/month_input.go` holds the ONE helper.
+   `grep -rn "MonthOffset(\|monthsBetween(" --include=*.go internal/ | grep -v _test.go`
+   shows every form->offset conversion routes through parseMonthOffset ->
+   retirement.MonthOffset -> monthsBetween; the only other monthsBetween caller
+   is the rollover itself (settings_current_month.go:101). No second parse path.
+   Oracle O2c exercises 400s for: income before start (message names "Oct 2026"),
+   expense inverted range, one-time garbage, big-ticket before start, AND the
+   EDIT path before plan start — all PASS.
+   Settings-manager signature change verified in the diff:
+     -func (sm *SettingsManager) UpdateIncomeSource(id string, startYear int, endYear *int, ...)
+     +func (sm *SettingsManager) UpdateIncomeSource(id string, startMonth int, endMonth *int, ...)
+     -  settings.IncomeSources[i].StartMonth = startYear * 12
+     +  settings.IncomeSources[i].StartMonth = startMonth
+   (same for UpdateExpenseSource); package `retirement` compiles and its suite
+   is green, so every caller was updated.
+
+3. DISPLAY, incl. ruling-e amendment — PASS.
+   (a) Ended rows are display-only. My probe built the fixture from the REAL
+   rollover (file start_date = 20 months before now, UseCurrentMonth, written
+   straight to whatif.json so the save path cannot pre-shift), and the load
+   produced exactly the clamp the ruling describes:
+     CHK fixture after REAL rollover: file start_date=2025-01 -> loaded StartDate=2026-09;
+       expense 0/0; income 0/22
+   The rendered ended expense row, extracted verbatim from GET /whatif by
+   balanced-div walk:
+     <div class="p-2 bg-gray-50 dark:bg-gray-700 rounded text-sm">
+       ... <span ...>OldLease</span> <span ...>- $400/mo</span>
+       <button type="button" hx-delete="/whatif/expense/exp-ended" hx-target="#whatif-results"
+               ... aria-label="Delete expense OldLease"> ...svg... </button>
+       <p ...>Ended before the plan start (Sep 2026) — not counted; remove it if you no longer need it</p>
+     </div>
+   The block contains NO `<form>`, NO `<input>`, NO checkbox (asserted, passed).
+   `hx-put="/whatif/expense/exp-ended"` ABSENT; `hx-delete=".../exp-ended"` PRESENT
+   — the ruling-g narrowing is respected (Remove survives).
+   The INCOME twin has no shipped test, so I rendered it myself
+   (whatif-income-sources-list, plan start 2026-10, IncomeSource EndMonth 0):
+     "Ended before the plan start (Oct 2026)" present, `hx-delete="/whatif/income/gone"`
+     present, `aria-label="Delete income source OldPension"` present, and all of
+     `hx-put="/whatif/income/gone"`, `id="income-start-gone"`, `id="income-end-gone"`,
+     `id="income-schedule-gone"`, `value="2026-09"`, "Through Sep 2026" ABSENT.
+   (b) Clamped start reads "Since plan start". Probe on the real-rollover page:
+     CHK clamped-start wording "Since plan start (Sep 2026)" present=true
+   and the row's form carries the plan start:
+     `id="income-start-inc-running"` true, `id="income-end-inc-running"` true,
+     `value="2026-09"` true, `value="2028-06"` true (offset 21 = EndMonth 22 - 1),
+     `min="2026-09"` true.
+   (c) Mutation partial renders them identically. The OOB body of a real
+   successful mutation (PUT /whatif/income/inc-running, 132399 bytes):
+     ended wording present=true; hx-put present=false; hx-delete present=true;
+     "Since plan start (Sep 2026)" present.
+   (d) Other surfaces: one-time card renders `{{$when}}{{if lt .Item.Month 0}} (past){{end}}`
+   and gates the horizon with `ge (yearOf .Item.Month) .Settings.ProjectionYears`;
+   big-ticket ACTIVE list (line 51) and RESTORE list (line 82) both use
+   `calendarMonthLabel` + `(past)`; the projected-SS row uses
+   `$start := calendarMonthLabel .Settings.StartDate .Entry.StartMonth` (ruling d).
+   `grep -rn "(yr \|Year {{\|yr {{\|Starts yr\|Ends yr\|Year N" web/templates/components/whatif/`
+   returns ONE hit, guardrails.html:122 "Year {{.Year}}" — a guardrail-ladder
+   table, not a schedule surface, unchanged by RC3, pre-existing on master.
+   (e) budget_fit.go: `scheduleNote("through", s.StartDate, *source.EndMonth-1)`
+   and `scheduleNote("starts", s.StartDate, source.StartMonth)`, both through
+   models.CalendarMonthLabel.
+
+4. ROUND TRIP EXACT, incl. ruling-e amendment — PASS.
+   Oracle O2b: untouched re-save of inc-1/exp-1 leaves StartMonth 11 / EndMonth 24
+   and a blank end_month clears the end — PASS.
+   My probe re-posted the offset-11 form values unchanged:
+     CHK exact round trip: code=200 -> StartMonth=11 EndMonth=24
+   AMENDED clause (clamped-start row with a form). My probe re-posted the
+   clamped row's OWN rendered values plus the unrelated `cola=on` toggle:
+     CHK re-post untouched clamped-start row -> 200
+     CHK after re-post: income 0/22
+   i.e. 200, not the 400 that ruling e recorded, and nothing moved.
+   Shipped TestScheduleForms_ClampedRowRoundTripsOnAnUnrelatedToggle does the
+   same for BOTH the income (cola) and expense (inflation+discretionary) clamped
+   rows, and additionally asserts the toggles took effect and the ended row is
+   still on disk at 0/0.
+   Add-path round trip for one-time/big-ticket (no edit form, ruling d): oracle
+   O2c stores month=2027-09 as Month 11 for both — PASS.
+
+5. ROLLOVER ON THE UI PATH — PASS.
+   Oracle O2d (start_date 3 months ago, StartMonth 12, file written directly):
+   the page must carry value=<now+9> and label <Mon YYYY of now+9> — PASS.
+   Shipped TestScheduleForms_RolloverKeepsTheCalendarMonth does the same, and
+   it is the test that dies under the rollover mutation (see MUTATIONS, MUT E).
+
+6. TESTS — PASS.
+   New shipped tests (all three the worker named, plus the round-trip twin):
+     internal/handlers/whatif/schedule_month_form_test.go:536 TestScheduleForms_ClampedRowsAreHonestAboutLostMonths
+     internal/handlers/whatif/schedule_month_form_test.go:595 TestScheduleForms_ClampedRowRoundTripsOnAnUnrelatedToggle
+     internal/handlers/whatif/schedule_month_form_test.go:653 TestScheduleForms_AddErrorsAreAnnouncedAndAssociated
+     internal/templates/render_schedule_month_test.go:180     TestRenderExpenseSourcesList_EndedRowIsDisplayOnly
+   I READ them: every assertion is on RENDERED output or a real handler
+   response — `collapseWhitespace(whatIfPageBody(t))` / `r.RenderToString(...)` /
+   `w.Code` + `w.Header().Get("HX-Retarget"|"HX-Reswap")` + `ok.Body.String()`.
+   None asserts on an internal float or a struct field in place of the string.
+   Their fixture `clampedFixture` uses the REAL rollover (writes the settings
+   file with a 20-month-old start_date and re-Loads), and it self-checks
+   0/0, 0/10 and 0/22 before asserting anything — so it cannot silently stop
+   testing the clamp.
+   "Existing tests edited, not deleted": 23 `-func Test*Year*` lines are matched
+   by 23 `+func Test*Month*` lines in the SAME files, and the per-file test-func
+   counts are unchanged: handlers_test.go 423->423, onetime_expense_test.go
+   12->12, settings_crud_test.go 60->60, calculator_expense_test.go 10->10,
+   render_schedule_month_test.go 3->4 (+1 new). Nothing was dropped.
+   Suite + make check green, testdata untouched — see GATES.
+
+7. ACCESSIBILITY (ruling-f amendment) — the rendering facts PASS.
+   (axe/contrast/focus is checker-a11y's lane; what follows is the markup
+   contract criterion 7 names, proven by rendered output and real headers.)
+   (a) role="alert" in the CARD templates, on GET /whatif (my probe, regex over
+   the response body):
+     <div id="whatif-add-income-error" role="alert" class="mb-2">
+     <div id="whatif-add-expense-error" role="alert" class="mb-2">
+     <div id="whatif-add-onetime-error" role="alert" class="mb-2">
+     <div id="whatif-add-bigticket-error" role="alert" class="mb-2">
+   (b) role="alert" SURVIVES a real mutation. The outerHTML OOB swap block in
+   pages/whatif.html:~238-243 was checked not by reading it but by executing a
+   real PUT and scanning the response body:
+     CHK OOB(after real mutation) whatif-add-income-error    -> [<div id="whatif-add-income-error" role="alert" hx-swap-oob="true">]
+     CHK OOB(after real mutation) whatif-add-expense-error   -> [<div id="whatif-add-expense-error" role="alert" hx-swap-oob="true">]
+     CHK OOB(after real mutation) whatif-add-onetime-error   -> [<div id="whatif-add-onetime-error" role="alert" hx-swap-oob="true">]
+     CHK OOB(after real mutation) whatif-add-bigticket-error -> [<div id="whatif-add-bigticket-error" role="alert" hx-swap-oob="true">]
+   (c) renderRetargetedError keeps the element — verified by RESPONSE HEADERS on
+   a rejected month for ALL FOUR kinds, not by reading the helper:
+     add-income    code=400 HX-Retarget="#whatif-add-income-error"    HX-Reswap="innerHTML"
+     add-expense   code=400 HX-Retarget="#whatif-add-expense-error"   HX-Reswap="innerHTML"
+     add-onetime   code=400 HX-Retarget="#whatif-add-onetime-error"   HX-Reswap="innerHTML"
+     add-bigticket code=400 HX-Retarget="#whatif-add-bigticket-error" HX-Reswap="innerHTML"
+   and each body carried the plan-start message, e.g.
+     "Start month must be Oct 2026 or later (the plan starts that month)".
+   innerHTML (not outerHTML) is what makes the live region persist.
+   (d) aria-describedby lists help id AND error id on all six new month inputs,
+   and every referenced id exists on the page (asserted):
+     add-income-start-month  -> "add-income-schedule-help whatif-add-income-error"
+     add-income-end-month    -> "add-income-schedule-help whatif-add-income-error"
+     add-expense-start-month -> "add-expense-schedule-help whatif-add-expense-error"
+     add-expense-end-month   -> "add-expense-schedule-help whatif-add-expense-error"
+     onetime-month           -> "onetime-month-help whatif-add-onetime-error"
+     add-bigticket-month     -> "add-bigticket-month-help whatif-add-bigticket-error"
+   The healthcare container (`whatif-add-healthcare-error`) is deliberately NOT
+   given role="alert" — correct: it is not one of the four criterion-7 surfaces
+   and RC3 added no month input to it.
+
+8. ORACLE — PASS. See GATES (exit 0, `ORACLE PASS`, fail-end re-validated).
+
+=====================================================================
+MUTATION GRADE — every new test PROVEN to guard its subject
+=====================================================================
+Each mutation applied in its OWN `cp -a` copy; the tests below are SHIPPED tests.
+MUT A  scheduleEnded -> `return false`
+   --- FAIL: TestScheduleForms_ClampedRowsAreHonestAboutLostMonths
+       "ended row missing \"Ended before the plan start (Sep 2026)\"" and five
+       forbidden-substring failures (hx-put, expense-start-exp-ended,
+       expense-end-exp-ended, expense-schedule-exp-ended, value="2026-08")
+   --- FAIL: TestRenderExpenseSourcesList_EndedRowIsDisplayOnly
+   (and the oracle: --- FAIL: TestRC3OracleClampedRowsRoundTrip / ORACLE FAIL)
+MUT B  "Since plan start" reverted to "Starts {{calendarMonthLabel ...}}" in BOTH lists
+   --- FAIL: TestScheduleForms_ClampedRowsAreHonestAboutLostMonths
+       "clamped-start row missing \"Since plan start (Sep 2026)\""
+       "a clamped start must not claim the entry was scheduled for Sep 2026"
+   --- FAIL: TestRenderExpenseSourcesList_EndedRowIsDisplayOnly
+MUT C  role="alert" removed from ONE OOB clearing div (income only)
+   --- FAIL: TestScheduleForms_AddErrorsAreAnnouncedAndAssociated
+       "the OOB partial drops role=\"alert\" from the income error container"
+   (internal/templates still ok — correctly scoped to the page template)
+MUT D  budget_fit note reverted to scheduleNote("ends", ..., *source.EndMonth)
+   --- FAIL: TestCalculateBudgetFit/expense_breakdown_items_populated
+       (package internal/services/retirement, calculator_expense_test.go:636)
+MUT E  shiftScheduleOffsets(settings, elapsed) -> (settings, 0)
+   --- FAIL: TestScheduleForms_RolloverKeepsTheCalendarMonth   <-- UI path
+       'income month input should carry "2027-06" after the rollover shift'
+   --- FAIL: TestScheduleForms_ClampedRowsAreHonestAboutLostMonths (fixture guard)
+No mutation survived. Criterion-5 and criterion-3 guards are live, not decorative.
+
+=====================================================================
+ATTEMPT-1 DECISIVE FACTS RE-CONFIRMED AT a57394c
+=====================================================================
+- SINGLE conversion path: `grep -rn "MonthOffset(\|monthsBetween("` (non-test)
+  yields only month_input.go:44 (retirement.MonthOffset), its two internal
+  callers, the two handler call sites (handlers_income_expense.go:261, :341),
+  and settings_current_month.go (the definition + the rollover's own use).
+- SINGLE formatter pair: `func CalendarMonth` / `func CalendarMonthLabel` exist
+  once each (internal/models/calendar_month.go:12,23) and are the only things
+  bound to `calendarMonth`/`calendarMonthLabel` (render.go:92-93). Scanning the
+  RC3 diff for added `"2006-01"` / `"Jan 2006"` literals in .go files: every hit
+  is in a *_test.go file, plus the handlers_test.go helper `planMonthValue`
+  which itself calls models.CalendarMonth. No production second formatter.
+- ROTH inputs exactly once each (ruling d): probe counted
+  `id="roth-start-year"` = 1 and `id="roth-end-year"` = 1 on the rendered page;
+  oracle O2a independently counts name="start_year" == 1 and name="end_year" == 1.
+- EXACT round trip for a future-dated entry: offset 11 renders
+  `<input type="month" id="income-start-inc-1" name="start_month" ... value="2027-09" ...>`
+  and re-posting it gives code=200 -> StartMonth=11 EndMonth=24.
+
+=====================================================================
+SCOPE
+=====================================================================
+`git show --name-only a57394c` diffed against .swarm/manifests/RC3.2.files -> IDENTICAL (8 files).
+`git show --name-only 1f9a35a` diffed against .swarm/manifests/RC3.1.files -> IDENTICAL (18 files).
+`git diff --name-only ee7af8a a57394c` = 18 files, exactly the union; nothing
+outside the two manifests.
+critical.globs: matching RC3's two commits against
+  internal/services/storage/**, internal/services/dataloader/**,
+  internal/services/retirement/engine/**, internal/services/transfers/**,
+  internal/services/accounts/accounts.go, internal/services/mcpsvc/confirm/**
+produced ZERO hits. (Matching the wider range bcb6226..a57394c does hit eight
+engine/** files, but all eight belong to the already-accepted RC1/RC2 commits
+ec42346/f479de3/ee7af8a, not to RC3.)
+No testdata touched. Working tree clean at a57394c before and after my run.
+
+=====================================================================
+Observations (not FAIL)
+=====================================================================
+O1. Oracle-clause precision (lead artifact, for the record). In
+    .swarm/tier3/RC3/rc3_oracle_test.go:301 the ended-row check bans
+    `id="expense-end-month-exp-ended"` and `expense-start-month-exp-ended"`.
+    No template ever renders that id shape — the real pattern is
+    `expense-start-{{.ID}}` i.e. `expense-start-exp-ended`
+    (`grep -rn 'expense-start-month-\|expense-end-month-' web/templates/`
+    returns nothing). Those two clauses are therefore vacuous; the oracle's
+    real teeth on that line are the `hx-put="/whatif/expense/exp-ended"` clause
+    (which did fire under MUT A). The SHIPPED test uses the CORRECT ids
+    (`id="expense-start-exp-ended"`, `id="expense-end-exp-ended"`,
+    `id="expense-schedule-exp-ended"`) and caught MUT A on all three, so the
+    behaviour is genuinely guarded and criterion 3 is met. Worth fixing in the
+    oracle only if the directory is reused.
+O2. One-sided regression guard on the ended-row branch. The income and expense
+    templates carry twin `{{if scheduleEnded .EndMonth}}` blocks, but only the
+    EXPENSE branch has a shipped test
+    (TestRenderExpenseSourcesList_EndedRowIsDisplayOnly; the handler-level
+    clamped test also uses an expense, exp-ended). I rendered the income branch
+    myself and it is correct (evidence under criterion 3), but deleting just
+    the income `{{if scheduleEnded}}` would not fail any shipped test — MUT A
+    was caught through the expense branch. V3-pattern promote candidate: an
+    income twin of the render test. Not a criterion-6 failure (criterion 6 asks
+    for template render tests, and one exists for this behaviour).
+O3. Pre-existing dual formatters of a scheduled month, untouched by RC3 and
+    outside its manifests: internal/handlers/whatif/verdict.go:94,102
+    (`Format("Jan 2006")`) and handlers_spending_optimizer.go:746-750 /
+    analysis/spending_funding.go:196 (`Format("2006-01")`). The last of these is
+    already in SPEC.md §5 backlog from RC3/checker-second; verdict.go and the
+    optimizer handler are not. Backlog only.
+O4. web/templates/components/whatif/guardrails.html:122 still renders
+    "Year {{.Year}}:". It is a guardrail-ladder table, not one of the four
+    schedule surfaces criterion 3 enumerates, and it is byte-identical to
+    master. Out of scope.

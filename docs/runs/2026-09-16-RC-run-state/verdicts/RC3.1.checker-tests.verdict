@@ -1,0 +1,330 @@
+VERDICT: PASS
+CHECKER: checker-tests
+FAMILY: anthropic
+TASK: RC3
+ATTEMPT: 1
+---
+All work verified in a `cp -a` copy of the worktree at
+/tmp/.../scratchpad/work/copy1 (HEAD 1f9a35a, `git status --porcelain` empty).
+The real worktree was only read: it is still clean at 1f9a35a on
+fix/rollover-schedule, and no data/ directory exists there. No git
+checkout/restore/stash/reset was run anywhere; no binary was executed.
+
+=====================================================================
+ORACLE (criterion 8)
+=====================================================================
+`bash .swarm/tier3/RC3/accept.sh <my copy>` — run by me, not trusted from the
+lead's log. Exit status 0; final line exactly `ORACLE PASS`. All four planted
+tests PASS:
+  --- PASS: TestRC3OraclePageShowsCalendarMonths (0.03s)
+  --- PASS: TestRC3OracleEditRoundTrip (0.03s)
+  --- PASS: TestRC3OracleAddAndValidation (0.04s)
+  --- PASS: TestRC3OracleRolloverDisplay (0.02s)
+plus O3 (shipped models/retirement/whatif suites ok, testdata clean) and O4
+(no year wording, month inputs in all four templates).
+`ls -l .swarm/tier3/RC3/accept.sh` → `-rwxrwxr-x` (executable);
+`tail -1 .swarm/tier3/RC3/oracle.1.log` → `ORACLE PASS` at attempt 1.
+CRITERION 8 MET.
+
+=====================================================================
+CRITERION 1 — Inputs (month pickers, names, min, labels, help)
+=====================================================================
+Command: my probe `TestCheckerProbe_DefaultsBlanksAndLabels` (whole-attribute
+literal assertions on the real GET /whatif body through setupTestEnvWithRenderer)
+  --- PASS: TestCheckerProbe_DefaultsBlanksAndLabels (0.03s)
+It asserts, as rendered with plan start 2026-10:
+  id="add-income-start-month" name="start_month" ... value="2026-10" min="2026-10"
+  id="add-income-end-month"   name="end_month"   ... value=""        min="2026-10"
+  id="add-expense-start-month" name="start_month" ... value="2026-10" min="2026-10"
+  id="add-expense-end-month"   name="end_month"   ... value=""        min="2026-10"
+  id="onetime-month"        name="month" ... value="2026-10" min="2026-10"
+  id="add-bigticket-month"  name="month" ... value="2026-10" min="2026-10"
+(brief item 5: month inputs default to the plan start, end_month blank.)
+Shipped `TestScheduleForms_PageShowsCalendarMonths` (PASS) pins the inline edit
+inputs: `id="income-start-sched-inc" name="start_month" value="2027-09" min="2026-10"`,
+`id="income-end-sched-inc" name="end_month" value="2028-09" min="2026-10"`, and the
+expense equivalents, plus `<input type="month" id="add-income-start-month" ...>` etc.
+`end_month` blank = perpetual and `EndMonth = offset+1` are proven under
+criteria 2/4 below. CRITERION 1 MET.
+
+=====================================================================
+CRITERION 2 — Parsing (one helper, 400s, signature change)
+=====================================================================
+ONE path: `internal/handlers/whatif/month_input.go` — `parseMonthOffset` calls
+`retirement.MonthOffset` (the exported `monthsBetween`, added in
+settings_current_month.go) and `parseMonthRange` is the only producer of
+StartMonth/EndMonth from a form. `grep -rn 'parseYearRange' internal/` returns
+nothing (it was deleted in the diff).
+Rejections — shipped `TestScheduleForms_RejectMonthsOutsideThePlan` PASS, all
+13 subtests listed by name in the -v run (add/edit × income/expense/one-time/
+big-ticket × before-plan-start / inverted / unparseable), each asserting 400 and
+the before-plan-start cases asserting the body contains "Oct 2026" (the plan
+start LABEL, not an offset). The same test then reloads and asserts no rejected
+request wrote anything.
+Blank values — my probe `TestCheckerProbe_DefaultsBlanksAndLabels` asserts 400
+with "Start month is required" (income/expense, add AND edit) and "Month is
+required" (one-time, big-ticket), and 400 with "Through month cannot be before
+the start month" for an inverted range. All PASS.
+Signature change — `git show 1f9a35a -- internal/services/retirement/settings.go`
+shows `UpdateIncomeSource(id string, startMonth int, endMonth *int, ...)` and
+`UpdateExpenseSource(id string, startMonth int, endMonth *int, ...)` storing the
+offsets verbatim (no ×12 remains). `go build ./...` + `go vet ./...` clean, so
+every caller is updated. CRITERION 2 MET.
+
+=====================================================================
+CRITERION 3 — Display (calendar labels everywhere, one formatter)
+=====================================================================
+Rendered-output dump, my probe `TestCheckerProbe_DumpRows` (PASS), tags stripped:
+  income (SS-optimizer row): "Your Social Security - $3720/mo from SS Optimizer
+      Starts Oct 2031 (age 70)"          → "Starts <Mon YYYY> (age N)"
+  one-time:  "Roof -$1,000 ... Sep 2027"
+  one-time past: "OldRoof -$5 Sep 2026 (past)"
+  one-time beyond horizon (Month 150, ProjectionYears 12): "TooFar -$5 Apr 2039
+      beyond current horizon (12 yr) — not counted; edit the month or extend the
+      projection to reactivate it"        → Month >= ProjectionYears*12 via int yearOf
+Expense row wording — shipped `TestRenderExpenseSourcesList_MonthInputsFromMonthOffsets`
+(PASS) asserts the literals "Starts Sep 2027 · Through Sep 2028" and
+"Starts Oct 2026 · ongoing", and that "start_year"/"end_year"/"Starts yr"/"Ends yr"
+are absent from the list.
+Big-ticket list + restore list — shipped `TestRenderBigTicketCard_ShowsCalendarMonth`
+(PASS) asserts "Sep 2026 (past)" and "Aug 2026 (past)" in BOTH lists.
+budget_fit note — my probe `TestCheckerProbe_BudgetFitNoteIsThroughEndMonthMinusOne`
+(PASS) asserts the LITERAL note for plan start 2026-09 / EndMonth 60:
+  zz_checker_note_test.go:37: budget_fit note = "through Aug 2031"
+(brief item 3: the old wording was "ends Sep 2031" for the same stored value.)
+ONE formatter — `git show 1f9a35a --unified=0 | awk` over added lines containing
+"2006-01"/"Jan 2006" returns SIX hits, ALL in *_test.go files
+(handlers_test.go planMonthValue helper, schedule_month_form_test.go rollover
+expectations). No production file added a date layout. Template funcs used on
+these surfaces: `calendarMonth`, `calendarMonthLabel`, `throughMonth` (int
+arithmetic, no formatting), `yearOf` (int division) — enumerated with
+`grep -rn 'calendarMonth|throughMonth|yearOf' web/templates`. JS: the only
+month-ish hits in web/static/js are pre-existing and off these surfaces
+(`whatif-rate-assumptions.js:78` person birth-month input;
+`whatif-spending-optimizer.js:410` consumes the server-formatted optimizer
+timeline). CRITERION 3 MET.
+
+=====================================================================
+CRITERION 4 — Round trip is exact (amended: one-time/big-ticket = add path)
+=====================================================================
+Shipped `TestScheduleForms_EditRoundTripIsExact` (PASS): fixture StartMonth 11 /
+EndMonth 24 at plan start 2026-10 renders value="2027-09" and value="2028-09"
+(asserted first), those exact values are re-posted to the real
+handleWhatIfUpdateIncome / handleWhatIfUpdateExpense, and the reloaded settings
+still read StartMonth 11 / EndMonth 24 for both.
+Shipped `TestScheduleForms_BlankThroughMonthIsPerpetual` (PASS): a blank
+end_month clears EndMonth to nil twice in a row without moving StartMonth.
+Shipped `TestScheduleForms_AddStoresTheSubmittedMonth` (PASS): one-time and
+big-ticket posted with month=2027-09 store Month 11 and the page then contains
+"SchedWedding", "SchedSale" and "Sep 2027" — the add path IS their round trip
+(ruling 2026-09-16d). Income add 2028-01/through 2029-12 → StartMonth 15,
+EndMonth 39 (= through+1); expense add 2027-01 with blank through → StartMonth 3,
+EndMonth nil.
+Through-at-the-plan-start edge (brief item 3): my probe
+`TestCheckerProbe_ThroughAtPlanStartAndBigTicketHorizon` (PASS) —
+  "EndsAtStart stored StartMonth=0 EndMonth=1 (Through = the plan start month)".
+Through = EndMonth-1 agrees across all three places for ONE stored value
+(EndMonth 60, plan start 2026-09): budget_fit note "through Aug 2031" (probe
+above) and the row input `id="expense-end-e1" name="end_month" value="2031-08"`
++ visible "Through Aug 2031 (the last month charged)"
+(my probe `TestCheckerProbe_ExpenseRowThroughMatchesNote`, PASS — literal
+strings, not re-derived through the production formatter).
+CRITERION 4 MET.
+
+=====================================================================
+CRITERION 5 — Rollover on the UI path (plan start three months ago)
+=====================================================================
+Shipped `TestScheduleForms_RolloverKeepsTheCalendarMonth` — read in full and run:
+  --- PASS: TestScheduleForms_RolloverKeepsTheCalendarMonth (0.02s)
+Its assertions: computes `thisMonth` from `time.Now()`, writes the settings FILE
+directly (bypassing Save so the shift is observed on load) with
+`StartDate = thisMonth-3months`, `UseCurrentMonth = true`, an income at
+StartMonth 12 and a one-time at Month 12; then asserts the GET /whatif body
+contains `value="<thisMonth+9>"` (2006-01), the label `<thisMonth+9>` ("Jan 2006")
+and `min="<thisMonth>"` — i.e. twelve months after the SAVED anchor, nine months
+after today, and the re-anchored plan start as the min. CRITERION 5 MET.
+
+=====================================================================
+CRITERION 6 — Tests; suites green; testdata untouched
+=====================================================================
+In the copy, all with GOFLAGS=-buildvcs=false:
+  `go build ./...`  → BUILD_OK (no output)
+  `go vet ./...`    → VET_OK (no output)
+  `go test -count=1 ./...` → TEST_EXIT=0, zero FAIL lines
+  `make check` (vet static vuln css-verify test) → "✓ all checks passed",
+      MAKE_CHECK_EXIT=0
+  `/usr/bin/git status --porcelain -- testdata` → empty (after both runs)
+Year words gone for these entries: shipped TestScheduleForms_PageShowsCalendarMonths
+asserts absence of "Starts yr", "Ends yr", `name="year"`, "(yr 0)", "(yr 1)",
+"Year 0", "Year 1 (", add-*-year ids, AND pins
+`strings.Count(body, 'name="start_year"') == 1` / `name="end_year"` == 1 (the
+out-of-scope Roth card only) — a count, so a schedule form cannot silently
+regain one. Existing tests were EDITED not deleted: onetime_expense_test.go,
+settings_crud_test.go, calculator_expense_test.go, render_schedule_month_test.go
+all show renames/updates in `git show 1f9a35a`, no test function removed.
+CRITERION 6 MET.
+
+=====================================================================
+CRITERION 7 — Accessibility
+=====================================================================
+Markup facts confirmed by rendered output (my probe
+`TestCheckerProbe_DefaultsBlanksAndLabels`, PASS), on a page with TWO income
+rows and TWO expense rows:
+  - every one of income-start-row-a/-row-b, income-end-row-a/-row-b,
+    expense-start-row-c/-row-d, expense-end-row-c/-row-d appears EXACTLY ONCE
+    as an id and has a matching `<label for="...">` (ids are unique per row);
+  - every aria-describedby target actually exists on the page:
+    income-schedule-row-a/-row-b, expense-schedule-row-c/-row-d,
+    add-income-schedule-help, add-expense-schedule-help, onetime-month-help,
+    add-bigticket-month-help;
+  - the old wrapping-label title hints are gone ("Year expense starts",
+    "Year income starts", "Year expense ends", "Year income ends" all absent).
+NOT DEMONSTRABLE BY ANY COMMAND I RAN: colour contrast (>= 4.5:1) and visible
+focus in BOTH themes. That is checker-a11y's audit; I make no claim on it.
+CRITERION 7: markup portion MET; contrast/focus DELEGATED (stated, not passed
+on inspection).
+
+=====================================================================
+MUTATION GRADING — do the shipped tests notice?
+=====================================================================
+Each mutation applied to a FRESH `cp -a` of the copy, then
+`go test -count=1 ./internal/...`. All five are killed by SHIPPED tests:
+
+M1 `end := through + 1` → `end := through` (month_input.go)
+   --- FAIL: TestScheduleForms_EditRoundTripIsExact
+   --- FAIL: TestScheduleForms_AddStoresTheSubmittedMonth
+M2 `throughMonth` returns `*endMonth` (no −1) (templates/render.go)
+   --- FAIL: TestScheduleForms_PageShowsCalendarMonths
+   --- FAIL: TestScheduleForms_EditRoundTripIsExact
+   --- FAIL: TestRenderExpenseSourcesList_MonthInputsFromMonthOffsets
+M3 before-plan-start rejection disabled (`if offset < 0` → `if false`)
+   --- FAIL: TestScheduleForms_RejectMonthsOutsideThePlan (6 subtests:
+       add/edit income, add/edit expense, add one-time, add big-ticket)
+   --- FAIL: TestHandleWhatIfAddIncome_StartMonthBeforePlanStart
+   --- FAIL: TestHandleWhatIfUpdateIncome_StartMonthBeforePlanStart
+   --- FAIL: TestHandleWhatIfAddExpense_StartMonthBeforePlanStart
+   --- FAIL: TestHandleWhatIfUpdateExpense_StartMonthBeforePlanStart
+   --- FAIL: TestHandleWhatIfAddBigTicket_MonthBeforePlanStart
+   --- FAIL: TestOneTimeExpense_HandlerAdd_MonthBeforePlanStart
+M4 budget_fit note reverted to `scheduleNote("ends", s.StartDate, *source.EndMonth)`
+   --- FAIL: TestCalculateBudgetFit/expense_breakdown_items_populated
+M5 `shiftScheduleOffsets(settings, elapsed)` → `(settings, 0)`
+   --- FAIL: TestScheduleForms_RolloverKeepsTheCalendarMonth   <-- UI PATH
+       (internal/handlers/whatif), as required — plus the retirement-package
+       tests TestResolveCurrentMonthShiftsSchedulesForward/Backward,
+       TestManagerLoadSaveLoadDoesNotDoubleShift,
+       TestShiftScheduleOffsetsKeepsPerpetualSourcesPerpetual,
+       TestLoadScenarioSettingsResolvesCurrentMonth,
+       TestLoadScenarioSettingsConvertsAndShiftsLegacyKeys.
+
+=====================================================================
+WORKER JUDGEMENT CALLS — independently verified
+=====================================================================
+(1) Template-contract change. I enumerated the callers myself:
+    `grep -rn 'template "whatif-' web/templates` — the ONLY invocations of the
+    three dict-taking templates are income-sources-list.html:8 (projected-ss),
+    :15 (income-source-item), expense-sources-list.html:6, and
+    pages/whatif.html:281, :288, :301 (the every-mutation OOB block). All six
+    pass `(dict "Settings" $.Settings "Source"/"Entry" .)`.
+    `whatif-income-source-item-excluded` is still called bare at
+    income-sources-list.html:13 and whatif.html:286 and its definition is
+    unchanged. No Go code executes these template names except one test.
+    END-TO-END PROOF through real handlers: my probe
+    `TestCheckerProbe_AllMutationsRenderCompletely` (PASS) drives THIRTEEN real
+    mutation handlers — income add/update/remove/restore, expense
+    add/update/remove/restore, one-time add/delete, big-ticket
+    add/delete/restore — against a plan with non-aligned (11) AND negative
+    (-1, -2) months and with the SS optimizer ACTIVE (FRABenefit 3000,
+    ClaimAge 70, so projectedSSEntries is non-empty, asserted). For every one
+    of the thirteen responses it asserts: status 200; none of "Internal Server
+    Error", "Error rendering", "can't evaluate", "incompatible types",
+    `executing "whatif`, "error calling"; all four OOB blocks present AND in
+    source order income-sources-list < expense-sources-list < bigticket-list <
+    onetime-list (ordering proves no truncation); the projected-SS item
+    rendered ("Social Security" + "(age 70)"); and the non-aligned label
+    "Sep 2027". The same probe then asserts the full page contains "Sep 2027",
+    "Sep 2026 (past)", "Aug 2026 (past)", "(age 70)", "ProbeOldBoat",
+    "ProbeOldClub".
+(2) `throughMonth` is arithmetic only (returns int; `*endMonth - 1`), and no
+    second calendar formatter was added — see criterion 3 above.
+(3) "Through" semantics agree across card, note and stored value — criterion 4.
+(4) Big-ticket horizon: `git show bcb6226:...handlers_income_expense.go` sliced
+    to handleWhatIfAddBigTicket contains NO "horizon"/"ProjectionYears" match,
+    and neither does the RC3 version — so RC3 added no check and removed none.
+    My probe confirms behaviour is unchanged: a big-ticket at 2039-10 (offset
+    156, horizon 144) returns 200 and stores Month 156. One-time DOES have the
+    month-based check: shipped
+    `TestScheduleForms_OneTimeBeyondHorizonNamesTheHorizon` (PASS) asserts
+    2038-10 (offset 144, ProjectionYears 12) → 400 naming BOTH "Oct 2038" and
+    "12-year projection horizon", and that the LAST in-horizon month 2038-09 is
+    accepted with 200.
+(5) Add-form defaults and blank-field 400s — criteria 1 and 2 above.
+(6) Labels / unique ids / aria-describedby / no title hints — criterion 7.
+(7) `startYear` is still registered (`internal/templates/render.go:132
+    "startYear": engine.ParseStartYear`) and `grep -rn 'startYear' web/templates`
+    returns nothing — unused but registered, as the brief says is out of scope.
+
+=====================================================================
+LEGACY USER PATH
+=====================================================================
+My probe `TestCheckerProbe_LegacyYearKeysRenderCalendarMonths` (PASS) writes a
+settings FILE by hand with the genuine legacy keys and reads GET /whatif:
+  expense `"start_year":1,"end_year":3`  → `id="expense-start-leg-exp"
+      name="start_month" value="2027-10"` and `id="expense-end-leg-exp"
+      name="end_month" value="2029-09"` (EndMonth 36 → Through offset 35)
+  one-time `"year":2`      → "Oct 2028"
+  big-ticket `"year":3`    → "Oct 2029"
+  income (already month-shaped at master — see below) `"start_month":24,
+      "end_month":48` → `value="2028-10"` / `value="2030-09"`
+No template-failure text in the body. NOTE for the record: my first attempt used
+`start_year`/`end_year` for INCOME and failed; `git show
+bcb6226:internal/models/income_source.go` proves IncomeSource has ALWAYS
+persisted `start_month`/`end_month` (only the FORM was year-based), so income
+has no legacy year key to decode. The legacy-key surfaces are exactly
+ExpenseSource, OneTimeExpense and BigTicketItem, all three verified above.
+
+=====================================================================
+SCOPE
+=====================================================================
+`git show --name-only --format="" 1f9a35a | sort` diffed against
+.swarm/manifests/RC3.1.files → IDENTICAL (18 files, diff empty).
+No path in 1f9a35a matches .swarm/critical.globs
+(storage/**, dataloader/**, retirement/engine/**, transfers/**,
+accounts/accounts.go, mcpsvc/confirm/**) — grep over the commit's name-only
+list returns nothing.
+Working tree vs HEAD: `git status --porcelain` empty — nothing uncommitted
+beyond the commit, so the manifest reconciliation is complete.
+`git diff --name-only bcb6226 HEAD` is the union of RC1+RC2+RC3; the three
+critical-glob files in it (`retirement/engine/expense.go`, `engine/stepper.go`,
+`engine/loop_helpers.go`) belong to RC2 (commits f479de3/ee7af8a), which was
+accepted at Tier 3 with them in its manifest — not an RC3 scope issue.
+
+=====================================================================
+Observations (not FAIL — outside the written criteria, for the backlog)
+=====================================================================
+O1. An expense/income entry stored with `EndMonth == 0` renders a "Through"
+    value one month BEFORE the input's own `min`. Evidence (my probe log,
+    plan start 2026-09):
+      `id="expense-end-e3" name="end_month" value="2026-08" min="2026-09" ...`
+    EndMonth 0 means "never charged" and is reachable only from a pre-RC3 save
+    made through the old "Ends yr 0" box (legacy `end_year:0` decodes to nil,
+    so a legacy FILE cannot produce it — only an `end_month:0` already in the
+    JSON can). The failure mode is loud, not silent: the browser flags the
+    value against `min`, and an unchanged re-save returns 400 "Through month
+    must be Sep 2026 or later", which matches the design's stated preference
+    over silently moving a date. No criterion covers EndMonth 0, and SPEC §1
+    records the live plan as having no expense sources at all.
+O2. `internal/handlers/whatif/handlers_income_expense.go` now calls
+    `retirementMgr.Load()` (via `planStartDate()`) once per add/update to read
+    StartDate, then the manager loads again inside Add*/Update*. Two loads per
+    mutation instead of one; correctness is unaffected (the cache is warm and
+    the same StartDate the form was rendered against is used), but it is an
+    extra decode on a hot path.
+O3. `startYear` (engine.ParseStartYear) is registered as a template func with
+    zero remaining template callers — dead registration, explicitly out of
+    RC3's scope per the brief.
+O4. `whatif-rate-assumptions.js:78` builds `<input type="month"
+    name="person_birth_month[]" aria-label="Person birth month">` with an
+    aria-label rather than a `<label for>`. Pre-existing, not a schedule
+    surface, untouched by RC3 — flagged only because it is the one other
+    month input on the page.

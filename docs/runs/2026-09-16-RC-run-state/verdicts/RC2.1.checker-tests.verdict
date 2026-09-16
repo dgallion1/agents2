@@ -1,0 +1,462 @@
+VERDICT: FAIL
+CHECKER: checker-tests
+FAMILY: anthropic
+TASK: RC2
+ATTEMPT: 1
+---
+Worked in a cp -a copy at
+/tmp/claude-1000/.../scratchpad/rc2/work (commit f479de3, branch
+fix/rollover-schedule), with a second copy at ec42346 for before/after
+comparison. The real worktree was never written to, never checked out,
+never had a data/ dir created, and the server binary was never run.
+
+FAIL is on criterion 7 (display). Criteria 1-6 and 8-10 are met.
+
+========================= SUMMARY =========================
+1  Models ...................................... PASS
+2  Methods ..................................... PASS
+3  Rollover shift .............................. PASS
+4  Engine month firing ......................... PASS
+5  Analysis / chain ............................ PASS
+6  Validation .................................. PASS
+7  Manager/handlers + DISPLAY .................. FAIL  (display half)
+8  Tests ....................................... PASS
+9  Green ....................................... PASS
+10 Oracle ...................................... PASS
+
+===========================================================
+CRITERION 7 — FAIL
+===========================================================
+The settings-manager/handler half of criterion 7 is met (evidence below).
+The DISPLAY half is not: the worker changed the CONTRACT of the
+`whatif-bigticket-item` template (it now requires the dict
+{"Settings":…, "Item":…} and re-scopes with `{{with .Item}}`) and updated
+ONE of its TWO call sites. The second call site,
+`web/templates/pages/whatif.html:342`, still passes the bare item:
+
+    {{range .Settings.BigTicketItems}}
+    {{template "whatif-bigticket-item" .}}          <-- bare item
+
+`web/templates/pages/whatif.html` is NOT in the commit or the manifest.
+That call site lives inside `{{define "whatif-results-with-oob"}}` — the
+partial `renderRecalc`/`renderWhatIfResults` return from EVERY mutating
+what-if handler (internal/handlers/whatif/handlers.go:195 and :446).
+
+PROOF — real handler, real templates, real response body
+(probe TestProbeE2EAfterBigTicketExists, setupTestEnvWithRenderer):
+
+  $ go test -count=1 -run TestProbeE2EAfterBigTicketExists -v ./internal/handlers/whatif/
+  Error rendering partial whatif-results-with-oob: template:
+    bigticket-card.html:31:7: executing "whatif-bigticket-item" at
+    <.Item>: can't evaluate field Item in type models.BigTicketItem
+  ADD bigticket: status=200 len=118132 hasZebra=false hasISE=true
+  ADD onetime (plan now has a big ticket): status=200 len=127688
+    body contains "Internal Server Error"          : true
+    body contains "Zebra Car"                      : false
+    body contains "Zebra Roof"                     : false
+    body contains "id=\"onetime-list\" hx-swap-oob" : false
+    OOB tail >>>id="bigticket-list" hx-swap-oob="true" class="space-y-2 mb-4">
+            Internal Server Error<<<
+
+User-visible consequence, on any plan that has at least one big-ticket
+item: every what-if mutation (add/edit/delete an income source, expense,
+one-time expense, rate change, …) returns HTTP 200 whose body has the
+literal text "Internal Server Error" swapped into #bigticket-list, the
+big-ticket items themselves never render, and the response is TRUNCATED
+at that point so every later OOB block — including the whole
+#onetime-list resync, the very list criterion 7 was about — is silently
+dropped from the response.
+
+REGRESSION, not pre-existing. The identical probe on ec42346 (RC1, the
+parent), with Year: instead of Month: in the fixture:
+  $ (in the ec42346 copy) go test -count=1 -run TestProbeOOBWithBigTicket -v ./internal/handlers/whatif/
+  RenderPartial err = <nil>
+  bodylen=120482
+  contains "Zebra Car"  : true
+  contains "Zebra Roof" : true
+  contains "Zebra Boat" : true
+  contains "id=\"onetime-list\" hx-swap-oob" : true
+versus the same probe at f479de3:
+  RenderPartial err = template: bigticket-card.html:31:7: ... <.Item>:
+    can't evaluate field Item in type models.BigTicketItem
+  contains "Zebra Car"/"Zebra Roof"/"Zebra Boat" : false/false/false
+  contains "id=\"onetime-list\" hx-swap-oob"     : false
+(`/usr/bin/git show ec42346:web/templates/pages/whatif.html | sed -n
+'339,356p'` shows the big-ticket OOB block already passed the bare item
+at ec42346, where it was correct; the one-time OOB block on line 353 was
+ALREADY dict-based, which is why only big-ticket broke.)
+
+WHY NO SHIPPED TEST CAUGHT IT: the new render test
+`TestRenderBigTicketCard_ShowsCalendarMonth` renders the COMPONENT
+("whatif-bigticket-card", which uses the fixed dict call site in
+components/whatif/bigticket-card.html:20), never
+"whatif-results-with-oob". The oracle renders no templates at all. The
+default test plan has no big-ticket items, so
+`TestHandleWhatIfAddBigTicket` passes: it runs under `setupTestEnv`,
+whose renderer is a stub (its body is JSON, no "bigticket-list" at all —
+verified) — so the whole handler suite is blind to this path.
+
+WHAT IS MISSING: update `web/templates/pages/whatif.html:342` to
+`{{template "whatif-bigticket-item" (dict "Settings" $.Settings "Item" .)}}`
+(matching line 353's one-time block), and add a shipped test that renders
+"whatif-results-with-oob" with a non-empty BigTicketItems and asserts the
+item name AND the calendar label appear and "Internal Server Error" does
+not — the component-level render test cannot catch a second call site.
+
+Criterion 7, settings-manager/handler half — MET:
+- UpdateExpenseSource keeps its signature and writes months
+  (`/usr/bin/git show f479de3 -- internal/services/retirement/settings.go`):
+    settings.ExpenseSources[i].StartMonth = startYear * 12
+    endMonth := *endYear * 12; ...EndMonth = &endMonth  / else nil
+- handlers_income_expense.go constructs with year*12 for expense
+  (StartMonth: startYear*12), big-ticket (Month: year*12) and one-time
+  (Month: year*12); beyond-horizon checks untouched.
+- models.CalendarMonth / CalendarMonthLabel exist in
+  internal/models/calendar_month.go; both registered as template funcs
+  calendarMonth/calendarMonthLabel, plus int-returning yearOf
+  (internal/templates/render.go:88-90, 697-700).
+- Horizon test is `ge (yearOf .Item.Month) .Settings.ProjectionYears`
+  (onetime-card.html), and it behaves: shipped
+  TestRenderOneTimeCard_ShowsCalendarMonth/"horizon warning is per whole
+  year" asserts month 59 inside / month 60 beyond a 5-year horizon; the
+  suite is green.
+- budget_fit.go notes go through models.CalendarMonthLabel via
+  scheduleNote (see criterion 5).
+- "Year INPUTS stay until RC3": `grep -rn "\.Year\b|\.StartYear\b|\.EndYear\b"
+  web/templates` returns only Roth conversion, historical backtest,
+  guardrails/RMD/tax projection-result years and `now.Year` — no
+  expense/one-time/big-ticket schedule field. `grep -rn
+  "start_year|end_year|\.year" web/static/js` returns NOTHING (no JS
+  consumer at all).
+
+===========================================================
+CRITERION 1 — PASS (models)
+===========================================================
+`/usr/bin/git show f479de3 -- internal/models/income_source.go
+internal/models/whatif.go` and internal/models/one_time_expense.go show
+StartYear/EndYear and Year REMOVED from the structs and replaced by
+`StartMonth int json:"start_month"` / `EndMonth *int json:"end_month"` /
+`Month int json:"month"`, each type carrying an UnmarshalJSON that
+consults `map[string]json.RawMessage` for presence.
+
+Empirical decode matrix (throwaway probe TestProbeDecodeMatrix in
+internal/models, run then deleted):
+  LEGACY expense (start_year 3,end_year 5): StartMonth=36 EndMonth=60
+  LEGACY expense end_year=0:                StartMonth=36 EndMonth nil=true
+  NEW expense (start_month 11,end_month 23):StartMonth=11 EndMonth=23
+  MIXED (both keys):                        StartMonth=11 EndMonth=23   <- new wins
+  MIXED partial (start_month + end_year 5): StartMonth=11 EndMonth=60
+  end_month:null present (+end_year 5):     EndMonth nil=true
+  MARSHAL expense: {"id":"a","name":"n","amount":100,"start_month":36,
+                    "end_month":60,"inflation":false,"discretionary":false}
+  LEGACY onetime year 2 -> Month=24 ; MIXED (month 11,year 2) -> 11
+  MARSHAL onetime: {"description":"d","month":24,"amount":5}
+  LEGACY bigticket year 4 -> Month=48 ; MIXED (month 7,year 4) -> 7
+  MARSHAL bigticket: {"id":"","name":"x","amount":1,"month":48,...}
+  LEGACY WhatIf doc: es_start=12 es_end=36 rem_es=24 ote=72 bt=96 rem_bt=108
+No legacy key appears in any marshalled output. All three shapes
+(legacy-only / new-only / mixed) decode; a present new key always wins.
+
+===========================================================
+CRITERION 2 — PASS (methods)
+===========================================================
+Same probe:
+  inflation from StartMonth 11 (3%): m11=100.0000 m23=103.0000 m10=0.0000
+    -> compounds from StartMonth, exactly 12 months = one 3% step.
+  end exclusive: m22=100 m23=0  IsActive(22)=true IsActive(23)=false
+Diff shows GetAdjustedAmount/IsActive read es.StartMonth / *es.EndMonth
+directly with `EndMonth != nil && month >= *EndMonth`.
+
+===========================================================
+CRITERION 3 — PASS (rollover shift)
+===========================================================
+internal/services/retirement/settings_current_month.go has
+monthsBetween(from,to)(int,bool) (ok=false on either parse failure) and
+shiftScheduleOffsets(settings,elapsed) with the exact rules: shiftRange
+clamps `max(0, x-elapsed)` for Income+RemovedIncome and
+Expense+RemovedExpense; OneTimeExpenses and BigTicketItems+Removed get a
+bare `Month -= elapsed` with NO clamp; `elapsed == 0` returns
+immediately; the whole block sits under `if settings.UseCurrentMonth`.
+
+Oracle O4 pins exactly one literal call line:
+  $ bash .swarm/tier3/RC2/accept.sh <copy>
+  == O4 ... mutation noticed: 4 failing test(s)  [n==1 check passed]
+
+MUTATION BATTERY beyond the oracle's (each mutation applied to a fresh
+cp -a, then `go test -count=1 ./internal/...`):
+  no-clamp income/expense (max(0,x)->x) -> --- FAIL: TestResolveCurrentMonthShiftsSchedulesForward
+  no-clamp endMonth                     -> --- FAIL: TestResolveCurrentMonthShiftsSchedulesForward
+  clamp one-time at 0                   -> --- FAIL: TestResolveCurrentMonthShiftsSchedulesForward
+  clamp big-ticket at 0                 -> --- FAIL: TestResolveCurrentMonthShiftsSchedulesForward
+  drop RemovedExpenseSources            -> --- FAIL: ...Forward, ...Backward
+  drop RemovedIncomeSources             -> --- FAIL: ...Forward, ...Backward
+  drop RemovedBigTicketItems            -> --- FAIL: ...Forward, ...Backward
+  shift fixed-date plans too            -> --- FAIL: TestResolveCurrentMonthLeavesFixedDatePlanAlone
+                                           + TestCurrentMonthExplicitFixedDateSurvivesLoad + 6 more
+Every rule in criterion 3 is independently mutation-killed by a SHIPPED
+test.
+
+load->save->load: TestManagerLoadSaveLoadDoesNotDoubleShift (read in
+full) uses t.TempDir() + a real storage.New + the real clock, writes a
+LEGACY-key document with start_date three months ago, and asserts
+StartMonth==9 on first load, after Save+InvalidateCache reload, and via
+LoadContextWithRevision, then re-reads the FILE and asserts on-disk
+start_date == this month AND on-disk start_month/month == 9, end_month
+== 21. No double shift.
+
+===========================================================
+CRITERION 4 — PASS (engine)
+===========================================================
+expense.go: `OneTimeExpensesForMonth(s, month)` selects `e.Month != month`
+and inflates by `compoundedFactorFromPercent(s.InflationRate,
+float64(month))`. loop_helpers.go: `ApplyBigTicketItemsForMonth(s, month,
+…)` selects `item.Month != month`. stepper.go moves BOTH calls OUT of the
+`monthInYear == 0` block and passes `m`.
+
+REQUIRED MUTATION GRADING (my own, beyond the oracle):
+  a) expense.go: `if e.Month != month` -> `if e.Month/12 != month/12`
+     $ go test -count=1 ./internal/...
+     --- FAIL: TestEngineLoop_ChargesScheduledMonthNotYearBoundary
+     --- FAIL: TestOneTimeExpense_PureFunctionMonthTargeting
+     --- FAIL: TestOneTimeExpense_PureFunctionNonYearAlignedMonth
+     --- FAIL: TestOneTimeExpense_PureFunctionPastMonthNeverCharged
+     --- FAIL: TestOneTimeExpense_EngineLoopHitsOnlyItsYear
+     --- FAIL: TestOneTimeExpenseTaxWithRMD (3 subtests)
+     --- FAIL: TestOneTimeExpenseTaxesReconcileToActualAnnualIncome (4 subtests)
+     --- FAIL: TestMonteCarloShockMatchesPlannedOneTimeExpenseTaxTreatment
+  b) loop_helpers.go: `if item.Month != month` -> `item.Month/12 != month/12`
+     --- FAIL: TestApplyBigTicketItemsForMonth_NonYearAlignedMonth
+     --- FAIL: TestApplyBigTicketItemsForMonth_YearAlignedUnchanged
+     --- FAIL: TestApplyBigTicketItemsForMonth_PastItemNeverApplied
+Both month selections are killed by SHIPPED tests.
+
+YEAR-ALIGNED EQUIVALENCE — the required before/after comparison.
+An identical probe (TestEquivDump) was planted in BOTH copies (f479de3
+and ec42346). It feeds the SAME legacy-year JSON document (2 income
+sources, 2 expense sources + 1 removed, 2 one-time at years 1 and 5, 2
+big-ticket at years 3 and 7 + 1 removed, 20-year horizon, fixed
+start_date 2026-04) and dumps the FULL RunFast result (Projection,
+PresentValue, BudgetFit, RMD, Tax, Sustainability,
+ProjectionExplainability) as indented JSON.
+
+  $ python3 difflib -u old.json new.json   (n=0)
+  total diff lines: 5
+  --- old
+  +++ new
+  @@ -30 +30 @@
+  -    "note": "ends year 8"
+  +    "note": "ends Apr 2034"
+
+286 KB of engine output is byte-identical except the ONE budget-fit note
+wording criterion 7 mandates (start_date 2026-04 + 96 months = Apr 2034).
+Every balance, withdrawal, tax, RMD, PV and explainability figure is
+unchanged.
+
+The fixture is NOT vacuous: moving o1 to month 13 and b2 to month 85
+(off their year boundaries) in the same probe produces 3877 diff lines
+against new.json, i.e. those entries genuinely drive the numbers.
+
+Semantic note verified while reading stepper.go: moving
+`st.BigTicketRothEarnings = …` out of the year-boundary block is safe —
+stepper.go:406 resets it to 0 at the end of every StepMonth after
+consuming it at line 397, so in non-boundary months the new code assigns
+0 where the old code already had 0. The equivalence dump confirms it.
+
+===========================================================
+CRITERION 5 — PASS (analysis / chain)
+===========================================================
+chain.go: `rebaseExpenseSources(sources, transitionMonth)` and
+`rebaseBigTicketItems(items, transitionMonth)` now take months and are
+called with `transitionMonth` (was transitionYear); big-ticket items with
+`item.Month-transitionMonth < 0` are dropped; `sort.Slice` compares
+`result[i].Month`.
+present_value.go: groups by `oneTimeMonths[e.Month]`, `if chargeMonth < 0
+|| chargeMonth >= months { continue }`, and calls
+`engine.OneTimeExpensesForMonth(s, chargeMonth)`; expense leg uses
+`source.StartMonth` and `min(*source.EndMonth, months)`.
+budget_fit.go: `scheduleNote(verb, startDate, month)` routes through
+models.CalendarMonthLabel and falls back to "…year %d" (month/12) only
+when the label is empty.
+Mutation: forcing scheduleNote's label branch off (`; label != ""` ->
+`; false`) -> `--- FAIL: TestCalculateBudgetFit/expense_breakdown_items_populated`.
+"Every other consumer compiles with unchanged semantics" is proven
+mechanically: the year fields are GONE from the structs, so any residual
+reader is a compile error — and `go build ./... && go vet ./...` are
+green (below). My own enumeration
+`grep -rn "StartYear|EndYear|\.Year\b" --include=*.go internal cmd`
+(excluding Roth/backtest/tax-year) leaves only Transaction.Year,
+time.Time.Year(), HealthcareStartYears, RothConversionConfig,
+HistoricalBacktest DataStartYear, and ProjectionMonth/ProjectionYear
+.Year — none of them a schedule field.
+
+===========================================================
+CRITERION 6 — PASS (validation)
+===========================================================
+prepare/validate.go ValidateOneTimeExpenses now keeps ONLY `e.Amount < 0`;
+the `e.Year < 0` rule is deleted, with a comment explaining a negative
+month is past/dormant. `grep -rn "Month < 0" internal/services/retirement/prepare`
+finds no rejection anywhere. validate_test.go inverts the case:
+"negative year rejected" -> "negative month accepted as a past, dormant
+entry" (asserts ValidateOneTimeExpenses returns nil for Month:-1), and
+TestOneTimeExpense_MalformedStillRejectedThroughFrom is RETAINED with a
+new valid vector (Month:12, Amount:-10000) so `From` is still proven to
+reject a malformed entry naming one_time_expenses.
+
+===========================================================
+CRITERION 8 — PASS (tests)
+===========================================================
+New: internal/services/retirement/settings_schedule_shift_test.go (320
+lines) — TestMonthsBetween, ...ZeroIsNoOp, ...NilSettings,
+ShiftsSchedulesForward (all four entry kinds incl. Removed* slices,
+clamping at 0 for income/expense, -1 and -16 retained for
+one-time/big-ticket), ShiftsSchedulesBackward, LeavesFixedDatePlanAlone,
+UnparseableAnchorDoesNotShift, KeepsPerpetualSourcesPerpetual,
+ManagerLoadSaveLoadDoesNotDoubleShift.
+New: internal/models/legacy_schedule_decode_test.go (176 lines) —
+ExpenseSource / OneTimeExpense / BigTicketItem legacy-only, new-only and
+mixed, plus TestScheduleMarshalOmitsLegacyKeys.
+New: engine/big_ticket_month_test.go —
+ApplyBigTicketItemsForMonth_{NonYearAlignedMonth,YearAlignedUnchanged,
+PastItemNeverApplied} and EngineLoop_ChargesScheduledMonthNotYearBoundary.
+engine/one_time_expense_test.go gains PureFunctionMonthTargeting,
+PureFunctionNonYearAlignedMonth, PureFunctionPastMonthNeverCharged.
+The non-year-aligned month is 11, with absence asserted at 10 and 12
+(read in the mutation output above: mutating the selection to month/12
+kills exactly these).
+New: internal/models/calendar_month_test.go,
+internal/templates/render_schedule_month_test.go.
+Existing tests were EDITED, not deleted (37 of the 50 manifest files are
+test edits; `git show --stat` shows no test file deleted).
+
+===========================================================
+CRITERION 9 — PASS (green)
+===========================================================
+  $ go build ./...                       -> BUILD OK
+  $ go vet ./...                         -> VET OK
+  $ go test -count=1 ./...               -> GO TEST EXIT=0 ; 50 "ok" packages ; zero FAIL/panic
+  $ make check                           -> MAKE CHECK EXIT=0
+     (staticcheck ./... ; govulncheck "Your code is affected by 0
+      vulnerabilities" ; css-verify downloaded ./tmp/tailwindcss-3.4.17
+      as expected ; full test pass)
+  $ /usr/bin/git status --porcelain -- testdata   -> EMPTY
+  $ /usr/bin/git status --porcelain               -> EMPTY (whole tree clean after make check)
+  $ ls -d ./data                         -> No such file or directory
+The server binary was never executed.
+
+gofmt (judgement call 8): `gofmt -l .` produces the SAME 24-file list at
+f479de3 and at ec42346 — no new dirty file. For the two RC2-touched
+files on that list (projection_planned_test.go,
+roth_five_year_integration_test.go) the `gofmt -d` hunks are IDENTICAL
+before and after (`diff` of the two hunk sets: no output).
+
+===========================================================
+CRITERION 10 — PASS (oracle)
+===========================================================
+  $ bash .swarm/tier3/RC2/accept.sh <my copy> ; EXIT=0
+  == O1 build + vet
+  == O2 planted oracle tests: 5/5 PASS (TestRC2OracleLegacyDecode,
+     ...Shift, ...ManagerRoundTrip, ...EngineMonthFiring, ...BigTicketMonth)
+  == O3 shipped suites + testdata untouched: all ok
+  == O4 mutation noticed: 4 failing test(s)
+  ORACLE PASS
+Exit status 0 and last line exactly `ORACLE PASS`, independently of the
+lead's oracle.1.log. NOTE: the oracle never renders a template, which is
+why it does not see the criterion-7 defect.
+
+===========================================================
+WORKER JUDGEMENT CALLS
+===========================================================
+1. bigticket dict re-scope — REJECTED, see criterion 7 above. The
+   component itself is fine: TestRenderBigTicketCard_ShowsCalendarMonth
+   asserts `aria-label="Delete big ticket New Car"` survives and the
+   component renders (my own probe of "whatif-bigticket-card" with an
+   unparseable StartDate rendered Name/Amount/delete button correctly).
+   The defect is the SECOND, unupdated call site in pages/whatif.html.
+2. Empty calendar label — CONFIRMED. Probe with StartDate="not-a-date":
+   whatif-onetime-card and whatif-bigticket-card both render NO
+   `<span></span>` and no empty text div (both checks false); the
+   `{{if $when}}` guards elide the element entirely.
+3. UpdateExpenseSource endYear=&0 -> EndMonth=&0 — CONFIRMED AS
+   IMPLEMENTED AND SPEC-CONFORMANT; behaviour change is real but benign.
+   Reachability probe (real handler, PUT /whatif/expense/e1):
+     end_year=0 status=200 StartMonth=0 EndMonth=&0 active(m0)=false amount(m0)=0
+   `parseYearRange` (handlers_income_expense.go:43-54) only accepts a
+   non-blank end_year, rejects ey<0, and rejects `ey < startYear` — so
+   end_year=0 is submittable ONLY together with start_year=0, and the
+   result is an expense that contributes 0 forever. Old behaviour was
+   "perpetual". Two reasons this is not a FAIL: (a) criterion 7 pins
+   `EndMonth = endYear*12 (nil stays nil)` literally, which is what was
+   written; (b) the input's own tooltip already says
+   `title="Year expense ends (blank = never, 0 = ends immediately)"`
+   (expense-sources-list.html:39) — the NEW behaviour matches the
+   documented affordance and the OLD one contradicted it. Logged as an
+   observation for RC3's relabelling.
+4. Validator tests inverted — CONFIRMED, see criterion 6.
+5. budget_fit scheduleNote — CONFIRMED, see criterion 5; rendered string
+   "ends Apr 2034" observed in the equivalence dump and the label branch
+   is mutation-killed.
+6. Inline edit inputs keep `div .StartMonth 12` — CONFIRMED, loud not
+   silent. Rendered values probe (whatif-expense-sources-list):
+     StartMonth 24 / EndMonth 60 -> value="2" , value="5"
+     StartMonth 11 / EndMonth 71 -> value="0.9166666666666666" , value="5.916666666666667"
+     StartMonth 0  / EndMonth &0 -> value="0" , value="0"
+   Re-save probe through the REAL handler handleWhatIfUpdateExpense:
+     FLOAT re-save  status=400  (error partial body)
+     ALIGNED re-save status=200 StartMonth=24 EndMonth=60   <- unchanged round trip
+   The 400 genuinely happens (parseFormInt -> strconv.Atoi) and the
+   year-aligned round trip is byte-for-byte unchanged.
+7. UserSettings.ExpenseSources inherits UnmarshalJSON — CONFIRMED (the
+   type is models.UserSettings in user_profile.go:9, there is no
+   `UserProfile` type). Probe:
+     LEGACY UserSettings: n=1 StartMonth=24 EndMonth=48
+   from `{"expense_sources":[{...,"start_year":2,"end_year":4}]}`.
+8. gofmt — CONFIRMED, see criterion 9.
+
+===========================================================
+SCOPE
+===========================================================
+`/usr/bin/git show --name-only f479de3 | sort` vs the sorted manifest
+.swarm/manifests/RC2.1.files: `diff` produced NO output — the 50-file
+commit set EQUALS the manifest exactly. `git status --porcelain` in the
+copy is empty, so there is no uncommitted work outside the commit.
+.swarm/critical.globs lists `internal/services/retirement/engine/**`;
+the ledger row records RC2 as Tier 3 precisely for that reason
+("Tier 3: persisted-data change + engine/** critical path"), so the
+engine touches are authorised. No file outside the manifest was changed —
+the criterion-7 defect is an OMISSION (pages/whatif.html was not
+changed and should have been), not an unauthorised change.
+
+===========================================================
+OBSERVATIONS (not FAIL)
+===========================================================
+- Linked-scenario frame: LoadScenarioSettings (settings.go:794) goes
+  through decodeSettings, so a linked scenario's LEGACY year keys DO
+  convert to months before chain.go rebases — the decode frame matches.
+  But resolveCurrentMonth is called only at settings.go:419,
+  settings.go:986 and settings_current_month.go:107 — never on a linked
+  scenario. A linked scenario with `use_current_month: true` and an older
+  persisted start_date therefore keeps offsets anchored to ITS start_date
+  while the primary's have been re-anchored to today, and
+  prepareChainedSettings rebases by a transitionMonth derived from the
+  PRIMARY. Criterion 5 does not require resolving the scenario, and the
+  same asymmetry existed before RC2, so this is not a FAIL — but RC2
+  makes the frames month-precise and the mismatch is now a whole-month
+  error rather than a rounding one. Worth a backlog item / RC3 scope
+  question.
+- `ExpenseSource.EndMonth` has no `omitempty`, so a perpetual source
+  marshals as `"end_month":null` (verified in the marshal probe when the
+  pointer is nil elsewhere). Harmless — decode treats a present
+  `end_month:null` as nil (probe: `end_month:null present: EndMonth
+  nil=true`), so it round-trips — but it does make every saved plan
+  carry an explicit null.
+- budget_fit.go: inserting scheduleNote between the existing comment
+  block ending "(Ruling 2026-08-29b)" and `centsFromDecimalString` left
+  that function without its doc comment; the comment now trails
+  scheduleNote's. Cosmetic only, no criterion.
+- `setupTestEnv` (as opposed to `setupTestEnvWithRenderer`) installs a
+  renderer whose responses are JSON, not HTML — verified: the body of
+  POST /whatif/bigticket under setupTestEnv contains no "bigticket-list"
+  at all. The great majority of internal/handlers/whatif tests use it,
+  so that package's suite cannot catch ANY template-contract break. This
+  is how the criterion-7 defect passed a green suite, and it is a
+  standing blind spot worth a test-only follow-up (V3 pattern).

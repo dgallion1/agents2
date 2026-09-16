@@ -1,0 +1,271 @@
+VERDICT: PASS
+CHECKER: checker-tests
+FAMILY: anthropic
+TASK: RC2
+ATTEMPT: 2
+---
+All work done in `cp -a` copies under the session scratchpad. The shared
+worktree /home/darrell/bin/ai/budget2/.worktrees/rollover-schedule was never
+written: `/usr/bin/git status --porcelain` there is EMPTY and HEAD is still
+`ee7af8a`. No checkout/restore/stash/reset was run anywhere. No `data/` dir
+was created (`ls -d data` -> "No such file or directory"); no binary was run.
+
+===========================================================
+ATTEMPT-LEVEL GATES
+===========================================================
+ORACLE
+  $ bash .swarm/tier3/RC2/accept.sh <my-copy>
+  EXIT=0 ; final line exactly `ORACLE PASS`
+  O1 build+vet ok. O2 all five planted retirement oracle tests PASS
+  (TestRC2OracleLegacyDecode / OracleShift / OracleManagerRoundTrip /
+  OracleEngineMonthFiring / OracleBigTicketMonth). O2t
+  TestRC2OracleTemplatesRenderWithScheduledEntries PASS. O3 all shipped
+  suites ok, testdata untouched. O4 "mutation noticed: 6 failing test(s)".
+  This is my own independent run, not the lead's oracle.2.log.
+
+GREEN
+  $ go build ./...        -> exit 0, no output
+  $ go vet ./...          -> exit 0, no output
+  $ go test -count=1 ./... -> exit 0; 50 packages `ok`; zero `FAIL`/`---` lines
+  $ make check            -> MAKE_CHECK_EXIT=0, final line "✓ all checks passed"
+                             (vet static vuln css-verify test)
+  $ /usr/bin/git status --porcelain -- testdata   -> EMPTY after the suite
+
+SCOPE
+  $ /usr/bin/git show --stat ee7af8a
+    internal/handlers/whatif/schedule_oob_render_test.go               | 140 +
+    internal/services/retirement/settings_scenario_current_month_test.go | 145 +
+    web/templates/pages/whatif.html                                    |   2 +-
+    3 files changed, 286 insertions(+), 1 deletion(-)
+  Exactly equals .swarm/manifests/RC2.2.files (3 paths).
+  Whole-task reconciliation: `git diff --name-only bcb6226..ee7af8a` = 57
+  paths; minus RC1.1.files (4) = 53; `diff` against RC2.1.files+RC2.2.files
+  (53 unique) -> IDENTICAL, no unexplained file.
+  .swarm/critical.globs: attempt 2 touches none of them. (Attempt 1 touched
+  internal/services/retirement/engine/** — permitted, this task is Tier 3.)
+
+===========================================================
+ITEM 4 — "nothing else changed in attempt 2" — PASS
+===========================================================
+  $ /usr/bin/git diff --stat f479de3 ee7af8a -- internal/services/retirement/settings.go
+  EMPTY -> settings.go is byte-identical between attempt 1 and attempt 2.
+  File set of ee7af8a equals RC2.2.files (above). Criterion 11 therefore
+  required NO production-code change, as the revised criterion states.
+
+===========================================================
+ITEM 1 / CRITERION 7 (display) — PASS
+===========================================================
+CALLER ENUMERATION. Only ONE template changed its data contract in RC2:
+`whatif-bigticket-item` (bare item -> dict). Verified by reading
+`git diff bcb6226..ee7af8a -- web/templates/components/whatif/` in full:
+  - whatif-bigticket-item  : contract CHANGED (now `{{with .Item}}`, reads
+                             `$.Settings.StartDate`)
+  - whatif-onetime-item    : already took a dict on master — unchanged contract
+  - whatif-removed-bigticket / whatif-expense-source-item : contract unchanged
+Every caller, repo-wide (`grep -rn 'template "whatif-…"' web/templates internal`):
+  whatif-bigticket-item  -> bigticket-card.html:20  (dict) ; whatif.html:342 (dict)  <- BOTH now dicts
+  whatif-onetime-item    -> onetime-card.html:19    (dict) ; whatif.html:353 (dict)
+  whatif-removed-bigticket -> bigticket-card.html:11 `.` ; whatif.html:348 `.`
+     — both dots carry `.Settings` (whatif.html:341 ranges `.Settings.BigTicketItems`
+       in the same scope), so its new `$.Settings.StartDate` read resolves.
+  whatif-expense-source-item -> expense-sources-list.html:6 ; whatif.html:301 — bare
+       ExpenseSource in both, consistent.
+Go-side executions of these partials: only handlers.go:195 and :446, both
+`renderResultsTemplate(w, "whatif-results-with-oob", …)`. No other entry point.
+
+END-TO-END PROOF (my own probe, zz_checker_probe_test.go, real handlers +
+setupTestEnvWithRenderer; plan seeded with a big-ticket item, a REMOVED
+big-ticket item, a one-time entry and an expense source all at NON-year-aligned
+month 11 from start_date 2026-10 => "Sep 2027"):
+  $ go test -count=1 -run 'TestCk_' -v ./internal/handlers/whatif/
+    --- PASS: TestCk_AddOneTimeOOB                    (handleWhatIfAddOneTime)
+    --- PASS: TestCk_UpdateExpenseOOB                 (handleWhatIfUpdateExpense)
+    --- PASS: TestCk_DeleteThenRestoreBigTicketOOB    (handleWhatIfDeleteBigTicket
+                                                       + handleWhatIfRestoreBigTicket)
+  Each asserts status 200; absence of "Internal Server Error", "Error
+  rendering", "can't evaluate", "incompatible types"; presence of both entries
+  and their "Sep 2027" labels; `id="bigticket-list"`, `id="removed-bigticket"`
+  and `id="onetime-list"` all present with #onetime-list AFTER #bigticket-list.
+  The worker's own tests cover the remaining two surfaces:
+    --- PASS: TestMutationOOBPartial_RendersScheduleListsCompletely (handleWhatIfAddBigTicket)
+    --- PASS: TestWhatIfPage_RendersScheduleListsCompletely         (GET /whatif)
+
+RENDERED-STRING assertion (not the float behind it). Dumped the real 135,525-byte
+response body of handleWhatIfAddOneTime and stripped tags:
+    id="bigticket-list"   -> ` CkCarPurchase -$5,000 …`
+    id="removed-bigticket"-> ` Recently Removed CkOldBoat +$1,000 (Sep 2027) `
+    id="onetime-list"     -> ` CkRoofJob -$12,000 `
+    "Sep 2027" occurrences: 3  (big-ticket item, removed big-ticket, one-time)
+Criterion 7 plumbing re-confirmed at ee7af8a: `models.CalendarMonth` /
+`CalendarMonthLabel` exist (internal/models/calendar_month.go:12,23);
+registered in internal/templates/render.go:88,90,91 as `yearOf`,
+`calendarMonth`, `calendarMonthLabel`; every display site uses
+`calendarMonthLabel` (bigticket-card.html:51,82; onetime-card.html:43) and the
+horizon test is `{{if ge (yearOf .Item.Month) .Settings.ProjectionYears}}`
+(onetime-card.html:49); budget_fit.go:26 routes through
+`models.CalendarMonthLabel`.
+
+===========================================================
+ITEM 2 — mutation kill on whatif.html:342 — PASS
+===========================================================
+In a scratch copy, line 342 reverted to `{{template "whatif-bigticket-item" .}}`:
+  $ go test -count=1 -run 'TestMutationOOBPartial…|TestWhatIfPage…' -v ./internal/handlers/whatif/
+    schedule_oob_render_test.go:64: template failure leaked into the OOB
+      partial ("Internal Server Error")
+    --- FAIL: TestMutationOOBPartial_RendersScheduleListsCompletely
+    --- PASS: TestWhatIfPage_RendersScheduleListsCompletely   (correct: that is
+              the OTHER, unmutated caller)
+My three independent probes are killed by the same mutation:
+    --- FAIL: TestCk_AddOneTimeOOB               ("Internal Server Error" leaked)
+    --- FAIL: TestCk_UpdateExpenseOOB            ("Internal Server Error" leaked)
+    --- FAIL: TestCk_DeleteThenRestoreBigTicketOOB (at RestoreBigTicket)
+SYMPTOM CONFIRMED EXACTLY as the test comment and ruling 2026-09-16b claim.
+Dumped the mutated body: status=200, len=130669, and it ends mid-partial:
+    <div id="bigticket-list" hx-swap-oob="true" class="space-y-2 mb-4">
+    Internal Server Error          <- end of body
+    $ grep -c 'id="onetime-list"' mutbody.html  ->  0
+i.e. 200 OK, error text swapped into #bigticket-list, response truncated before
+#onetime-list. The tests assert what their names claim.
+
+===========================================================
+ITEM 3 / CRITERION 11 — scenario re-anchoring — PASS
+===========================================================
+PREMISE REFUTATION VERIFIED INDEPENDENTLY, not taken on the worker's word.
+Structure: `decodeSettings` (settings.go:482) is the ONLY decode path;
+it calls `normalizeLoadedWhatIfSettings`, which calls
+`resolveCurrentMonth(settings, time.Now())` at settings.go:419. Both
+`Load` (settings.go:780) and `LoadScenarioSettings` (settings.go:815) go
+through `decodeSettings`. Confirmed by
+`grep -rn 'resolveCurrentMonth' internal --include=*.go | grep -v _test`
+(only settings_current_month.go:107 and settings.go:419, :986).
+
+My own probe (zz_checker_scenario_test.go): scenario file written with
+start_date three months back and a one-time at month 12, loaded via
+LoadScenarioSettings:
+    saved start_date=2026-06  loaded StartDate=2026-09  one-time Month=9 (was 12)
+    file unchanged on disk (bytes equal, mtime unchanged)
+  --- PASS: TestCkScenarioReanchors
+So the criterion's own worked example reproduces, and the load is read-only
+by both content AND mtime.
+
+MUTATION KILL. Removing the resolve call at settings.go:419 in a scratch copy:
+    settings_scenario_current_month_test.go:59: scenario StartDate = 2026-06,
+      want the current month 2026-09
+    :63 income StartMonth = 12, want 9   :66 expense StartMonth = 12, want 9
+    :69 expense EndMonth … want 21       :72 one-time Month = 12, want 9
+    :75 big-ticket Month = 12, want 9
+    --- FAIL: TestLoadScenarioSettingsResolvesCurrentMonth
+    --- FAIL: TestLoadScenarioSettingsConvertsAndShiftsLegacyKeys
+    --- FAIL: TestCkScenarioReanchors  (my own probe)
+The shipped tests are live evidence, not decoration.
+
+CHAIN-PATH ENUMERATION. `grep -rn 'LoadScenarioSettings' --include=*.go . |
+grep -v _test` returns exactly three non-definition call sites, all through
+LoadScenarioSettings (hence through decodeSettings/resolveCurrentMonth):
+  internal/handlers/whatif/handlers.go:317   (buildEngineInput chain resolution)
+  internal/services/mcpsvc/plan/scenarios.go:46 and :70
+No other path decodes a scenario settings file for READING: the only other
+`json.Unmarshal` of WhatIfSettings is settings.go:2247, the scenario RENAME
+path (see Observations).
+
+===========================================================
+YEAR-ALIGNED EQUIVALENCE RE-CONFIRMED AT ee7af8a
+===========================================================
+An identical probe was planted in a master tree (extracted with
+`git archive bcb6226 | tar -x`, no git-state change) and in the ee7af8a copy.
+Same LEGACY year-key document, fixed start_date 2026-04 (never re-anchored),
+20-year horizon, 2 income + 2 expense + 1 removed expense, 2 one-time
+(years 1, 5), 2 big-ticket (years 3, 7) + 1 removed, all YEAR-ALIGNED. Full
+RunFast result dumped as indented JSON (~21 KB) and diffed:
+  $ python3 difflib -u equiv.master.json equiv.branch.json (n=0)
+  total diff lines: 35 — and they are ONLY:
+    - the mandated struct key renames in the echoed settings, with correct
+      *12 conversion: start_year 2/end_year 8 -> start_month 24/end_month 96;
+      start_year 0/end_year 0 -> start_month 0/end_month null;
+      year 3 -> month 36; year 7 -> month 84; year 4 -> month 48;
+      year 1 -> month 12; year 5 -> month 60
+    - the ONE mandated budget-fit note: "ends year 8" -> "ends Apr 2034"
+      (2026-04 + 96 months = Apr 2034)
+  Every computed figure — projection, present value, budget fit, RMD, tax,
+  sustainability, explainability — is byte-identical.
+NOT VACUOUS: moving o1 to month 13 and b1 to month 37 (off their year
+boundaries) in the same probe produces 117 diff lines against the branch dump,
+so those entries genuinely drive the numbers.
+
+===========================================================
+CRITERIA 1-6, 8 — re-confirmed at ee7af8a
+===========================================================
+These files are byte-identical to attempt 1 (only 3 files changed in ee7af8a),
+but the decisive commands were re-run, not assumed:
+1. MODELS — PASS. Structs read exactly: ExpenseSource{StartMonth int
+   `json:"start_month"`; EndMonth *int `json:"end_month"`},
+   OneTimeExpense{Month int `json:"month"`}, BigTicketItem{Month int
+   `json:"month"`}. No StartYear/EndYear/Year on any of the three (the
+   residual grep hits are RothConversionConfig, HealthcareStartYears and
+   HistoricalBacktest — unrelated types). All three UnmarshalJSON exist:
+   income_source.go:79, one_time_expense.go:27, whatif.go:1548. Decode
+   behaviour (legacy-only / new-only / mixed, new key wins) proven by the
+   oracle's TestRC2OracleLegacyDecode PASS and by
+   internal/models/legacy_schedule_decode_test.go (+ TestScheduleMarshalOmitsLegacyKeys).
+2. METHODS — PASS. income_source.go:123/144: GetAdjustedAmount and IsActive
+   both gate on `month < es.StartMonth` and `es.EndMonth != nil && month >=
+   *es.EndMonth` (end EXCLUSIVE, as income); inflation compounds
+   `(month - es.StartMonth)/12` from StartMonth.
+3. SHIFT — PASS. settings_current_month.go:13 `func monthsBetween`, :40
+   `func shiftScheduleOffsets`; `grep -c 'shiftScheduleOffsets(settings,
+   elapsed)'` = 1 (the oracle's O4 enforces this too, and the neutralising
+   mutation is caught by 6 shipped tests).
+4. ENGINE — PASS. `OneTimeExpensesForMonth` (expense.go:61) sums
+   `e.Month == month` inflated by `compoundedFactorFromPercent(s.InflationRate,
+   float64(month))`; `ApplyBigTicketItemsForMonth` (loop_helpers.go:361).
+   Both are called from stepper.go:267 and :277, textually AFTER the
+   `if monthInYear == 0 { … }` block closes (the block's `}` precedes the
+   explanatory comment at :260-266) — i.e. every month. No
+   OneTimeExpensesForYear / ApplyBigTicketItemsForYear remain.
+5. ANALYSIS/CHAIN — PASS. chain.go:124 `rebaseExpenseSources(sources,
+   transitionMonth)`, :141 `rebaseBigTicketItems(items, transitionMonth)`
+   dropping `item.Month - transitionMonth < 0`; present_value.go:77-85 keys on
+   `e.Month`, skips `chargeMonth < 0 || chargeMonth >= months`;
+   budget_fit.go:26 uses models.CalendarMonthLabel. "Every other consumer
+   compiles with unchanged semantics" is mechanical: the year fields are GONE,
+   so any residual reader is a compile error, and build+vet are green.
+6. VALIDATION — PASS. prepare/validate.go:105-112 ValidateOneTimeExpenses now
+   contains ONLY the `e.Amount < 0` rule; the non-negative-year rule is gone.
+   No validator rejects a negative Month (the three surviving `< 0` hits are
+   spending-graph/funding/risk over spending-plan entries and DepletionMonth,
+   not RC2 schedule fields).
+8. TESTS — PASS. settings_schedule_shift_test.go carries
+   TestMonthsBetween, ShiftScheduleOffsetsZeroIsNoOp, …NilSettings,
+   ResolveCurrentMonthShiftsSchedulesForward, …Backward,
+   …LeavesFixedDatePlanAlone, …UnparseableAnchorDoesNotShift,
+   …KeepsPerpetualSourcesPerpetual, TestManagerLoadSaveLoadDoesNotDoubleShift.
+   Engine non-aligned month 11 coverage in engine/big_ticket_month_test.go and
+   engine/one_time_expense_test.go. Legacy decode for all three types in
+   internal/models/legacy_schedule_decode_test.go. 36 test files were edited
+   (not deleted) across the task diff.
+9. GREEN / 10. ORACLE — PASS, see ATTEMPT-LEVEL GATES.
+11. LINKED SCENARIOS — PASS, see ITEM 3.
+gofmt -l on both new attempt-2 test files -> empty.
+
+===========================================================
+Observations (not FAIL)
+===========================================================
+A. TestLoadScenarioSettingsLeavesFixedDateScenarioAlone survives the
+   settings.go:419 mutation (it PASSes with the resolve removed). That is
+   correct and expected — it is a no-op/negative guard asserting a fixed-date
+   plan is NOT advanced, so it cannot be killed by removing the advance. The
+   other two shipped tests in the same file ARE killed. Noted so the record
+   does not imply all three are mutation-killed.
+B. settings.go:2247 (the scenario RENAME path) decodes a scenario file with a
+   bare `json.Unmarshal` — bypassing normalizeLoadedWhatIfSettings, hence
+   resolveCurrentMonth — and rewrites the file. This is anchor-consistent and
+   not a defect: start_date is preserved unchanged, and the per-type
+   UnmarshalJSON still converts any legacy year keys to month keys at the same
+   *12 value, so no schedule moves. Flagged only as a surface a future task
+   touching the decode contract must remember to enumerate.
+C. Out of scope for RC2, already logged at attempt 1 and unchanged here: the
+   inline edit inputs in expense-sources-list.html render
+   `value="{{div .StartMonth 12}}"`, which for a non-aligned offset emits a
+   float (e.g. value="0.9166666666666666") that parseFormInt rejects with 400
+   on re-save. Criterion 7 pins this as the deliberate loud interim; RC3
+   replaces those inputs.
