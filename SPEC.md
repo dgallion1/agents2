@@ -7,7 +7,7 @@ on branch `fix/rollover-schedule` (created at dispatch, INSIDE the repo per
 the CP lesson). This run's `.swarm/` lives in the agents2 worktree
 `.claude/worktrees/budget2-rollover-comparison-issues-19c20a` (gitignored).
 
-## 0. Status — signed off by user 2026-09-16 ("A"); RC1 ACCEPTED ec42346 (attempt 1); RC2 ACCEPTED ee7af8a (attempt 2, gate `OK: RC2 accepted at tier 3 (attempt 2)`); RC3 HALTED at a57394c after two failed Tier-3 attempts (ruling h) — user decision pending; `gate.sh stats`: first-attempt clean: 1/3 (no-evidence rows: 0)
+## 0. Status — signed off by user 2026-09-16 ("A"); RC1 ACCEPTED ec42346 (attempt 1); RC2 ACCEPTED ee7af8a (attempt 2, gate `OK: RC2 accepted at tier 3 (attempt 2)`); RC3 ACCEPTED 5d4c10f (attempt 3 under the rewritten contract, user-authorized after the Tier-3 hard stop; gate `OK: RC3 accepted at tier 3 (attempt 3)`); `gate.sh done`: `OK: all tasks accepted, evidence verified, no unresolved flags`; `gate.sh stats`: `first-attempt clean: 1/3 (no-evidence rows: 0)`
 
 Source: the user's review of the 2026-09-09..16 changes reported two
 issues. Both are CONFIRMED in code at bcb6226 (section 1). P2 has one
@@ -383,40 +383,52 @@ second formatter (dual-formatter class, W2); RC3 must not add one.
    `httptest` requests against the real handlers and templates, asserting
    on the response bodies) ends with `ORACLE PASS`.
 
-### RC3 attempt 3 — PROPOSED contract rewrite (awaiting user decision after the hard stop)
+### RC3 attempt 3 — contract rewrite (user authorized "1" on 2026-09-16 after the hard stop)
 
 Root cause across both failed attempts: the rollover-clamped state
 (StartMonth 0 and/or EndMonth 0) is a distinct state of a schedule entry,
 and its meaning was decided in one place at a time (a template helper)
-instead of once for every surface. Rewrite:
+instead of once for every surface. Names are PINNED (the oracle greps).
 
 1. **One status source in the model.** `IncomeSource` and `ExpenseSource`
-   gain `ScheduleEnded() bool` (EndMonth != nil && *EndMonth <= 0) and
-   `SinceStart() bool` (StartMonth == 0). The template func `scheduleEnded`
-   is replaced by calls to these methods; no other code may test
-   `EndMonth <= 0` or `StartMonth == 0` for display purposes.
-2. **Every surface enumerated and asserted for the clamped fixture**
-   (income ended, expense ended, income clamped-start running, expense
-   clamped-start running; built through the real 20-month rollover):
-   - source-list rows (page and OOB partial) — as attempt 2;
-   - **Budget Fit card** (`analysis/budget_fit.go` → `budget-analysis.html`
-     lines 31 and 352): an ended entry is OMITTED from the breakdown (it
-     contributes 0 and the list already explains it), a clamped-start
-     entry carries no "starts …" note (it is running), and no note may
-     name a month before the plan start;
-   - the timeline events (`handlers.go:~712`: "Pension/Social Security
-     starts" at StartMonth/12) — a clamped-start entry produces no
-     "starts" event (it is already running);
-   - the spending-funding markers (`analysis/spending_funding.go:128-141`)
-     — a clamped-start entry produces no "starts" marker; an ended entry
-     none (already the case);
-   - the removed/restore lists — a restored ended entry renders as ended.
-3. **Oracle** extended to assert every surface above for the clamped
-   fixture, validated at both ends (attempt-2 tree must fail on the Budget
-   Fit card), plus a grep in the oracle that no template or Go file
-   outside `internal/models` compares `EndMonth` to 0 or `StartMonth` to
-   0 for display.
-4. Everything accepted in attempts 1-2 (month inputs, parsing, labels,
+   each gain the methods `ScheduleEnded() bool` (EndMonth != nil &&
+   *EndMonth <= 0 — only the rollover clamp produces it) and
+   `SinceStart() bool` (StartMonth == 0). The template func
+   `scheduleEnded` is REMOVED; templates call `.ScheduleEnded` /
+   `.SinceStart` on the source. Outside `internal/models` (and tests), no
+   Go or template code may compare `EndMonth` to 0 or `StartMonth` to 0
+   for display: the oracle greps for `scheduleEnded`, `eq .StartMonth 0`,
+   `StartMonth == 0`, `EndMonth <= 0` and `EndMonth == 0` in
+   `web/templates`, `internal/handlers`, `internal/services`,
+   `internal/templates` non-test files and requires no hit.
+2. **Every surface, one rule** (built through the real 20-month rollover:
+   an ended expense, an ended income, a clamped-start running income):
+   - source-list rows, page and OOB partial — as attempt 2 (ended =
+     display-only, "Since plan start (<label>)" for a clamped start);
+   - **Budget Fit** (`analysis/budget_fit.go`): an ended EXPENSE is
+     OMITTED from the expense breakdown (it contributes 0; the list already
+     explains it); ended incomes are already omitted (amount 0) and a
+     clamped-start income already carries no "starts" note — keep both
+     facts pinned by tests. No breakdown note may ever name a month before
+     the plan start;
+   - **timeline events** (`handlers.go` "Pension starts" / "Social Security
+     starts"): a `SinceStart()` source produces NO event (it is already
+     running; year 0 "starts" was a lie for a clamped entry and noise for
+     a scheduled-at-start one);
+   - **spending-funding markers** (`analysis/spending_funding.go`
+     `spendingFundingConfiguredMarkers`): a `SinceStart()` source produces
+     NO "starts" marker (today `StartMonth < 0` is skipped; make it
+     `SinceStart()`), ended sources none (already);
+   - **removed/restore lists**: a restored ended entry renders as ended.
+3. **Tests.** Shipped tests for each surface above with the clamped
+   fixture (both income and expense branches — attempt 2 tested only the
+   expense list branch), asserting on rendered output / returned markers.
+4. **Oracle** `.swarm/tier3/RC3/accept.sh` extended: the clamped test also
+   asserts the page shows no "(through <plan start − 1>)" note, no
+   "OldLease (through", and no "Pension starts" event for the clamped-start
+   pension; plus the display-comparison grep in (1). Validated at both ends
+   (a57394c must fail on the Budget Fit note).
+5. Everything accepted in attempts 1-2 (month inputs, parsing, labels,
    role="alert" errors, Roth untouched) is unchanged and re-verified by
    all three lanes.
 
@@ -511,12 +523,29 @@ instead of once for every surface. Rewrite:
   task HALTED; contract to be rewritten before any third attempt (one
   model-level schedule-status source consumed by every surface; oracle
   asserts every surface for the clamped fixture).
+- **2026-09-16i (user decision):** after the Tier-3 hard stop the user
+  chose option 1 — attempt 3 under the rewritten contract above (model-level
+  status methods; every surface asserted for the clamped fixture). The
+  reopen is scoped to that contract; checkers report beyond-scope findings
+  as observations (ruling 2026-08-29c/d precedent).
 
 RC1 attempt 1: checker-tests PASS, checker-second PASS, gate `OK: RC1
 accepted at tier 2 (attempt 1)`. RC2 attempt 2: both lanes PASS, gate
 `OK: RC2 accepted at tier 3 (attempt 2)`.
 
 ## 5. Backlog observations (checker-reported, not FAIL)
+- RC3.3/checker-tests+second: `handlers_spending_graph.go:235`
+  `addProjectedSSFundingMarkers` still gates on `entry.StartMonth < 0` and
+  marks an already-claiming PROJECTED SS entry at month 0 (claim-age
+  derived, not a clamped IncomeSource — outside the contract; same
+  cosmetic class).
+- RC3.3/both lanes: the timeline `SinceStart()` skip in handlers.go is
+  redundant with the pre-existing `year <= 0` floor (dead code, not a
+  defect); only the combined mutation is killed.
+- RC3.3/worker: the Budget Fit INCOME "starts" note branch is unreachable
+  (sources with StartMonth > 0 have amount 0 at month 0 and are omitted).
+- RC3.3/worker: four analysis files remain gofmt-dirty on the branch
+  (pre-existing; `make check` does not run gofmt).
 - RC3.2/checker-tests: `rc3_oracle_test.go:301` bans two ids no template
   renders (`expense-end-month-exp-ended`, `expense-start-month-exp-ended`);
   only the `hx-put=` clause grades. Fix if the tier3 dir is reused.

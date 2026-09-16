@@ -1,0 +1,11 @@
+internal/models/income_source.go
+internal/models/income_source_test.go
+internal/templates/render.go
+internal/handlers/whatif/handlers.go
+internal/handlers/whatif/schedule_month_form_test.go
+internal/services/retirement/analysis/budget_fit.go
+internal/services/retirement/analysis/spending_funding.go
+internal/services/retirement/analysis/spending_funding_test.go
+internal/services/retirement/calculator_expense_test.go
+web/templates/components/whatif/income-sources-list.html
+web/templates/components/whatif/expense-sources-list.html

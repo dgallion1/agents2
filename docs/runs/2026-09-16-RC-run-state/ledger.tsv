@@ -1,4 +1,4 @@
 # task_id	tier	checks	status	attempt	worker	reason
 RC1	2	tests,second	accepted	1	lead	gate-ok-tier2-attempt-1; tests+second PASS first attempt (commit ec42346)
 RC2	3	tests,second	accepted	2	worker-coder	gate-ok-tier3-attempt-2; attempt 1 FAIL both lanes (ruling 2026-09-16b); attempt 2 = ee7af8a, oracle.2.log ORACLE PASS (lead run), criterion 11 premise refuted by worker (ruling 16c revised)
-RC3	3	tests,second,a11y	halted	2	worker-coder	HARD STOP: attempt 1 = 1f9a35a (second FAIL ruling e, a11y FAIL ruling f); attempt 2 = a57394c (tests PASS, a11y PASS, second FAIL ruling h: budget_fit note invents a month for a rollover-ended entry); contract rewrite proposed in SPEC, awaiting user
+RC3	3	tests,second,a11y	accepted	3	worker-coder	gate-ok-tier3-attempt-3; attempts 1-2 FAIL (rulings e,f,h), user-authorized attempt 3 (ruling i) = 5d4c10f, all three lanes PASS

@@ -309,6 +309,15 @@ func TestRC3OracleClampedRowsRoundTrip(t *testing.T) {
 	if !strings.Contains(body, `value="`+planStart+`"`) || !strings.Contains(body, `value="`+throughValue+`"`) {
 		t.Fatalf("clamped-start income row inputs should carry %s and %s", planStart, throughValue)
 	}
+	// Attempt 3 (ruling h): no OTHER surface may invent a month for the
+	// ended entry or announce a "start" for the clamped-start one.
+	invented := first.AddDate(0, -1, 0).Format("Jan 2006")
+	if strings.Contains(body, "(through "+invented+")") || strings.Contains(body, "OldLease (through") {
+		t.Error("Budget Fit still names an invented month for the ended expense")
+	}
+	if strings.Contains(body, "Pension starts") {
+		t.Error("timeline announces a start for a pension that is already running (clamped start)")
+	}
 	// Re-post the row's own values (plus an unrelated toggle): 200, nothing moves.
 	w := rc3Post(t, handleWhatIfUpdateIncome, "/whatif/income/inc-running", "inc-running", url.Values{"start_month": {planStart}, "end_month": {throughValue}, "cola": {"on"}})
 	if w.Code != 200 {

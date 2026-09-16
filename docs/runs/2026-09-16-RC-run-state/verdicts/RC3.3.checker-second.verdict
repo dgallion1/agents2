@@ -1,0 +1,137 @@
+VERDICT: PASS
+CHECKER: checker-second
+FAMILY: adversarial
+TASK: RC3
+ATTEMPT: 3
+---
+Setup: cp -a of /home/darrell/bin/ai/budget2/.worktrees/rollover-schedule at
+commit 5d4c10f (parent a57394c = attempt 2, HALTED at ruling h) into
+/tmp/claude-1000/rc3-check-copy/rollover-schedule. Never touched the shared
+worktree; no git checkout/restore/reset/stash used (/usr/bin/git throughout).
+
+Contract item 1 (one status source in the model; O5 grep).
+- internal/models/income_source.go: ScheduleEnded() (EndMonth!=nil && *EndMonth<=0)
+  and SinceStart() (StartMonth==0), value receivers on IncomeSource/ExpenseSource
+  (required — templates range over []IncomeSource/[]ExpenseSource, non-addressable
+  elements). render.go: `scheduleEnded` template func removed; `grep -rn
+  scheduleEnded . --include=*.go --include=*.html` after the commit = no hits
+  anywhere in the tree.
+- Ran the oracle's own O5 grep against my copy directly:
+  `grep -rn 'scheduleEnded\|eq .StartMonth 0\|StartMonth == 0\|EndMonth <= 0\|EndMonth == 0' web/templates internal/handlers internal/services internal/templates | grep -v _test.go` → empty. Confirmed no evasive
+  rephrasing either: grepped bare `StartMonth\b` / `EndMonth\b` across the same
+  non-test, non-model tree and hand-checked every hit (present_value.go,
+  tax_optimizer_strategies.go:178-181, engine/month.go FindSteadyStateMonth,
+  chain.go rebase, settings_current_month.go shiftScheduleOffsets, sync.go)
+  — all are arithmetic (NPV, ordinary-income sum, steady-state month, rebase)
+  with no rendered "starts"/"ended"/"through" text; none is a second status
+  source in the ruling-2026-09-16a sense.
+
+Contract item 2 (every surface, one rule) — verified each named surface reads
+the new predicates, and that removing the predicate actually changes observed
+behavior where the contract claims it does (mutation probes, reverted after
+each):
+- List rows (income/expense-sources-list.html, page AND
+  whatif-results-with-oob partial at pages/whatif.html:283-309): both callers
+  route through the same `whatif-income-source-item` / `whatif-expense-
+  source-item` definitions — single source of truth, no un-fixed second
+  caller (the exact RC2-attempt-1 defect class). `.ScheduleEnded`/`.SinceStart`
+  called correctly inside `{{with .Source}}`.
+- Budget Fit (budget_fit.go): `if source.ScheduleEnded() { continue }` before
+  the ended expense contributes anything or builds a note; income unaffected
+  branch uses `!source.SinceStart()` to gate the "starts" note. MUTATION: with
+  the `ScheduleEnded` skip removed, `TestCalculateBudgetFit_ClampedSchedulesNameNoLostMonths`
+  fails exactly as ruling h describes — "OldLease" reappears with `Note:through
+  Dec 2026` (a month before the plan start). Restored the file; build clean.
+- Timeline events (handlers.go buildProjectionChartEvents): `if
+  source.SinceStart() { continue }` added for income sources before the
+  Pension/SS label switch. MUTATION: removing this line did NOT fail
+  `TestClampedSchedules_TimelineSkipsAlreadyRunningSources` — traced this to
+  `appendEvent`'s pre-existing `year <= 0` floor, which already filters
+  StartMonth==0 (year = StartMonth/12 = 0) since income StartMonth is never
+  negative post-clamp (confirmed via settings_current_month.go:
+  `shiftedStart := max(0, startMonth-elapsed)`). The added check is therefore
+  behaviorally redundant for this surface but not wrong — the contract's
+  observable requirement (no event for a SinceStart source) holds either way.
+  Not a defect against criterion 2; noted as an observation below.
+- Spending-funding markers (spending_funding.go
+  spendingFundingConfiguredMarkers): `source.StartMonth < 0` replaced with
+  `source.SinceStart()`. MUTATION: reverting this one line breaks TWO shipped
+  tests — `TestSpendingFundingBenefitTimingInflationAndCalendarScope` (restructured
+  to add two late sources) and the new `TestSpendingFundingMarkers_SkipSourcesRunningSincePlanStart`
+  — both fail with the clamped/month-0 sources reappearing as markers. This
+  surface's fix is load-bearing and killed by the shipped tests. Restored the
+  file; build clean.
+- Restore lists: `TestScheduleForms_RestoredEndedExpenseRendersAsEnded` drives
+  the real restore handler (not a template unit test) and asserts the restored
+  row renders "Ended before the plan start", with no hx-put/start-input for
+  it. Traced the mechanism: shiftScheduleOffsets shifts BOTH
+  settings.RemovedIncomeSources/RemovedExpenseSources AND the live lists, so a
+  restored entry re-enters the live list already in whatever clamped state the
+  clamp put it in, and is rendered by the same single-source-of-truth item
+  template. Confirmed the permanent "Recently Removed" list for expenses
+  (expense-sources-list.html `whatif-removed-expense-sources`) shows only
+  Name/Amount — no schedule text at all, so no comparison surface exists there
+  to get wrong.
+
+Restructured-test premise check (attack angle from dispatch): re-read
+`TestSpendingFundingBenefitTimingInflationAndCalendarScope`'s diff. The
+original property under test ("the optimizer hook suppresses a configured SS
+marker") is still proven: two late sources (`late-ss` StartMonth 8, `late-pension`
+StartMonth 9) were added specifically so the SS-suppression assertion isn't
+starved by the SinceStart() change; the final assertion requires exactly one
+marker (the late pension), which is only true if the late SS marker was
+actually suppressed by the hook. The mutation test above (removing SinceStart())
+also broke this test, independently confirming it still exercises the SS-hook
+path.
+
+Boundary/edge probes (income_source_test.go TestScheduleStatePredicates,
+inspected + re-run): EndMonth==1 (through = plan start) → ScheduleEnded=false,
+SinceStart=true — matches "boundary" attack angle. StartMonth 0/EndMonth nil →
+SinceStart=true, ScheduleEnded=false (running). Negative EndMonth: confirmed
+impossible by construction (`max(0, ...)` floor in shiftScheduleOffsets, the
+ONLY path that can zero these fields — the form always stores Through as
+offset+1 so a user-set end is >=1).
+
+Surfaces NOT enumerated by the attempt-3 contract, checked and found
+unaffected (in-scope test: could this worker have fixed it without exceeding
+the RC3 attempt-3 contract? No — none of these are named in items 1-5):
+- internal/services/mcpsvc/plan: no StartMonth/EndMonth exposure at all
+  (`grep -rln StartMonth\|EndMonth internal/services/mcpsvc/plan` = empty).
+- handlers_spending_graph.go `addProjectedSSFundingMarkers`: reads
+  `entry.StartMonth` from `retirement.ProjectedSSEntries` (a value computed
+  fresh from claim age at request time), not from the rollover-clamped
+  IncomeSources array — StartMonth 0 here means "claimed exactly at plan
+  start" (a real fact), not a clamp artifact, so this is not the same defect
+  class. Not named by contract item 2 (which names
+  `spendingFundingConfiguredMarkers` specifically, a different function).
+- present_value.go, tax_optimizer_strategies.go, engine/month.go
+  FindSteadyStateMonth: pure arithmetic, no rendered schedule-status text.
+- guardrail graph / MCP resources: not touched, not named.
+
+Oracle: re-ran `.swarm/tier3/RC3/accept.sh` against my independent copy of
+5d4c10f — `ORACLE PASS` (O1-O5 all pass, including the O5 grep and
+TestRC3OracleClampedRowsRoundTrip). Lead's own oracle.3.log matches.
+
+Full suite: `go test -count=1 ./...` — all packages ok. `make check` —
+"✓ all checks passed" (build, vet, lint, css, full suite, accounts race
+sub-suite). testdata: `git status --porcelain` clean throughout, no
+uncommitted mutation survived any of my probes.
+
+Manifest: RC3.3.files (11 entries) matches `git show --stat 5d4c10f` exactly
+(11 files changed, 460 insertions, 21 deletions) — no undeclared file touched.
+
+Observations (not FAIL, beyond the attempt-3 contract's written scope per
+ruling 2026-09-16i):
+1. handlers.go's new SinceStart() guard in buildProjectionChartEvents is dead
+   code for its one caller — appendEvent's pre-existing `year <= 0` floor
+   already achieves the same suppression for every income source (StartMonth
+   is never negative post-clamp). Harmless, but worth knowing if that floor
+   is ever loosened independently — the SinceStart() guard would then start
+   doing real work rather than being redundant.
+2. addProjectedSSFundingMarkers (handlers_spending_graph.go) and the timeline
+   events' RMD/Medicare paths were not asked to route through
+   ScheduleEnded/SinceStart because they don't read from the rollover-clamped
+   IncomeSources/ExpenseSources arrays; flagging only so a future task doesn't
+   assume they were audited under this contract.
+
+No numbered criterion of the RC3 attempt-3 contract was refuted. PASS.

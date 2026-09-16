@@ -35,5 +35,9 @@ for f in web/templates/components/whatif/income-sources-list.html web/templates/
   grep -q 'type="month"' "$f" || fail "no month input in $f"
 done
 
+echo "== O5 no display comparison of StartMonth/EndMonth to 0 outside internal/models (attempt 3)"
+hits=$(grep -rn 'scheduleEnded\|eq \.StartMonth 0\|StartMonth == 0\|EndMonth <= 0\|EndMonth == 0' web/templates internal/handlers internal/services internal/templates 2>/dev/null | grep -v '_test\.go' || true)
+if [[ -n "$hits" ]]; then echo "$hits"; fail "display comparison outside the model"; fi
+
 cleanup
 echo "ORACLE PASS"
