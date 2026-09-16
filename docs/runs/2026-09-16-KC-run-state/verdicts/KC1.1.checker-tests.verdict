@@ -1,0 +1,198 @@
+VERDICT: PASS
+CHECKER: checker-tests
+FAMILY: anthropic
+TASK: KC1
+ATTEMPT: 1
+---
+Method: all build/test/mutation work done in a `cp -a` copy at
+/tmp/claude-1000/.../scratchpad/kc1/wt. The real worktree
+/home/darrell/bin/ai/budget2/.worktrees/keep-current-plan was READ ONLY
+(never mutated, never built in); its two files hashed identical to the
+snapshot at the start and at the end of this verification.
+
+=== PRE/POST INTEGRITY (real tree, unmodified throughout) ===
+$ cd /home/darrell/bin/ai/budget2/.worktrees/keep-current-plan && sha256sum \
+    web/templates/components/whatif/spending_optimizer_results.html \
+    internal/handlers/whatif/spending_keep_current_label_test.go
+581a882399790b527f90ed7d60f6ad37ddc1ac381c95435d6ebc6b7142097e39  web/templates/components/whatif/spending_optimizer_results.html
+f2da11ed3829ba3a69a722db184126a82100448b93a373f256e12b9f9a5ff31b  internal/handlers/whatif/spending_keep_current_label_test.go
+(identical hashes re-run after the mutation check — see MUTATION section.
+ 581a88... matches the brief's required snapshot hash exactly.)
+
+$ rtk proxy git rev-parse HEAD
+bcb6226c7c9af3c0b41e7351c412da1d58fb5c99   (== base bcb6226, so `git diff bcb6226`
+                                            covers the entire working tree)
+
+=== (a) RENDERED LABELS — MET ===
+The worker's test renders the SAME partial the production handler renders:
+$ grep -rn "whatif-spending-optimizer-results" internal/ web/templates/ | grep -v _test.go
+internal/handlers/whatif/handlers_spending_optimizer.go:284:  err = renderer.RenderPartial(recorder, "whatif-spending-optimizer-results", view)
+web/templates/components/whatif/spending_optimizer_results.html:76:{{define "whatif-spending-optimizer-results"}}
+-> the test exercises the production render surface (same buildSpendingOptimizerView
+   + same renderer.RenderPartial call), not a stand-in.
+
+$ rtk proxy go test ./internal/handlers/whatif/ -run TestSpendingOptimizerRenderKeepCurrentPlanLabel -count=1 -v
+=== RUN   TestSpendingOptimizerRenderKeepCurrentPlanLabel
+--- PASS: TestSpendingOptimizerRenderKeepCurrentPlanLabel (0.02s)
+PASS
+ok  	budget2/internal/handlers/whatif	0.019s
+=== exit 0 ===
+
+I READ the test (internal/handlers/whatif/spending_keep_current_label_test.go).
+It is NOT weaker than its name: fixture = qualifying current card (Kind
+"current", Qualifies true, Baseline true) + planned-8500 + flex-9000 with
+RecommendationIDs ["planned-8500","flex-9000"]. It then asserts, on the
+rendered body:
+  - exactly 5 buttons matching data-spending-apply="..." (t.Fatalf otherwise);
+  - labels["current"] must be len 1 AND == "Keep current plan" (line 52-53);
+  - for planned-8500 and flex-9000: len 2 AND got[0]=="Apply this option"
+    AND got[1]=="Apply" (lines 57-60) — i.e. card label then frontier-row label;
+  - the label is a visible text node, NOT an aria-label override
+    (rejects `aria-label="Keep current plan"`, line 64);
+  - strings.Count(body,"Keep current plan") == 1 exactly (line 67).
+The label is extracted by stripping tags from the button's inner HTML, so it
+asserts the RENDERED visible string, not a template fragment.
+
+INDEPENDENT CONFIRMATION (my own throwaway probe in the copy, since deleted,
+dumping the real rendered markup rather than trusting the test's assertions):
+PROBE button id="current"       rawInner="Keep current plan"
+PROBE button id="planned-8500"  rawInner="Apply this option"
+PROBE button id="flex-9000"     rawInner="Apply this option"
+PROBE button id="planned-8500"  rawInner="Apply"
+PROBE button id="flex-9000"     rawInner="Apply"
+PROBE count(Keep current plan)=1 count(Apply this option)=2 count(>Apply</button>)=2
+PROBE form=<form data-spending-apply-form action="/whatif/spending/optimize/apply" method="post"><input type="hidden" name="request_id" value="probe-fixture"><input type="hidden" name="recommendation" value="698ae7d5..."><button type="submit" data-spending-apply="current" class="rounded-md bg-accent-strong px-3 py-2 text-white focus:outline focus:outline-2 focus:outline-offset-2 focus:outline-accent">Keep current plan</button></form>
+ -> current card: same <form>, same action/method, same hidden request_id +
+    recommendation inputs, same data-spending-apply="current", same classes,
+    type=submit, NO aria-label anywhere on any of the 5 apply buttons.
+    Exactly one "Keep current plan" in the body. Criterion (a) MET.
+
+=== (b) TEMPLATE DIFF CONFINED TO THE LABEL — MET ===
+$ rtk proxy git diff bcb6226 -- web/templates/components/whatif/spending_optimizer_results.html
+@@ -39,7 +39,7 @@
+-        {{if $row.Token}}<form data-spending-apply-form ...><button type="submit" data-spending-apply="{{$row.Candidate.ID}}" class="rounded-md bg-accent-strong px-3 py-2 text-white focus:outline focus:outline-2 focus:outline-offset-2 focus:outline-accent">Apply this option</button></form>{{end}}
++        {{if $row.Token}}<form data-spending-apply-form ...><button type="submit" data-spending-apply="{{$row.Candidate.ID}}" class="rounded-md bg-accent-strong px-3 py-2 text-white focus:outline focus:outline-2 focus:outline-offset-2 focus:outline-accent">{{if eq $row.Candidate.Kind "current"}}Keep current plan{{else}}Apply this option{{end}}</button></form>{{end}}
+(one hunk, one line; form/action/method/hidden inputs/data-attrs/class/type
+ byte-identical on both sides — only the text node between > and </button>
+ differs)
+
+Line 42 is inside `{{define "whatif-spending-option"}}` (line 26), confirmed:
+$ grep -n "define" web/templates/components/whatif/spending_optimizer_results.html
+26:{{define "whatif-spending-option"}}     <- the changed line 42 lives here
+58:{{define "whatif-spending-frontier"}}   <- line 69 frontier row: ">Apply<" UNCHANGED
+
+BYTE-LEVEL PROOF the diff is nothing but that substitution: substituting the
+new conditional back to the plain string reproduced master's file exactly.
+$ rtk proxy git show bcb6226:web/templates/.../spending_optimizer_results.html | sha256sum
+a35c9c7cebd89293f0f60981b87acab79dfbe7bdf0d7f8922bbaf98d829b7cf1  -
+$ sha256sum <copy after python3 replace of the conditional with "Apply this option">
+a35c9c7cebd89293f0f60981b87acab79dfbe7bdf0d7f8922bbaf98d829b7cf1
+-> identical hash. The entire delta vs bcb6226 IS the label text; no attribute,
+   form, class, whitespace or byte anywhere else changed.
+
+$ rtk proxy git status --short --untracked-files=all
+ M web/templates/components/whatif/spending_optimizer_results.html
+?? internal/handlers/whatif/spending_keep_current_label_test.go
+$ rtk proxy git diff bcb6226 --stat
+ web/templates/components/whatif/spending_optimizer_results.html | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+-> only the two manifest paths differ. Criterion (b) MET.
+
+NO JS CHANGE (verified, not assumed):
+$ grep -rn "data-spending-apply" web/static/
+web/static/js/whatif-spending-optimizer.js:567:  const applyForm = event.target.closest('[data-spending-apply-form]');
+-> the submit handler keys on [data-spending-apply-form] only; it never reads
+   the button's text. grep of textContent/innerText writes in that file shows
+   none targeting an apply button (only #spending-* status/range/note elements).
+$ grep -rn "Apply this option\|Keep current plan" --include=*.js --include=*.html --include=*.go --include=*.md .
+-> hits ONLY in the changed template line and the new test file. No copy
+   elsewhere changed.
+
+=== (c) BUILD / VET / TEST + MUTATION KILL — MET ===
+$ go build ./... ; echo exit=$?      -> exit=0 (no output)
+$ go vet ./...   ; echo exit=$?      -> exit=0 (no issues)
+$ rtk proxy go test ./internal/handlers/whatif/ -count=1
+ok  	budget2/internal/handlers/whatif	11.222s   (exit 0)
+
+MUTATION CHECK (performed in the COPY; real tree untouched):
+$ python3 -c 'replace {{if eq $row.Candidate.Kind "current"}}Keep current plan{{else}}Apply this option{{end}} -> Apply this option'  (asserted count==1)
+MUTATED: reverted label conditional to plain 'Apply this option'
+sha256 after mutation = a35c9c7cebd89293f0f60981b87acab79dfbe7bdf0d7f8922bbaf98d829b7cf1 (== master's file)
+$ rtk proxy go test ./internal/handlers/whatif/ -run TestSpendingOptimizerRenderKeepCurrentPlanLabel -count=1
+--- FAIL: TestSpendingOptimizerRenderKeepCurrentPlanLabel (0.02s)
+    spending_keep_current_label_test.go:53: current card button = ["Apply this option"], want ["Keep current plan"]
+    spending_keep_current_label_test.go:68: "Keep current plan" occurrences = 0, want exactly 1
+FAIL	budget2/internal/handlers/whatif	0.019s
+=== exit 1 ===
+-> the test genuinely guards the thing it names; it does not survive the
+   mutation of the fix.
+
+RESTORE + INTEGRITY RE-CHECK:
+$ cp tpl.bak ... && sha256sum (copy)
+581a882399790b527f90ed7d60f6ad37ddc1ac381c95435d6ebc6b7142097e39  web/templates/components/whatif/spending_optimizer_results.html
+f2da11ed3829ba3a69a722db184126a82100448b93a373f256e12b9f9a5ff31b  internal/handlers/whatif/spending_keep_current_label_test.go
+$ sha256sum (REAL worktree, same two paths)
+581a882399790b527f90ed7d60f6ad37ddc1ac381c95435d6ebc6b7142097e39  .../spending_optimizer_results.html
+f2da11ed3829ba3a69a722db184126a82100448b93a373f256e12b9f9a5ff31b  .../spending_keep_current_label_test.go
+-> matches the required snapshot 581a8823...39. Criterion (c) MET.
+
+=== FULL SUITE (requested) ===
+$ rtk proxy go test -count=1 ./... 2>&1 | grep -E "^(FAIL|ok)"
+50 packages, ALL "ok", ZERO lines beginning FAIL. exit 0.
+(includes cmd/server ok 6.921s, internal/handlers/whatif ok 11.507s,
+ internal/services/storage ok 69.786s)
+testdata/settings/whatif.json dirtiness after the full suite: NOT dirty.
+$ rtk proxy git status --short  (in the copy, after `go test ./...`)
+ M web/templates/components/whatif/spending_optimizer_results.html
+?? internal/handlers/whatif/spending_keep_current_label_test.go
+-> no tracked testdata file was rewritten by this run.
+
+=== REPO COMPOSITE CHECK TARGET (beyond the brief; run because a stale
+    generated asset passes build+test) ===
+$ rtk proxy make check      # = vet static vuln css-verify test
+/home/darrell/go-sdk/go/bin/go vet ./...
+staticcheck ./...
+govulncheck ./...   -> "Your code is affected by 0 vulnerabilities."
+./tmp/tailwindcss-3.4.17 -c tailwind.config.js ... --minify
+tailwind.css is up to date          <- css-verify: no stale CSS; the label
+                                       change introduced no new utility class
+... all test packages ok ...
+✓ all checks passed
+=== make check exit 0 ===
+
+=== SCOPE ===
+- Exactly the two manifest paths differ from bcb6226; nothing else, tracked or
+  untracked (`git status --short --untracked-files=all` above).
+- .swarm/critical.globs (internal/services/storage|dataloader|retirement/engine|
+  transfers|accounts.go|mcpsvc/confirm) — NONE touched.
+- Foreign territories .worktrees/apply-names and .worktrees/rollover-schedule
+  were not read, entered or modified.
+- No git checkout/stash/reset/switch/restore was run in any worktree; HEAD in
+  the work worktree is still bcb6226c7c9af3c0b41e7351c412da1d58fb5c99.
+- The ./budget2 binary and `go run ./cmd/server` were never invoked; live :8080
+  untouched.
+
+=== CRITERION SUMMARY ===
+(a) current="Keep current plan", recs="Apply this option", frontier="Apply",
+    exactly one occurrence; test asserts this, not something weaker  -> MET
+(b) template diff confined to the label text inside block
+    "whatif-spending-option"; no attribute/form/class/JS change;
+    only the two listed paths differ                                 -> MET
+(c) build+vet clean, package tests green, mutation makes the new test
+    FAIL, file restored to snapshot hash 581a8823...39               -> MET
+Full `go test -count=1 ./...`: no FAIL.
+
+=== OBSERVATIONS (beyond scope; NOT grounds for FAIL) ===
+1. The test's "visible text node" guard at line 64 includes
+   `strings.Contains(body, 'data-spending-apply="current" class=')`, which is
+   attribute-ORDER dependent and would break on a cosmetic attribute reorder
+   that changes no behavior. The load-bearing assertion (label extracted from
+   the button's inner text, line 52) is order-independent and is what
+   mutation-killed, so the guard's brittleness is cosmetic only.
+2. Not verifiable by any command I can run here: that "Keep current plan" is
+   the wording the user wants. It matches the brief's spec string byte for byte.
+3. The rendered body contains 4 aria-label attributes elsewhere in the results
+   partial; none of them is on any of the 5 data-spending-apply buttons
+   (proven by the five full <form> dumps above), so WCAG 2.5.3 Label in Name
+   is satisfied for the changed control. Full a11y adjudication belongs to
+   checker-a11y, the other named checker.

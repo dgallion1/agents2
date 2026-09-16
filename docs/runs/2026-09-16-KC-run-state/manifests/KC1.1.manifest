@@ -1,0 +1,31 @@
+web/templates/components/whatif/spending_optimizer_results.html
+internal/handlers/whatif/spending_keep_current_label_test.go
+
+VERIFICATION COMMANDS (run in worktree /home/darrell/bin/ai/budget2/.worktrees/keep-current-plan, branch feat/keep-current-plan, base bcb6226):
+$ rtk proxy git status --short
+ M web/templates/components/whatif/spending_optimizer_results.html
+?? internal/handlers/whatif/spending_keep_current_label_test.go
+
+$ go test ./internal/handlers/whatif/ -run TestSpendingOptimizerRenderKeepCurrentPlanLabel -count=1   (BEFORE the template edit)
+--- FAIL: TestSpendingOptimizerRenderKeepCurrentPlanLabel
+    current card button = ["Apply this option"], want ["Keep current plan"]
+    "Keep current plan" occurrences = 0, want exactly 1
+
+$ go build ./... && go vet ./...
+(no output; exit 0)
+
+$ go test ./internal/handlers/whatif/ -count=1
+ok  	budget2/internal/handlers/whatif	9.347s
+
+Author: lead (lean exception, Tier 2, checks tests,a11y). sha256 snapshot: KC1.1.sha256.
+
+CHANGES:
+1. spending_optimizer_results.html block `whatif-spending-option`, the card
+   submit button text: `Apply this option` ->
+   `{{if eq $row.Candidate.Kind "current"}}Keep current plan{{else}}Apply this option{{end}}`.
+   Nothing else in the file changed (1 line, 1 insertion, 1 deletion).
+2. New spending_keep_current_label_test.go: renders the results partial for
+   a qualifying current card + planned-8500 + flex-9000 and asserts the five
+   submit buttons' visible text (current: "Keep current plan"; cards:
+   "Apply this option"; frontier rows: "Apply"), that the label is a text
+   node not an aria-label, and exactly one occurrence in the body.
