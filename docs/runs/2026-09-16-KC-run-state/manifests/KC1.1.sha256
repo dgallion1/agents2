@@ -1,0 +1,2 @@
+581a882399790b527f90ed7d60f6ad37ddc1ac381c95435d6ebc6b7142097e39  web/templates/components/whatif/spending_optimizer_results.html
+f2da11ed3829ba3a69a722db184126a82100448b93a373f256e12b9f9a5ff31b  internal/handlers/whatif/spending_keep_current_label_test.go
