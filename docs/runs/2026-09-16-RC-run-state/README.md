@@ -1,8 +1,8 @@
 # Run RC — month rollover keeps scheduled cash flows; Apply keeps the comparison minimum (2026-09-16)
 
-Target: simpleBudget branch `fix/rollover-schedule` in the in-repo worktree
-`.worktrees/rollover-schedule` (base bcb6226; master moved to d1aca01
-during the run, merge preview clean). Source: the user's review of the
+Target: simpleBudget PR #116 `fix/rollover-schedule` (base bcb6226; merged
+with master d1aca01 during the run). MERGED 7d0aec0 + DEPLOYED :8080
+2026-09-16 (health v1.4.0-1161-g7d0aec0), all four CI checks green. Source: the user's review of the
 09-09..16 changes (P1 rollover drift, P2 lost comparison minimum). Design
 signed off as Option A (month-precise schedules).
 

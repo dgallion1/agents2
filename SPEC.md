@@ -7,7 +7,7 @@ on branch `fix/rollover-schedule` (created at dispatch, INSIDE the repo per
 the CP lesson). This run's `.swarm/` lives in the agents2 worktree
 `.claude/worktrees/budget2-rollover-comparison-issues-19c20a` (gitignored).
 
-## 0. Status — signed off by user 2026-09-16 ("A"); RC1 ACCEPTED ec42346 (attempt 1); RC2 ACCEPTED ee7af8a (attempt 2, gate `OK: RC2 accepted at tier 3 (attempt 2)`); RC3 ACCEPTED 5d4c10f (attempt 3 under the rewritten contract, user-authorized after the Tier-3 hard stop; gate `OK: RC3 accepted at tier 3 (attempt 3)`); `gate.sh done`: `OK: all tasks accepted, evidence verified, no unresolved flags`; `gate.sh stats`: `first-attempt clean: 1/3 (no-evidence rows: 0)`
+## 0. Status — signed off by user 2026-09-16 ("A"); RC1 ACCEPTED ec42346 (attempt 1); RC2 ACCEPTED ee7af8a (attempt 2, gate `OK: RC2 accepted at tier 3 (attempt 2)`); RC3 ACCEPTED 5d4c10f (attempt 3 under the rewritten contract, user-authorized after the Tier-3 hard stop; gate `OK: RC3 accepted at tier 3 (attempt 3)`); `gate.sh done`: `OK: all tasks accepted, evidence verified, no unresolved flags`; `gate.sh stats`: `first-attempt clean: 1/3 (no-evidence rows: 0)`; simpleBudget PR #116 MERGED 7d0aec0 + DEPLOYED :8080 2026-09-16
 
 Source: the user's review of the 2026-09-09..16 changes reported two
 issues. Both are CONFIRMED in code at bcb6226 (section 1). P2 has one
