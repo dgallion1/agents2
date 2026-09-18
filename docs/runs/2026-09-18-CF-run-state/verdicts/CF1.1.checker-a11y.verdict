@@ -1,0 +1,176 @@
+VERDICT: PASS
+CHECKER: checker-a11y
+FAMILY: anthropic
+TASK: CF1
+ATTEMPT: 1
+---
+Scope: criterion (d) — the new budget line `<p data-spending-budget>` on
+every spending option card (whatif-spending-optimizer-results partial).
+Work product: worktree /home/darrell/bin/ai/budget2/.worktrees/card-face,
+commit 06ecf48 on branch feat/card-face-budget over base 7d0aec0. Checked
+out a `cp -a` copy to
+scratchpad/checker-a11y-work/card-face; never ran `git checkout`, `git
+stash`, `git reset`, or the built binary. All git comparisons done with
+read-only `git diff 7d0aec0` / `git show`.
+
+1. Manifest match
+   $ git diff 7d0aec0 --name-only
+   internal/handlers/whatif/handlers_spending_optimizer.go
+   internal/handlers/whatif/spending_card_face_budget_test.go
+   web/templates/components/whatif/spending_optimizer_results.html
+   Matches the brief's manifest exactly. No foreign-territory file (the
+   apply-names worktree's sr-only Apply text) is present in this diff.
+
+2. Real render through the actual renderer
+   Ran the project's own new test (renderer.RenderPartial against a live
+   *template.Template via buildSpendingOptimizerView), with a temporary
+   t.Logf of the full response body added in my copy only (reverted after):
+   $ go test ./internal/handlers/whatif/ -run TestSpendingOptimizerRenderBudgetOnCardFace -v
+   --- PASS: TestSpendingOptimizerRenderBudgetOnCardFace (0.02s)
+   Captured the full rendered HTML for the fixture (current base
+   7639.342517/start 9639.342517 + planned 8500/8500 + flexible 9000/9500).
+   Restored the test file from the .bak copy afterward (no mutation left in
+   place); real test suite re-run clean below.
+
+3. DOM position / reading order / no new interactive element / heading
+   structure (rendered HTML, current card, byte-for-byte from the captured
+   body):
+   <article class="rounded-md border border-gray-300 p-3 dark:border-gray-600">
+       <h5 class="font-semibold">Current plan</h5>
+       <p data-spending-budget class="mt-1 text-gray-600 dark:text-gray-300">Monthly Living Expenses setting $7,639.34/mo · starting living budget $9,639.34/mo (scheduled phases or an early-spending boost apply at the start).</p>
+       <p class="mt-2"><strong class="block text-2xl tabular-nums">$8,701.30<span class="text-sm font-normal">/month</span></strong>...median funded living...</p>
+       ...
+       <details class="mt-3"><summary>Supporting details</summary>...</details>
+   </article>
+   - The new <p> is a plain text node, directly after </h5>, before the
+     headline <p> containing "/month", and before <details> — same order on
+     all three cards (verified with the test's own position assertions:
+     h5 < line < figure < details, and independently by eyeballing the full
+     captured body for all three <article> blocks).
+   - It sits inside <article>, not a sibling of it.
+   - Only attributes on the element: `data-spending-budget` and `class`. No
+     role, aria-*, title, or hidden attribute (grep confirmed, see #5).
+   - Heading structure: h4 (data-spending-outcome, "Your spending options")
+     -> h5 (card name, unchanged) -> new <p> -> headline <p>. No heading
+     level introduced or skipped; h4->h5 is exactly the pre-existing
+     structure (git diff shows the <h5> line itself is unchanged, only a
+     <p> was inserted after it).
+   - Frontier tables (`whatif-spending-frontier`, the two
+     `data-spending-frontier` tables in the captured body) contain no
+     budget line and no "Monthly Living Expenses setting" text — the new
+     line is unconditional but scoped to the `whatif-spending-option` card
+     block only, which the frontier block does not call.
+
+4. Classes / contrast (both themes)
+   New <p> classes: `mt-1 text-gray-600 dark:text-gray-300` (from the
+   template diff, web/templates/components/whatif/spending_optimizer_results.html
+   line 30).
+   $ git show 7d0aec0:web/templates/components/whatif/spending_optimizer_results.html | grep -n 'mt-1 text-gray-600 dark:text-gray-300'
+   80: {{if .Headlines}}<p class="mt-1 text-gray-600 dark:text-gray-300">Current plan first,...
+   88: <p class="mt-1 text-gray-600 dark:text-gray-300">Qualification uses the final validation futures...
+   -> the exact class string on the new <p> is byte-identical to two
+   existing <p> elements already shipping in this SAME partial at master
+   (7d0aec0), i.e. this is not a new class combination. On the same card,
+   the sibling "median funded living" <span> and the "Supporting details"
+   <div> both carry the same color pair `text-gray-600 dark:text-gray-300`
+   (differing only in margin utilities mt-1/mt-2/none, which do not affect
+   contrast) — confirmed via:
+   $ git show 7d0aec0:.../spending_optimizer_results.html | grep -n 'text-gray-600 dark:text-gray-300'
+   (lines 31 "median funded living" span, 46 details div, plus 64/67/68/80/88/92/95)
+   Background: the card (<article>) has no fill class of its own, so it
+   sits on its enclosing panel's background — confirmed the panel is
+   `<div class="bg-white dark:bg-gray-800 rounded-lg shadow p-4">` in
+   web/templates/components/whatif/guardrails.html:3 (wraps
+   `whatif-spending-optimizer`, which contains this results partial).
+   Computed from this repo's real built CSS
+   (web/static/css/tailwind.css, minified, matched via python3 re):
+     .text-gray-600{color:rgb(87 83 78)}   (stone-600)
+     .dark\:text-gray-300{color:rgb(214 211 209)}   (stone-300)
+     .bg-white{background-color:rgb(255 255 255)}
+     .dark\:bg-gray-800{background-color:rgb(41 37 36)}
+   WCAG relative-luminance contrast (computed in python3):
+     light: text-gray-600 (87,83,78) on bg-white (255,255,255) = 7.63:1
+     dark:  text-gray-300 (214,211,209) on bg-gray-800 (41,37,36) = 10.18:1
+   Both clear the 4.5:1 AA body-text threshold by a wide margin, in both
+   themes, on the pairing the card already uses elsewhere (no new colour
+   pair introduced by this change) — ACCESSIBILITY.md A-2/A-3 satisfied.
+
+5. Middle-dot separator
+   $ python3 -c '... find "Monthly Living Expenses setting" in handlers_spending_optimizer.go, print any char > U+007F'
+   0xb7 '·'   (single codepoint, U+00B7 MIDDLE DOT, literal UTF-8 byte in
+   the Go string literal, not an HTML entity)
+   Rendered output confirms the literal character passes through
+   html/template unescaped (html/template only escapes &<>"'): e.g.
+   "...setting $7,639.34/mo · starting living budget $9,639.34/mo...". A
+   bare "·" in a text node is either read as "middle dot" or silently
+   skipped by screen readers — harmless noise, not suppressed/injected
+   content (ACCESSIBILITY.md hidden-text-abuse check). Dropping it still
+   reads sensibly: "...setting $7,639.34/mo starting living budget
+   $9,639.34/mo (scheduled phases...)" remains comprehensible, and "·" as
+   an inline separator is an established pattern already used elsewhere in
+   this same partial at master (e.g. "0.0% · 0 of 1,000 futures",
+   "0.0% · 0 / 1,000" in the frontier table), so this is not a new idiom.
+
+6. No aria-label/title/hidden text added; details content intact
+   $ grep -n 'data-spending-budget' web/templates/components/whatif/spending_optimizer_results.html
+   30: <p data-spending-budget class="mt-1 text-gray-600 dark:text-gray-300">{{$row.StartingBudgetEvidence}}</p>
+   Only `data-spending-budget` + `class` attributes — no aria-*, role,
+   title, hidden, or sr-only class.
+   Template diff (`git diff 7d0aec0` on the .html file) shows exactly one
+   line removed inside <details> (the old
+   `{{if $row.StartingBudgetEvidence}}<p>...</p>{{end}}` at old line 50)
+   and nothing else in the Supporting-details block touched — CutDepthEvidence,
+   UnpaidEvidence, DepletionEvidence, LifetimeEvidence, PlannedChangesEvidence,
+   and the Guardrails paragraph all remain, confirmed present in the
+   captured rendered body for all three cards ("Supporting details" div
+   contains no "Monthly Living Expenses setting" / "starting monthly living
+   budget" text — also asserted by the project's own new test).
+
+7. Automated checks
+   $ go build ./... && go vet ./...        -> clean, exit 0
+   $ go test ./internal/handlers/whatif/... -> ok  budget2/internal/handlers/whatif  9.418s
+   $ go test ./internal/templates/... ./web/... -> ok (both packages)
+   (These are the template/render-path test suites the repo has; there is
+   no separate a11y-specific Go test helper beyond the render assertions
+   already exercised above.)
+
+8. REAL axe-core run against a real render
+   Wrapped the captured rendered fragment in a light page and a
+   `class="dark"` page that load the project's actual built stylesheets
+   (web/static/css/tailwind.css AND web/static/css/styles.css — the second
+   file carries the `--accent-strong` custom property the buttons need;
+   confirmed both are loaded together in web/templates/layouts/base.html
+   lines 18/32), inside the real heading chain the fragment actually lives
+   under in production (h1 "What-If Analysis" -> h2 "Spending plan" -> h3
+   "How much can I spend?" -> the fragment's own h4/h5), per
+   web/templates/pages/whatif.html and
+   web/templates/components/whatif/guardrails.html.
+   $ npx --yes @axe-core/cli file://.../light.html
+     0 violations found!
+   $ npx --yes @axe-core/cli file://.../dark.html
+     0 violations found! (after fixing an unstyled `probe footer` scaffold
+     element of my OWN harness that axe flagged for contrast on first pass
+     — not project content; verified and corrected before the clean run.)
+   First pass (before I added the real heading chain and both stylesheets)
+   had shown a heading-order flag and 5 color-contrast flags; both were
+   probe-harness artifacts, not the change under test: the heading-order
+   flag came from my wrapper jumping straight from an h1 to the fragment's
+   h4 (the real page has h2/h3 in between, restored above); the
+   color-contrast flags were the Apply buttons (`bg-accent-strong
+   text-white`, unrelated markup this task does not touch) rendering with
+   an unresolved CSS custom property because I had only loaded
+   tailwind.css and not styles.css. Re-run with both fixed: 0 violations,
+   both themes.
+
+Attribution: no violation is present in the final, correctly-scoped probe.
+No PRE-EXISTING or foreign-territory findings apply to this criterion.
+
+CONCLUSION: criterion (d) is met. The new budget line is plain, non-
+interactive text in correct reading order under the card heading; its
+classes are byte-identical to the pre-existing secondary-text pairing used
+elsewhere on the same card/page at 7d0aec0 (contrast 7.63:1 light /
+10.18:1 dark, well above AA); no heading level was added or skipped; no
+aria/title/hidden text was introduced; the Supporting details block lost
+only the one duplicated sentence per the design and retains every other
+evidence paragraph; a real axe-core run against the real render with the
+real stylesheets in both themes reports 0 violations.

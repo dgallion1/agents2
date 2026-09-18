@@ -1,0 +1,156 @@
+VERDICT: PASS
+CHECKER: checker-second
+FAMILY: adversarial
+TASK: CF1
+ATTEMPT: 2
+---
+Reviewed in a `cp -a` copy at
+/tmp/claude-1000/.../scratchpad/checker-second2-work (commit 1405372, branch
+feat/card-face-budget). No git-state-mutating commands run on the real
+worktree; only `git diff 7d0aec0`/`git show` (read-only). Throwaway test
+files and one throwaway mutation were added/reverted only in the copy;
+`git status` confirmed clean at the end.
+
+## Re-verified premise: attempt-1's defect is fixed
+
+Attempt 1 FAIL: `math.Round(v*100)` decided the differ/same branch while
+`FormatMoney` (`%.2f`) rendered the figures — two independent roundings that
+disagreed at half-cent boundaries (7639.035/7639.04 → "the same" over two
+different displayed figures).
+
+Code at 1405372 (`populateSpendingRowPlanEvidence`,
+handlers_spending_optimizer.go:524-542):
+  base := budgettemplates.FormatMoney(candidate.BaseMonthlyLivingExpenses)
+  start := budgettemplates.FormatMoney(candidate.StartingMonthlyLivingReal)
+  if base != start { ...differ... } else { ...same... }
+The branch is now decided on the SAME two rendered strings shown to the
+user — this is tautologically self-consistent (wording can never contradict
+the two displayed figures), eliminating the whole defect class, not just
+the one boundary.
+
+## Reproduction of the attempt-1 case + extra probes against REAL code
+
+Ran (in the copy, reverted after):
+  go test ./internal/handlers/whatif/ -run TestAdversarial2_ExtraProbes -v
+Cases and rendered sentences (all self-consistent — string equality drives
+wording in every case):
+  7639.035 / 7639.04    -> differ, "$7,639.03" / "$7,639.04"
+  8000 / 8000.004       -> same,   "$8,000.00" / "$8,000.00"
+  8000.004 / 8000.006   -> differ, "$8,000.00" / "$8,000.01"
+  7639.342517.. / 9639.342517.. -> differ, "$7,639.34" / "$9,639.34"
+  0.004 / -0.004        -> differ, "$0.00" / "-$0.00" (formatMoney's
+    negative-zero string differs from positive-zero string for a sub-cent
+    negative input; wording "differ" is CORRECT because the two rendered
+    strings genuinely differ; formatMoney itself is untouched by this diff
+    and outside the manifest — noted as an observation, not a FAIL ground;
+    also outside any realistic monthly-living-expense domain)
+  1000000.005 / 1000000.015 -> differ, "$1,000,000.01" / "$1,000,000.02"
+  999999.995 / 1000000.005  -> differ, "$999,999.99" / "$1,000,000.01"
+    (confirms formatMoney has no $1M abbreviation threshold for these
+    fields — grep confirmed formatMoney never abbreviates; abbreviation
+    lives only in the unrelated conversionSummary/formatAbbreviatedTotal
+    helpers, not used here)
+  12345.005 / 12345.015     -> differ, "$12,345.00" / "$12,345.01"
+  9639.035 / 9639.04        -> differ, "$9,639.03" / "$9,639.04"
+No self-contradiction in any case (wording always matches the two rendered
+strings).
+
+## Mutation check: does the shipped test actually kill the reverted defect?
+
+  cp handlers_spending_optimizer.go /tmp/hso.bak
+  # reverted the branch condition to:
+  #   math.Round(candidate.StartingMonthlyLivingReal*100) !=
+  #   math.Round(candidate.BaseMonthlyLivingExpenses*100)
+  go test ./internal/handlers/whatif/ \
+    -run TestSpendingCardFaceBudgetWordingMatchesRenderedFigures -v
+Output:
+  spending_card_face_budget_test.go:133: (7639.035, 7639.04) = "...(the
+  same at the start)."... want "...(scheduled phases...)"
+  spending_card_face_budget_test.go:140: (7639.035, 7639.04): wording "the
+  same" contradicts figures $7,639.03 vs $7,639.04
+  --- FAIL
+The shipped test kills the exact mutant that attempt 1 failed on, including
+its own self-consistency regex assertion (line 140). File restored from
+backup; `go build ./...` and `git status` confirmed clean afterward.
+
+## Criterion (e) — surfaces enumerated, no drift for the same candidate
+
+- Card face and frontier `<th>` for a HEADLINE candidate (e.g.
+  planned-8500, flex-9000) render from the SAME `spendingOptimizerRow`
+  struct instance: `buildSpendingOptimizerView`
+  (handlers_spending_optimizer.go:386-449) appends the identical `row` to
+  both `view.Headlines` (cards) and `view.PlannedRows`/`view.FlexibleRows`
+  (frontier), so `row.Candidate.BaseMonthlyLivingExpenses` is the identical
+  float on both surfaces, and both the face
+  (`populateSpendingRowPlanEvidence` -> `FormatMoney`) and the frontier
+  `<th>` (`{{formatMoney $row.Candidate.BaseMonthlyLivingExpenses}}`) call
+  the identical formatter — confirmed by shipped test's frontier-row
+  assertions ($8,500.00 / $9,000.00 / $7,639.34) and independently by this
+  read of the struct-sharing code path. No possible drift for the same
+  candidate.
+- `spendingAppliedAnnouncement` (handlers_spending_optimizer.go:787) still
+  uses `fmt.Sprintf("$%.2f", ...)` directly — a second formatter, unchanged
+  by this diff (manifest confines Go changes to
+  `populateSpendingRowPlanEvidence`). Reconfirmed present and untouched;
+  out of scope for CF1 (same conclusion as attempt 1's checker), reported
+  as an observation for the backlog, not a FAIL ground.
+- grep confirms no other Go/JS/testdata consumer of the old sentence text
+  or of `data-spending-budget`:
+  grep -rn "starting monthly living budget\|StartingBudgetEvidence\|data-spending-budget" (excluding new source itself)
+  -> only the new code/test and the pre-existing, textually distinct
+  "Lowest/Highest starting monthly living budget" search-bound labels
+  (spending_optimizer.html / spending_optimizer_render_test.go /
+  spending_optimizer_browser.cjs) which never said "starting living budget"
+  (note: "monthly" is absent from the new sentence) — no collision.
+  web/static/js/whatif-spending-optimizer.js has no selector or clone
+  logic touching `data-spending-budget`.
+
+## Criterion (a) — unavailable branch, position, counts
+
+Wrote and ran a throwaway test (`TestAdversarial3_UnavailableBranchGetsLine`,
+reverted after) with a candidate carrying no `Metrics` at all
+(`MetricsAvailable` false / `Unavailable` branch): the budget line was still
+present on that card. Confirms `populateSpendingRowPlanEvidence` is called
+unconditionally in `buildSpendingOptimizerView` (after, not inside, the
+`if m := c.Metrics; m != nil` block) and the template's
+`<p data-spending-budget>` sits before `{{if $row.MetricsAvailable}}`.
+
+Also ran the shipped test directly:
+  go test ./internal/handlers/whatif/ -run TestSpendingOptimizerRenderBudgetOnCardFace -v
+-> PASS. Confirms exactly 3 "Monthly Living Expenses setting" occurrences,
+correct per-card wording for differ/differ/same fixtures, position
+(h5 < line < figure < details), and absence from `<details>` and from
+frontier tables.
+
+## Criterion (c) — diff scope
+
+  git diff 7d0aec0 -- internal/handlers/whatif/handlers_spending_optimizer.go
+  git diff 7d0aec0 -- web/templates/components/whatif/spending_optimizer_results.html
+Go diff confined to the body of `populateSpendingRowPlanEvidence` plus its
+new comment (no other function touched). Template diff is exactly: one
+`<p data-spending-budget ...>` line added under `<h5>`, and the old
+`{{if $row.StartingBudgetEvidence}}<p>...</p>{{end}}` line removed from
+inside `<details>`. No JS, attribute, form, or button-class change.
+
+## Criterion (b) — build/vet/test
+
+  go build ./... && go vet ./...   -> clean (no output)
+  go test ./internal/handlers/whatif/... -count=1   -> ok (9.4s)
+
+## Criterion (d)
+Not my lane; noted in passing (unchanged from attempt 1): secondary-text
+classes match sibling text, plain `<p>`, no new interactive element,
+heading structure unchanged (template diff above shows no `<h5>`/heading
+edit).
+
+## Verdict
+PASS on (a)-(e). The attempt-1 defect (rounding drift between the
+comparison and the displayed strings) is eliminated by construction — the
+branch decision now reads the same two rendered strings the user sees, so
+the wording can never contradict the figures. Reproduced the exact
+attempt-1 boundary plus 9 additional probes (including a $1M straddle and a
+negative sub-cent corner) against the real code: all self-consistent.
+Mutation check confirms the shipped test would catch a regression back to
+the old defect. The one adjacent surface still using a second formatter
+(`spendingAppliedAnnouncement`) is unchanged by this diff and out of CF1's
+manifest — carried forward as an observation, not a FAIL ground.

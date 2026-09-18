@@ -1,0 +1,141 @@
+VERDICT: FAIL
+CHECKER: checker-second
+FAMILY: adversarial
+TASK: CF1
+ATTEMPT: 1
+---
+Work reviewed in a `cp -a` copy at
+/tmp/claude-1000/.../scratchpad/checker-second-work (commit 06ecf48, branch
+feat/card-face-budget). No git-state-mutating commands run on the real
+worktree; only `git diff 7d0aec0` (read-only). All throwaway edits were made
+and reverted inside the copy (confirmed `git status` clean at the end).
+
+## Surfaces enumerated for base/start money (defect class 1 hunt)
+- Card face (new): `populateSpendingRowPlanEvidence` →
+  `budgettemplates.FormatMoney` (handlers_spending_optimizer.go:531-539).
+- Frontier `<th>`: `{{formatMoney $row.Candidate.BaseMonthlyLivingExpenses}}`
+  (spending_optimizer_results.html:67) — same Go function
+  (`internal/templates/render.go:478` `FormatMoney` is a pure wrapper
+  around the template's `formatMoney`). Confirmed by grep: only ONE money
+  formatter is used across both surfaces for these two fields.
+- `spendingAppliedAnnouncement` (handlers_spending_optimizer.go:781-784)
+  uses `fmt.Sprintf("$%.2f", s.MonthlyLivingExpenses)` directly — a second
+  call site, but it invokes Go's `%.2f` too (same rounding primitive as
+  `formatMoney`'s internal `%.2f`), just without comma grouping. This
+  function is untouched by this diff (manifest confines Go changes to
+  `populateSpendingRowPlanEvidence`) — OUT OF SCOPE for CF1, reported as an
+  observation only, not a FAIL ground.
+- JS/testdata grep for `StartingBudgetEvidence` / "starting monthly living
+  budget" / `data-spending-budget`: no collision. The one JS/testdata hit
+  ("Lowest/Highest starting monthly living budget" in
+  spending_optimizer_browser.cjs) is a different, pre-existing frontier
+  search-bounds label, not this sentence.
+
+## Criterion (e) — FAIL: rounding drift produces a self-contradictory sentence
+
+The differ/same decision uses `math.Round(v*100)` on each field
+independently; the two DISPLAYED figures use `FormatMoney` →
+`fmt.Sprintf("%.2f", v)` independently. These are two different rounding
+computations over the same float and can disagree at exact
+thousandths-digit-5 boundaries (Go's `%.2f` uses correctly-rounded/
+round-to-even conversion on the true binary value; `math.Round` rounds
+half-away-from-zero on the pre-multiplied `v*100`).
+
+Proved first with a standalone reimplementation (scan of $0–$50,000 at
+cent granularity showed 0 self-mismatches, but scanning exact
+`n + 0.xx5` values found ~300+ real, database-realistic mismatches,
+including `7639.035`, `9639.035`, `8000.035`, `12345.005`, etc. — i.e. this
+is not a synthetic-only corner, it recurs roughly every $0.04-0.08 across
+the whole realistic monthly-expense range).
+
+Then reproduced against the REAL production code (not my reimplementation)
+with a throwaway test calling the actual `populateSpendingRowPlanEvidence`
+with the actual `spendingOptimizerRow`/`models.SpendingCandidate`:
+
+  base := 7639.035
+  start := 7639.04
+  populateSpendingRowPlanEvidence(row)
+  // row.StartingBudgetEvidence =
+  //  "Monthly Living Expenses setting $7,639.03/mo · starting living
+  //   budget $7,639.04/mo (the same at the start)."
+
+Command run (in the copy, reverted after):
+  go test ./internal/handlers/whatif/ -run TestAdversarial_SameBranchWithDifferentRenderedStrings -v
+Output:
+  zzz_adversarial_halfcent_test.go:22: StartingBudgetEvidence = "Monthly
+  Living Expenses setting $7,639.03/mo · starting living budget
+  $7,639.04/mo (the same at the start)."
+  --- FAIL: TestAdversarial_SameBranchWithDifferentRenderedStrings (0.00s)
+
+This is exactly the failure mode criterion (e) and the brief's defect-class
+warning name: "never 'the same' with two different strings." The sentence
+asserts the two figures are equal ("the same at the start") while showing
+$7,639.03 and $7,639.04 side by side on the card face — a self-contradiction
+visible to the user, and squarely a money-on-screen defect (this run's
+`second` lane is named because money is shown on screen).
+
+## Is this in scope for CF1, or a pre-existing defect?
+Verified precisely, per the adversarial-checker's own rule to re-check the
+premise:
+- The `math.Round(...) != math.Round(...)` comparison line is NOT new
+  (present verbatim in master/7d0aec0 per `git diff 7d0aec0`).
+- But pre-CF1, when that comparison said "equal," NOTHING was rendered
+  (`{{if $row.StartingBudgetEvidence}}` guarded an empty string) — there
+  was no "same" sentence to contradict itself, so this exact failure mode
+  (same-branch-different-strings) could not manifest in master.
+- CF1's diff ADDS the new `else` branch
+  (handlers_spending_optimizer.go:538-539) that unconditionally renders a
+  "(the same at the start)" sentence using the same two independently-
+  rounded strings. This new branch is where the reproduction above fires.
+  It is new code introduced by this task, not inherited.
+- I also checked the mirror case (differ-branch-with-identical-strings,
+  e.g. base=7639.035, start=7639.03): that construction reproduces
+  IDENTICALLY in the OLD (pre-CF1) sentence text too
+  ("...$7,639.03...because scheduled phases..." with both figures showing
+  $7,639.03) — so that half of the class is pre-existing/out-of-scope. Only
+  the same-branch-with-different-strings half is new to this task, and it
+  is the half I am failing on.
+- The shipped test (`spending_card_face_budget_test.go`) does not probe
+  this boundary: its "same" fixture is base=start=8500 exactly (trivial
+  equality) and its "differ" fixture uses 7639.342517162467, which happens
+  to round consistently both ways. The brief itself specified this exact
+  construction ("base and start differ by less than half a cent... e.g.
+  8000 vs 8000.004") as a required adversarial probe; I extended it to the
+  half-cent tie that actually breaks, which is directly on the same axis.
+
+## Other criteria checked (no defects found)
+- (a) `go test ./internal/handlers/whatif/ -run TestSpendingOptimizerRenderBudgetOnCardFace -v`
+  passes as shipped; verified independently that the `<p data-spending-budget>`
+  line sits before `{{if $row.MetricsAvailable}}` in the template, so it
+  renders unconditionally including the `Unavailable` branch.
+- (b) `go build ./...` and `go vet ./...` clean (no output).
+  `go test ./internal/handlers/whatif/` → `ok` (9.6s).
+  Mutation check: moved the `<p data-spending-budget>` line back inside
+  `<details>` in the copy → `go test -run TestSpendingOptimizerRenderBudgetOnCardFace -v`
+  → FAILS with "no budget line on the card face" for all 3 cards, as
+  required. Template reverted; `git status` clean afterward.
+- (c) `git diff 7d0aec0` confirms: Go diff confined to
+  `populateSpendingRowPlanEvidence` (body + new comment); template diff is
+  exactly one `<p>` line added under `<h5>` and the old
+  `{{if $row.StartingBudgetEvidence}}<p>...</p>{{end}}` line removed from
+  `<details>`. No JS/attribute/form/class change to buttons.
+- (d) Not my lane (checker-a11y), but noted in passing: line uses
+  `mt-1 text-gray-600 dark:text-gray-300`, matching sibling secondary text
+  classes elsewhere on the card; plain `<p>`, no new interactive element.
+- Frontier-vs-face drift for the SAME field (base): none — both surfaces
+  call the identical `FormatMoney`/`formatMoney` on
+  `Candidate.BaseMonthlyLivingExpenses` with no intermediate arithmetic;
+  confirmed by grep and by the shipped test's frontier-row assertions.
+
+## Verdict
+FAIL on criterion (e): the new "same at the start" branch introduced by
+this task can render two different dollar figures while asserting they are
+equal, reproduced against the real production code with a realistic
+monthly-living-expense value (not an extreme/synthetic magnitude). This is
+squarely in scope — the new `else` branch is this task's own addition, and
+the failure mode is the literal one criterion (e) was written to rule out.
+
+Recommended fix (for the record, not prescriptive): compute `base`/`start`
+as rounded cents once (e.g. `math.Round(v*100)/100`) and drive BOTH the
+differ/same comparison and the two `FormatMoney` calls from the same
+rounded value, so there is one rounding computation, not two.
