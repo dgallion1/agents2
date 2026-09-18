@@ -1,0 +1,227 @@
+VERDICT: PASS
+CHECKER: checker-a11y
+FAMILY: anthropic
+TASK: CF1
+ATTEMPT: 2
+---
+Scope: attempt 2 (commit 1405372) changed only Go wording logic
+(populateSpendingRowPlanEvidence) and its test; the template is claimed
+byte-identical to attempt 1 (commit 06ecf48), which already PASSed a11y.
+All work done in a `cp -a` copy at
+/tmp/claude-1000/-home-darrell-work-agents2--claude-worktrees-plan-selection-issue-2adac7/b6a935a9-d530-4997-a939-4e43ec6e8b81/scratchpad/a11y-work
+(copied from /home/darrell/bin/ai/budget2/.worktrees/card-face, commit
+1405372). No git-state-changing command was run in the real worktree; only
+read-only `git diff`/`git log`/`git status` were used there.
+
+## 1. Template unchanged between attempts, diff vs base confirmed
+
+$ git diff 06ecf48 1405372 --name-status
+M	internal/handlers/whatif/handlers_spending_optimizer.go
+M	internal/handlers/whatif/spending_card_face_budget_test.go
+(no template row — confirms the template is untouched between attempts)
+
+$ git diff 7d0aec0 -- web/templates/components/whatif/spending_optimizer_results.html
+@@ -27,6 +27,7 @@
+ {{$row := .Row}}
+ <article {{if .Headline}}data-spending-headline{{end}} class="rounded-md border border-gray-300 p-3 dark:border-gray-600">
+     <h5 class="font-semibold">{{template "whatif-spending-option-name" $row}}</h5>
++    <p data-spending-budget class="mt-1 text-gray-600 dark:text-gray-300">{{$row.StartingBudgetEvidence}}</p>
+     {{if $row.MetricsAvailable}}
+     <p class="mt-2"><strong class="block text-2xl tabular-nums">{{formatMoney $row.NearTermMonthlyReal}}<span class="text-sm font-normal">/month</span></strong><span class="text-gray-600 dark:text-gray-300">median funded living in the first {{$.NearTermYears}} plan years</span></p>
+     {{if and (not $row.Candidate.Baseline) $row.ComparisonAvailable}}<p class="mt-1 font-medium">{{$row.NearTermComparison}}</p>{{end}}
+@@ -47,7 +48,6 @@
+             {{if $row.MetricsAvailable}}
+             <p>{{$row.CutDepthEvidence}}</p><p>{{$row.UnpaidEvidence}}</p><p>{{$row.DepletionEvidence}}</p><p>{{$row.LifetimeEvidence}}</p>
+             {{else}}<p>Cut timing, minimum-failure, depletion, and lifetime evidence are unavailable.</p>{{end}}
+-            {{if $row.StartingBudgetEvidence}}<p>{{$row.StartingBudgetEvidence}}</p>{{end}}
+             <p>{{$row.PlannedChangesEvidence}}</p>
+             {{with $row.Candidate.Guardrails}}<p>Portfolio-trigger spending rules: ...{{end}}
+         </div>
+
+Matches the brief exactly: one line added under <h5>, one line removed from
+<details>.
+
+The Go diff (attempt 1 -> attempt 2) is confined to
+populateSpendingRowPlanEvidence: both figures already went through
+FormatMoney; the fix moved the differ/same branch from a separate
+`math.Round(v*100)` comparison onto the SAME rendered strings (`base !=
+start`). This is a wording/formatting-source change, not a markup or
+class/attribute change, so it cannot alter the DOM structure, roles, or
+styling already audited at attempt 1 — verified directly below rather than
+assumed.
+
+## 2. Real render through the actual renderer, fixture-driven
+
+Wrote a throwaway dump test (not part of the manifest, discarded with the
+copy) reusing the SAME fixture as
+internal/handlers/whatif/spending_card_face_budget_test.go (current base
+7639.342517162467 / start 9639.342517162467; planned 8500/8500; flexible
+9000/9500; plus a fractional-cent frontier-only candidate), rendered via
+`renderer.RenderPartial(w, "whatif-spending-optimizer-results", view)` (the
+real template renderer, real templates from web/templates), body written to
+.../scratchpad/cf1-card-face-render.html.
+
+$ go build ./... 2>&1 | tail -5   -> (clean, no output)
+$ go vet ./...                    -> clean
+$ go test ./internal/handlers/whatif/ -run TestZZZDumpCardFaceForA11y -v
+--- PASS: TestZZZDumpCardFaceForA11y (0.02s)
+$ go test ./internal/handlers/whatif/
+ok  	budget2/internal/handlers/whatif	10.929s   (full package, all tests
+including spending_card_face_budget_test.go, green)
+
+Inspected the captured HTML directly (cat -n, not just regex):
+- Card 0 (current): `<h5 class="font-semibold">Current plan</h5>` is
+  IMMEDIATELY followed by
+  `<p data-spending-budget class="mt-1 text-gray-600 dark:text-gray-300">
+  Monthly Living Expenses setting $7,639.34/mo · starting living budget
+  $9,639.34/mo (scheduled phases or an early-spending boost apply at the
+  start).</p>` — a plain text node, before the `<p class="mt-2">...$8,701.30
+  <span...>/month</span>...` headline and well before `<details
+  class="mt-3">`. All three cards (current/differ, planned-8500/same,
+  flex-9000/differ) follow the same order: h5 -> budget <p> -> headline ->
+  buttons -> details.
+- `<p data-spending-budget ...>` opening tag (all 3 occurrences, extracted
+  with a regex over the raw HTML) is EXACTLY
+  `<p data-spending-budget class="mt-1 text-gray-600 dark:text-gray-300">`
+  — no `role`, no `aria-*`, no `title`, no `hidden`. `data-spending-budget`
+  is a plain data attribute (test/query hook only, matches the
+  `data-spending-*` convention already used on buttons/forms in this same
+  partial), invisible to and inert for assistive tech.
+- Classes on the new `<p>`: `mt-1 text-gray-600 dark:text-gray-300`.
+  Byte-identical (grep) to two existing secondary-text `<p>` elements in the
+  SAME partial at 7d0aec0 (spending_optimizer_results.html:80 and :88):
+  `class="mt-1 text-gray-600 dark:text-gray-300"`.
+- Heading order in the rendered fragment: h4 "Your spending options" ->
+  h5 "Current plan"/"Follow planned spending"/"Flexible spending" (cards)
+  and separately h5 per frontier section heading — no skip inside the
+  fragment. Traced the full page chain (read-only, real templates):
+  web/templates/pages/whatif.html h1 "What-If Analysis" ->
+  web/templates/components/whatif/guardrails.html h2 "Spending plan"
+  (wraps the optimizer in `bg-white dark:bg-gray-800`) ->
+  spending_optimizer.html h3#spending-optimizer-heading "How much can I
+  spend?" -> (this partial, swapped into
+  `#spending-optimizer-results`, itself INSIDE `<section
+  id="spending-optimizer">`) h4 "Your spending options" -> h5 per card.
+  h1->h2->h3->h4->h5, no skip. All of guardrails.html, spending_optimizer.html
+  and whatif.html are byte-identical to 7d0aec0 (`git diff 7d0aec0 --
+  <files>` empty) — this chain is pre-existing, unaffected by CF1.
+- Supporting-details blocks (all 3 cards) no longer contain "starting
+  monthly living budget" or "Monthly Living Expenses setting" (grepped the
+  captured `<details>...</details>` HTML per card) — the sentence appears
+  exactly once, on the card face.
+- Remaining Supporting-details paragraphs are all still present per card
+  (Unpaid/Depletion/Lifetime evidence, "Existing spending phases remain in
+  force...", and for the two non-baseline cards the Portfolio-trigger rules
+  sentence) — listed in full above; nothing else was removed, and each
+  paragraph is a self-contained sentence, so removing the one relocated
+  line does not break the flow of its neighbors.
+
+## 3. Middle-dot separator is a literal character
+
+$ python3 -c "... find 'setting %s/mo' in handlers_spending_optimizer.go ..."
+b'setting %s/mo \xc2\xb7 starting living budget %s/mo (scheduled pha'
+-> decodes to "setting %s/mo · starting living budget %s/mo (scheduled pha"
+
+`\xc2\xb7` is the UTF-8 encoding of U+00B7 MIDDLE DOT — a literal text
+character in the Go string, not an HTML entity, CSS ::before/content, or
+image. It matches the separator convention already used elsewhere in this
+same partial (e.g. "Below the minimum in 0.0% · 0 of 1,000 futures."), so
+it is read the same way by a screen reader as the rest of the card's
+evidence text (typically announced as "dot" or skipped as punctuation,
+consistently across old and new sentences — no new pattern introduced).
+Read aloud, the sentence works fine without the dot too: "Monthly Living
+Expenses setting $X/mo starting living budget $Y/mo (...)" remains a
+parseable, if slightly run-on, sentence — the separator is a visual/typo-
+graphic aid, not load-bearing content.
+
+## 4. Contrast (both themes, computed from the real built CSS)
+
+Card background comes from guardrails.html's wrapper
+(`bg-white dark:bg-gray-800`), confirmed via grep of
+web/templates/components/whatif/guardrails.html:3 (unchanged from 7d0aec0).
+
+$ python3 -c "... extract .text-gray-600 and .dark\:text-gray-300 rules from web/static/css/tailwind.css ..."
+.text-gray-600 -> color:rgb(87 83 78)
+.dark\:text-gray-300:is(.dark *) -> color:rgb(214 211 209)
+.bg-white -> background-color:rgb(255 255 255)
+.dark\:bg-gray-800:is(.dark *) -> background-color:rgb(41 37 36)
+
+WCAG relative-luminance contrast computed in Python (sRGB -> linear ->
+0.2126R+0.7152G+0.0722B, (L1+.05)/(L2+.05)):
+- Light: text-gray-600 #57534E on bg-white #FFFFFF -> 7.63:1
+- Dark: dark:text-gray-300 #D6D3D1 on dark:bg-gray-800 #292524 -> 10.18:1
+
+Both clear AA body-text 4.5:1 by a wide margin in both themes. This is the
+same class pair as the two pre-existing sibling secondary-text elements
+(section 2), so this ratio was already carried by prior content on this
+page — consistent with the brief's "contrast already audited" note.
+
+## 5. axe-core audit, real built CSS, light and dark, realistic heading chain
+
+Built two static pages at
+.../scratchpad/axe-cf1/{light,dark}.html loading the copy's real
+`web/static/css/tailwind.css` and `web/static/css/styles.css` unmodified,
+with `<html class="light">` / `<html class="dark">` (matching
+`darkMode: 'class'` in tailwind.config.js and base.html's actual
+light/dark class-swap mechanism). The page shell reproduces the REAL
+ancestor chain read from the real templates (header/nav, main, h1 "What-If
+Analysis", the bg-white/dark:bg-gray-800 card, h2 "Spending plan", h3 "How
+much can I spend?", and `<div id="spending-optimizer-results">` correctly
+NESTED inside `<section id="spending-optimizer">` as it is in
+spending_optimizer.html:107 — an early version of this harness had it as a
+sibling by mistake, which triggered a spurious color-contrast violation
+(black-on-dark, since `dark:text-gray-100` from the section wrapper wasn't
+inherited); fixing the nesting to match the real template removed it,
+confirming it was a harness bug, not a real defect), footer — then the
+REAL rendered card-face fragment from section 2 inserted verbatim.
+
+$ npx --yes @axe-core/cli "file://.../axe-cf1/light.html" --chrome-options=headless,no-sandbox,disable-gpu -j
+violations: 0
+incomplete: 1  (color-contrast, serious, 2 nodes)
+
+$ npx --yes @axe-core/cli "file://.../axe-cf1/dark.html" --chrome-options=headless,no-sandbox,disable-gpu -j
+violations: 0
+incomplete: 1  (color-contrast, serious, 2 nodes)
+
+Zero violations in both themes. The one "incomplete" (axe's "needs manual
+review", not a violation) in both runs is on the synthetic nav's
+`bg-gradient-to-r` background — axe cannot compute contrast against a CSS
+gradient automatically. This is my own harness's simplified nav markup
+reproducing the site's real header (bg-gradient-to-r ... text-white), not
+part of the CF1 diff (base.html is untouched: `git diff 7d0aec0 --
+web/templates/layouts/base.html` is empty) — attributed, not a FAIL.
+
+## 6. Other ACCESSIBILITY.md points, walked manually
+
+- A-4/A-5 keyboard & focus: no new interactive element was added (the new
+  `<p>` is plain text, not focusable); existing buttons/forms/details in
+  this partial are byte-for-byte unchanged (diff in section 1 shows only
+  the one <p> add / one <p> remove — no attribute, JS, or button change).
+- A-8/A-9 icons/color-only: no icon added; the new sentence conveys its
+  distinction ("scheduled phases or an early-spending boost apply" vs "the
+  same at the start") in TEXT, not color.
+- A-10/A-11 live updates/motion: no aria-live region or animation touched.
+- A-13 empty states: not applicable — this is a normal populated render.
+- A-14 self-contained/CSP: no external origin added; the new content is
+  plain server-rendered text, no inline event handlers.
+- A-6 structure: exactly one h1 in the real page (traced in section 2);
+  header/main/footer landmarks present (base.html, unchanged). The
+  earlier-noted h1->h3 "skip" I initially suspected does NOT occur in the
+  real chain once guardrails.html's h2 "Spending plan" is accounted for
+  (section 2) — no heading-order defect, in scope or out.
+
+## Verdict
+
+PASS. The new `<p data-spending-budget>` sentence renders in reading order
+directly under the card `<h5>`, before the headline figure and the
+`<details>` expander, as plain text with no new role/aria/hidden
+attributes; its classes are byte-identical to existing sibling secondary
+text; heading order is unchanged and unbroken end-to-end; contrast clears
+AA in both themes by a wide margin (7.63:1 light, 10.18:1 dark); axe-core
+reports zero violations against the real built stylesheets in both themes;
+the middle dot is a literal U+00B7 character consistent with existing
+usage; and all Supporting-details paragraphs remain intact and readable
+without the relocated sentence. The attempt-2 Go-only fix (branching on the
+rendered strings instead of a separate rounding comparison) does not touch
+markup, so none of the attempt-1 a11y findings are disturbed — confirmed
+directly by re-rendering and re-auditing at this commit rather than assumed.

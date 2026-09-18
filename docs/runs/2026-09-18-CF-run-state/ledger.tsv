@@ -1,0 +1,2 @@
+# task_id	tier	checks	status	attempt	worker	reason
+CF1	2	tests,a11y,second	accepted	2	lead	gate-ok-tier2-attempt-2; attempt 1 second FAIL conceded (ruling 2026-09-18a); attempt 2 tests+a11y+second PASS

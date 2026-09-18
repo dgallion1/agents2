@@ -1,0 +1,140 @@
+VERDICT: PASS
+CHECKER: checker-tests
+FAMILY: anthropic
+TASK: CF1
+ATTEMPT: 2
+---
+Work product: git worktree /home/darrell/bin/ai/budget2/.worktrees/card-face,
+commit 1405372 (feat/card-face-budget) over 7d0aec0. Verified in a `cp -a`
+copy at .../scratchpad/ct2-work (the copy's .git points at the real worktree
+metadata, so NO git command was run inside the copy; all mutations were made
+with python/cp and byte-reverted, all git reads were read-only in the real
+worktree via `rtk proxy git`). Real worktree left untouched: `rtk proxy git
+status --porcelain` → empty output before and after.
+
+=== (b) Build / vet / test ===
+$ (copy) go build ./...                       → BUILD_EXIT=0 (no output)
+$ (copy) go vet ./internal/handlers/whatif/   → VET_WHATIF_EXIT=0 (no output)
+$ (copy) go vet ./...                         → VET_ALL_EXIT=0 (no output)
+$ (copy) go test ./internal/handlers/whatif/ -count=1
+  ok  	budget2/internal/handlers/whatif	9.614s
+  (re-run after all mutations were reverted: ok ... 9.349s)
+$ (copy) make check   (vet static vuln css-verify test)
+  MAKE_CHECK_EXIT=0 — all packages ok, incl.
+  ok  	budget2/internal/handlers/whatif	13.320s
+`math` is still imported (handlers_spending_optimizer.go:13) and used 7 times
+in the file; the clean build/vet proves no unused-import breakage.
+
+Named tests green (-count=1 -v):
+  --- PASS: TestSpendingOptimizerRenderBudgetOnCardFace (0.01s)
+  --- PASS: TestSpendingCardFaceBudgetWordingMatchesRenderedFigures (0.00s)
+  --- PASS: TestSpendingOptimizerRenderKeepCurrentPlanLabel (0.01s)
+  --- PASS: TestSpendingOptimizerRenderCurrentPlanApply (0.01s)
+  plus every other TestSpendingOptimizerRender* subtest PASS.
+spending_keep_current_label_test.go still asserts the 5-button contract
+(line 44 `if len(buttons) != 5`, line 52 current == "Keep current plan",
+line 67 exactly 1 "Keep current plan") and passes unchanged.
+
+=== (b) Mutation kills (each applied in the copy, then byte-reverted; `cmp`
+against the real worktree confirms all three manifest files IDENTICAL after
+reverting) ===
+M1 — `<p data-spending-budget …>` line moved out from under <h5> back inside
+<details> (before PlannedChangesEvidence):
+  --- FAIL: TestSpendingOptimizerRenderBudgetOnCardFace (0.02s)
+    :91 current: budget line position h5=120 line=2133 figure=238 details=1547, want h5 < line < figure < details
+    :94 current: budget line also rendered inside Supporting details
+    (same two failures for planned-8500 and flex-9000)   M1_EXIT=1
+M2 — `if base != start {` reverted to
+`if math.Round(candidate.StartingMonthlyLivingReal*100) != math.Round(candidate.BaseMonthlyLivingExpenses*100) {`:
+  --- FAIL: TestSpendingCardFaceBudgetWordingMatchesRenderedFigures (0.00s)
+    :133 (7639.035, 7639.04) = "… $7,639.03/mo · starting living budget $7,639.04/mo (the same at the start)." , want "(scheduled phases or an early-spending boost apply at the start)."
+    :140 (7639.035, 7639.04): wording "the same" contradicts figures $7,639.03 vs $7,639.04
+  M2_EXIT=1 — the exact defect of ruling 2026-09-18a is killed by BOTH the
+  pinned string and the self-consistency regex.
+M3 — the two figures swapped in the differ sentence (`…, start, base)`):
+  --- FAIL: TestSpendingOptimizerRenderBudgetOnCardFace (0.02s)
+    :82 current budget line = "… setting $9,639.34/mo · starting living budget $7,639.34/mo …" , want "… setting $7,639.34/mo · starting living budget $9,639.34/mo …"
+    :82 flex-9000 likewise
+  --- FAIL: TestSpendingCardFaceBudgetWordingMatchesRenderedFigures (0.00s)
+    :133 three of four cases fail, incl. (8000.004, 8000.006) → $8,000.01 / $8,000.00
+  M3_EXIT=1
+I read both tests in full (spending_card_face_budget_test.go): they assert
+what their names claim — exact per-card sentences keyed by data-spending-apply
+id, h5 < line < figure < details ordering, marker absent after <details>,
+marker count == 3, frontier tables free of the marker, frontier base strings
+$8,500.00/$9,000.00/$7,639.34, and the wording⇔string-equality invariant.
+
+=== (a) Criterion verified on the RENDERED output, independently ===
+Throwaway dump test (my own, since removed) rendered the spec's fixture
+(current 7639.34/9639.34, planned 8500/8500, flexible 9000/9500, plus the
+non-headline fractional-cent flex-7639 at 7639.342517162467) through
+renderer.RenderPartial("whatif-spending-optimizer-results", view) and wrote
+the body to scratchpad/dump.html (17222 bytes). Assertions on that body:
+  count "Monthly Living Expenses setting" = 3
+  count "starting monthly living budget"  = 0
+  articles = 3, each with the exact <p>:
+   current:      <p data-spending-budget class="mt-1 text-gray-600 dark:text-gray-300">Monthly Living Expenses setting $7,639.34/mo · starting living budget $9,639.34/mo (scheduled phases or an early-spending boost apply at the start).</p>
+   planned-8500: … Monthly Living Expenses setting $8,500.00/mo · starting living budget $8,500.00/mo (the same at the start).
+   flex-9000:    … Monthly Living Expenses setting $9,000.00/mo · starting living budget $9,500.00/mo (scheduled phases or an early-spending boost apply at the start).
+  positions per card (h5 < line < "/month" < "<details"):
+   current  h5=120 line=130 figure=465 details=1763  ordered=True
+   planned  h5=153 line=163 figure=457 details=1841  ordered=True
+   flex     h5=147 line=157 figure=492 details=1870  ordered=True
+  marker inside each card's details slice: False; "starting monthly living
+  budget" inside details: False.
+  frontier tables = 2; marker in table: False; data-spending-budget in
+  table: False (both tables).
+  frontier row for flex-7639 <th>: '$7,639.34' — the same rendered string
+  FormatMoney gives the card face for the same value (no drift).
+Extra probe (removed after running): a candidate with nil Metrics still
+renders the line — "Monthly Living Expenses setting $7,639.34/mo · starting
+living budget $9,639.34/mo (scheduled phases …)." — because
+populateSpendingRowPlanEvidence is called at line 438, outside the
+MetricsAvailable branch, so no empty <p> is possible.
+
+=== (c) Scope ===
+$ rtk proxy git diff 7d0aec0 --name-status   (real worktree)
+  M	internal/handlers/whatif/handlers_spending_optimizer.go
+  A	internal/handlers/whatif/spending_card_face_budget_test.go
+  M	web/templates/components/whatif/spending_optimizer_results.html
+  → exactly the 3 manifest files, nothing else.
+$ rtk proxy git diff 7d0aec0 --stat
+  handlers_spending_optimizer.go | 15 ++- ; spending_card_face_budget_test.go | 143 +++ ;
+  spending_optimizer_results.html | 2 +-   (3 files, 157 insertions, 3 deletions)
+Template (python difflib vs `git show 7d0aec0:…`, not rtk-wrapped git diff):
+one line ADDED at line 30 —
+  <p data-spending-budget class="mt-1 text-gray-600 dark:text-gray-300">{{$row.StartingBudgetEvidence}}</p>
+directly after the <h5>; one line REMOVED from the details block —
+  {{if $row.StartingBudgetEvidence}}<p>{{$row.StartingBudgetEvidence}}</p>{{end}}
+Block containment proved: `{{define "whatif-spending-option"}}` at line 26,
+`</article>` at line 55, `{{end}}` at 56; the added line is line 30 →
+26 < 30 < 55 = True. The removed line's context (details/Supporting details,
+former lines 44-55) is the same block.
+Go (difflib opcodes): a single hunk — replace base 529-530 → new 529-541.
+`func populateSpendingRowPlanEvidence` spans lines 524..551 (next `func` at
+552); assertion that every changed new line is in [524,551] held (script
+asserted, no AssertionError). No other function touched.
+No button/form/class/JS change: the only template edit is the two lines above
+(the buttons at former lines 40-43 are untouched, and the 5-button label test
+passes); no .js file appears in the diff; `grep -rn data-spending-budget
+--include=*.js` matches nothing (only the template line and two references in
+the new test).
+Critical globs (.swarm/critical.globs: internal/services/storage,
+dataloader, retirement/engine, transfers, accounts.go, mcpsvc/confirm) — none
+touched.
+Foreign territory .worktrees/apply-names (template lines 42/69, sr-only Apply
+text) is a separate worktree and does not appear in this worktree's diff;
+attributed, not counted against CF1.
+
+=== Out-of-scope observations (not FAIL grounds) ===
+1. The card-face line is the only place the base/starting figures appear per
+   card, and the frontier table shows only the base figure — consistent with
+   the spec, but note the frontier row for the CURRENT candidate is not
+   rendered (frontier lists searched candidates), so the "same string on both
+   surfaces" property is exercised via flex-7639 only. That is what the new
+   render test pins.
+2. Criteria (d) (a11y reading order / classes) and (e) (second-lane formatter
+   and fractional-cent analysis) belong to checker-a11y and checker-second;
+   I did not adjudicate them, though the rendered classes on the new <p>
+   ("mt-1 text-gray-600 dark:text-gray-300") are identical to the sibling
+   secondary-text span in the headline <p>.

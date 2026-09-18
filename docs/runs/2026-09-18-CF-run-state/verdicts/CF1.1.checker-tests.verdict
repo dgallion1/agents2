@@ -1,0 +1,210 @@
+VERDICT: PASS
+CHECKER: checker-tests
+FAMILY: anthropic
+TASK: CF1
+ATTEMPT: 1
+---
+Work verified in a `cp -a` copy of the worktree at
+/tmp/claude-1000/.../scratchpad/checker-tests-work (real worktree
+/home/darrell/bin/ai/budget2/.worktrees/card-face, commit 06ecf48 over base
+7d0aec0). No git-state change in any real tree; only read-only `git diff
+7d0aec0` / `git status --porcelain`. Binary never run. Copy confirmed
+byte-identical to the worktree after all mutations were reverted:
+  $ diff -r --brief <worktree> <copy> -x .git   -> COPY_DIFF_RC=0
+
+=== CRITERION (a) — rendered fixture: line on each card face, before
+=== /month and before <details>; frontier tables clean; exact sentences
+
+Rendered the real partial for the criterion's fixture (current base 7639.34 /
+start 9639.34; planned 8500/8500; flexible 9000/9500) with a THROWAWAY test
+in my copy (`zzz_checker_dump_test.go`, calling
+buildSpendingOptimizerView + renderer.RenderPartial
+"whatif-spending-optimizer-results", dumping the body to disk; test deleted
+afterwards). Asserted on the rendered body, not on the template source:
+
+  $ DUMP_PATH=.../body.html go test ./internal/handlers/whatif/ -run TestCheckerDumpCardFace -count=1
+  ok  	budget2/internal/handlers/whatif	0.018s   (15535 bytes written)
+  $ python3 (assertions on body.html)
+  count 'Monthly Living Expenses setting' = 3
+  count 'starting monthly living budget' = 0
+  articles = 3
+  --- current
+    LINE: 'Monthly Living Expenses setting $7,639.34/mo · starting living budget $9,639.34/mo (scheduled phases or an early-spending boost apply at the start).'
+    pos h5=120 line=130 month=465 details=1763
+    details contains marker: False | old sentence: False
+  --- planned-8500
+    LINE: 'Monthly Living Expenses setting $8,500.00/mo · starting living budget $8,500.00/mo (the same at the start).'
+    pos h5=153 line=163 month=457 details=1841
+    details contains marker: False | old sentence: False
+  --- flex-9000
+    LINE: 'Monthly Living Expenses setting $9,000.00/mo · starting living budget $9,500.00/mo (scheduled phases or an early-spending boost apply at the start).'
+    pos h5=147 line=157 month=492 details=1870
+    details contains marker: False | old sentence: False
+  frontier tables = 2
+    tbl marker: False data-spending-budget: False
+    tbl marker: False data-spending-budget: False
+  Supporting details blocks: 3
+
+Point by point:
+- each of 3 <article> cards contains its budget line BEFORE its <details>:
+  YES — per card, h5 < line < /month < <details> (e.g. current
+  120 < 130 < 465 < 1763). Assertion is on rendered offsets.
+- current card's line is exactly the "differ" sentence of §3 (with the
+  fixture's figures): YES, character-for-character as printed above.
+- planned card's line is exactly the "same" sentence: YES
+  ("... $8,500.00/mo · starting living budget $8,500.00/mo (the same at the
+  start).").
+- frontier tables contain no budget line: YES — both
+  <table data-spending-frontier …> blocks contain neither the marker nor
+  data-spending-budget. The attribute exists on the real tables (template
+  line 63), so the check is non-vacuous.
+- "Monthly Living Expenses setting" occurs exactly 3 times in the body: YES
+  (3), i.e. once per card and nowhere else.
+- "Supporting details" blocks contain neither "starting monthly living
+  budget" nor "Monthly Living Expenses setting": YES — 3 "Supporting
+  details" blocks present; per-card slice from <details> onward contains
+  neither string; whole-body count of the old sentence is 0.
+- Separator is the literal UTF-8 middle dot, not an entity (html/template
+  does not escape it):
+  $ grep -o 'setting \$[0-9,.]*/mo .\{0,3\} starting' body.html | od -c
+  ... /   m   o     302 267       s   t   a   r   t   i   n   g
+
+=== CRITERION (b) — build/vet/test clean; new test mutation-kills
+
+  $ go build ./...                      -> BUILD_OK (exit 0)
+  $ go vet ./...                        -> no output, VET_EXIT=0
+  $ go test ./internal/handlers/whatif/ -count=1
+    ok  	budget2/internal/handlers/whatif	9.387s
+  $ make check           # repo composite target: vet static vuln css-verify test
+    ... ok  	budget2/internal/handlers/whatif  (in ./...)
+    ✓ all checks passed
+    MAKE_CHECK_EXIT=0
+  (`make check` includes css-verify, so the added Tailwind classes are not a
+  stale-asset risk; it also runs staticcheck and govulncheck.)
+
+Mutation kills (each applied in my copy, then reverted and the revert proved
+byte-identical to the worktree file):
+
+M1 — template line moved back inside the <details> block (as
+`{{if $row.StartingBudgetEvidence}}<p data-spending-budget>…</p>{{end}}` at
+the old line-50 position), i.e. the exact regression the task removes:
+  $ go test ./internal/handlers/whatif/ -run TestSpendingOptimizerRenderBudgetOnCardFace -count=1
+  --- FAIL: TestSpendingOptimizerRenderBudgetOnCardFace (0.02s)
+      spending_card_face_budget_test.go:87: current: budget line position h5=120 line=2133 figure=238 details=1547, want h5 < line < figure < details
+      spending_card_face_budget_test.go:90: current: budget line also rendered inside Supporting details
+      (same two failures for planned-8500 and flex-9000)
+  FAIL — EXIT=1
+  -> restored: "template restored identical: True"
+
+M2 — Go reverted to the pre-CF1 behaviour of setting the line ONLY when the
+figures differ (the `else` branch deleted, so the "same" sentence is never
+produced):
+  --- FAIL: TestSpendingOptimizerRenderBudgetOnCardFace (0.02s)
+      spending_card_face_budget_test.go:49: "Monthly Living Expenses setting" occurrences = 2, want 3 (one per card)
+  FAIL — EXIT=1
+  -> restored: "go restored identical: True"
+
+M3 (extra, my own) — the two figures swapped in the differ branch
+(`…, start, base)`), the classic figure-transposition defect:
+      spending_card_face_budget_test.go:78: current budget line = "… setting $9,639.34/mo · starting living budget $7,639.34/mo …", want "… setting $7,639.34/mo · starting living budget $9,639.34/mo …"
+      (same for flex-9000)
+  FAIL — EXIT=1
+  -> restored: "go restored identical: True"
+
+I read the shipped test (internal/handlers/whatif/spending_card_face_budget_test.go)
+and it asserts what its name claims: marker count == 3; absence of the old
+sentence; exactly 3 <article>s; per-card exact expected string keyed by
+data-spending-apply id; rendered-offset ordering h5 < line < /month <
+<details>; marker absent from the card's <details> slice; marker absent from
+every data-spending-frontier table; and frontier base strings $8,500.00 /
+$9,000.00. It uses a fractional-cent base (7639.342517162467) for the
+current candidate, so the face figure is proven to come through FormatMoney's
+single rounding path.
+
+Existing guards still guard (run verbosely, -count=1):
+  --- PASS: TestSpendingOptimizerRenderKeepCurrentPlanLabel (0.01s)
+  --- PASS: TestSpendingOptimizerRenderCurrentPlanApply (0.01s)
+  --- PASS: TestSpendingOptimizerRenderResultsEvidence, …FormDecision,
+      …SavedBoostStates, …NoUnconditionalMoreClaim,
+      …NilOrZeroSampleMetricsUnavailable, …SearchPreferences,
+      …AppliedPlanBlock  (all PASS)
+I read spending_keep_current_label_test.go: it still asserts 5
+data-spending-apply submit buttons, the per-id labels ("Keep current plan"
+for current; "Apply this option" then "Apply" for each recommendation), the
+visible-text (not aria-label) requirement, and
+strings.Count(body,"Keep current plan") == 1. It passes unchanged, so the
+CF1 edit did not disturb the button/form surface it guards.
+
+=== CRITERION (c) — scope
+
+  $ git status --porcelain=v1      -> (empty; nothing uncommitted)
+  $ git diff 7d0aec0 --name-status
+    M	internal/handlers/whatif/handlers_spending_optimizer.go
+    A	internal/handlers/whatif/spending_card_face_budget_test.go
+    M	web/templates/components/whatif/spending_optimizer_results.html
+  $ git diff 7d0aec0 --stat
+    handlers_spending_optimizer.go | 11 ++-
+    spending_card_face_budget_test.go | 107 +++++++++++
+    spending_optimizer_results.html |  2 +-
+  $ git diff 7d0aec0 --name-only | grep -Ei '\.(js|css|ts)$'   -> (none)
+
+Exactly the 3 manifest files, no more, nothing untracked.
+
+Template: hunks are `@@ -27,6 +27,7 @@` (one line ADDED) and `@@ -47,7 +48,6 @@`
+(one line REMOVED). Block boundaries from
+`grep -n '{{define' spending_optimizer_results.html`: block
+"whatif-spending-option" runs lines 26–56 ({{define}} at 26, {{end}} at 56);
+both hunks fall inside 26–56. Added line is
+`    <p data-spending-budget class="mt-1 text-gray-600 dark:text-gray-300">{{$row.StartingBudgetEvidence}}</p>`
+directly after the `<h5>`; removed line is the old
+`{{if $row.StartingBudgetEvidence}}<p>…</p>{{end}}`. No <button>, <form>,
+<input>, class or attribute on any control appears in the diff (the only
+class string added is on the new <p>); the buttons/forms on lines 43 and 69
+are untouched, corroborated by the keep-current-label test passing unchanged.
+No .js / .css / .ts file touched.
+
+Go: hunk `@@ -526,8 +526,17 @@`; populateSpendingRowPlanEvidence spans
+lines 524–546 (read at
+internal/handlers/whatif/handlers_spending_optimizer.go:524), so the whole
+diff — 5-line CF1 comment, the two FormatMoney locals, the reworded differ
+branch, the new else branch — is inside that function. No other function,
+no signature change.
+
+.swarm/critical.globs paths (storage, dataloader, retirement/engine,
+transfers, accounts.go, mcpsvc/confirm): none touched.
+
+Foreign territory: /home/darrell/bin/ai/budget2/.worktrees/apply-names
+(branch feat/apply-button-names, uncommitted) is a separate worktree and did
+not appear in this worktree's diff or status. Template lines 42 and 69 are
+unmodified here, so no overlap; nothing attributed to CF1 that belongs to it.
+
+=== OBSERVATIONS (not FAIL grounds; for the lead's backlog / other lanes)
+
+O1. Informational for criterion (e) (checker-second's lane, probed here
+because it was cheap): the shipped test's fractional-cent candidate is the
+CURRENT candidate, which never appears in a frontier table, so the shipped
+test does not compare a fractional base on the face against the same
+candidate's frontier row. I probed it with a throwaway test (deleted) that
+put base 7639.342517162467 on a SEARCHED (planned) candidate:
+    frontier money: $7,639.34
+    face line: … setting $7,639.34/mo · starting living budget $7,639.34/mo (the same at the start).
+  i.e. the face and the frontier row agree at cents, no second formatter and
+  no rounding drift. Evidence exists but is not pinned by a shipped test.
+
+O2. The `<p data-spending-budget>` renders unconditionally (outside the
+`{{if $row.MetricsAvailable}}` guard), and populateSpendingRowPlanEvidence's
+only early return is `row == nil`, so no card can render an empty paragraph.
+The criterion's fixture has metrics on all three candidates, so the
+metrics-unavailable card is exercised only by the pre-existing
+TestSpendingOptimizerRenderNilOrZeroSampleMetricsUnavailable (which passes);
+no shipped assertion pins the budget line's presence on an Unavailable card.
+
+O3. `make test` in the Makefile runs `go test ./...` without `-count=1`
+(only the accounts package gets a forced re-run). I defeated the cache for
+the package under test by running
+`go test ./internal/handlers/whatif/ -count=1` separately, which is where the
+evidence above comes from.
+
+CONCLUSION: criteria (a), (b) and (c) are met, each demonstrated by a command
+whose output is quoted above. Criteria (d) and (e) belong to checker-a11y and
+checker-second and are not adjudicated here.
