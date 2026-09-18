@@ -39,6 +39,36 @@ Before any build work, produce two documents and get user sign-off:
 If content is being migrated, also produce `SOURCES.md` mapping every content
 block to its canonical source.
 
+## Superpowers skills — front half only (2026-09-18)
+The `superpowers` plugin stays enabled and yields to this document (its
+own rule: CLAUDE.md overrides skills). A 2026-09-18 transcript audit
+found three of its skills earn their place, all before or beside the
+swarm, never inside it:
+- `brainstorming` is HOW Phase 0 surveys: classify, measure the live
+  build, present a short design, stop for sign-off. Its artifact is
+  SPEC.md (plus ACCESSIBILITY.md / SOURCES.md), never a new
+  `docs/superpowers/specs` file — existing ones are history to read.
+  "Bounded" shortens the design, not the verification: the task still
+  gets a SPEC.md row, a tier and a ledger line.
+- `systematic-debugging` opens a bug session: root cause and a
+  reproduction before any fix or dispatch.
+- `receiving-code-review`: verify each claim in a review against the
+  code before conceding or rebutting it.
+Never follow `subagent-driven-development`, `executing-plans`,
+`writing-plans`, `verification-before-completion` or
+`finishing-a-development-branch` in a swarm repo — each is a weaker
+parallel of this document (same-lane LLM reviewer, no mechanical gate,
+no tiers, no hard stop, a "don't pause" rule that contradicts Phase 0
+sign-off). The plan is SPEC.md's task table plus the ledger; "verified"
+means `gate.sh check` exited 0; a branch finishes by the user's
+commit → push → PR → merge → pull rhythm. `test-driven-development` is
+a worker's own discipline (subagents never see the plugin's session
+injection); the lead's version is Tier 3's oracle-first rule. Never
+invoke a skill for ceremony — the meta-skill's "1% chance" rule yields
+here (it once produced a TDD invocation after the work was already
+built). Codex runs the same plugin; its gitignored `.superpowers/` notes
+in a target repo are codex's records, not this run's evidence.
+
 ## Dispatch rules
 - Implementation goes to `worker-coder` (or `worker-local` for bulk
   mechanical work) by default. **Lean exception (2026-08-31):** the lead MAY
