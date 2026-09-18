@@ -50,6 +50,16 @@ block to its canonical source.
   acceptance. Tier 3 is always dispatched to a worker.
 - One scoped task per worker invocation, with the relevant SPEC.md section
   pasted into the delegation message. Workers cannot see this conversation.
+- **Resume, don't re-dispatch (2026-09-18).** Subagents cannot ask
+  questions mid-run; they return. A `BLOCKED` return or a checker FAIL is
+  answered by `SendMessage` to the SAME worker agent — it keeps its file
+  reads, partial edits and spec context, so the answer or the verdict is
+  the whole message. A fresh `Agent` call starts from zero and is reserved
+  for: a hard stop, a contract/spec rewrite (T18 precedent), or a Tier-3
+  attempt after the oracle itself changed. Resuming is still a new attempt:
+  bump the ledger `attempt` column and require a new manifest. Checkers are
+  NEVER resumed across attempts — the fresh-eyes property is theirs, not
+  the worker's.
 - Independent tasks run as parallel background workers.
 
 ## Verification — tiered and mechanically gated
