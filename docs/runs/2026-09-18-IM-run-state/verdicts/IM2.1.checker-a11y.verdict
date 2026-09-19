@@ -1,0 +1,224 @@
+VERDICT: PASS
+CHECKER: checker-a11y
+FAMILY: anthropic
+TASK: IM2
+ATTEMPT: 1
+---
+SCOPE (git diff master, worktree /home/darrell/bin/ai/budget2/.worktrees/import-superseded, HEAD 2b3bafd):
+  web/templates/pages/filemanager.html — single hunk @@ -576,16 +576,32 @@
+    (the `import-scan` partial: per-entry <select>, its <label>, the
+    "(identical to ...)" / "(could not detect...)" texts, disabled checkbox
+    for identical files). `import-result` partial UNCHANGED by this diff.
+  internal/handlers/explorer/handlers.go, GLOSSARY.md, dataloader/* — no
+    markup, not this checker's concern beyond confirming template contract
+    fields (Detected/DetectedName/IdenticalTo) render correctly, which they do.
+  web/templates/layouts/base.html — 0 diff lines (confirmed byte-identical
+    to master via `git diff master -- web/templates/layouts/base.html`).
+
+METHOD
+  Built the worktree via the lead's serve.sh (preupload variant, port 8977,
+  frozen real data + 7 browser-named exports: 3 identical/disabled,
+  4 detectable). Ran it as a background process (`run_in_background`) so it
+  survived across tool calls — first attempt used a bare `nohup ... &`
+  inside a plain Bash call, which got reaped when that call returned; this
+  produced two rounds of misleading axe output (documented below and
+  discarded) until I switched to `run_in_background` and reconfirmed the
+  server was actually serving (curl 200 on /static/css/tailwind.css and
+  /filemanager) before composing pages.
+  Fetched real server-rendered fragments:
+    GET /filemanager                              -> shell.html (page shell)
+    GET /explorer/import/scan  (HX-Request:true)   -> scan.html (7 entries:
+       bk_download(1).csv, bk_download(2).csv, bk_download.csv = identical/
+       disabled with "(identical to <name>, will be skipped)"; bk_download(3)
+       /(4)/(5).csv, creditCard24-25.csv = checked with a detected
+       usaa-credit-card/usaa-checking selection)
+    POST /explorer/import (4 detected files, delete_source=true)
+                                                    -> result.html (4/4
+       "— imported", e.g. "imported as usaa-credit-card_2026-07-01_to_
+       2026-08-27.csv (USAA Credit Card), source file deleted")
+  Composed shell.html + scan.html into #import-scan-list and shell.html +
+  result.html into #import-result (regex innerHTML splice, matching what
+  htmx produces in the browser). Neutralized the page's own theme
+  auto-detect boot script (localStorage/prefers-color-scheme -> adds
+  "dark" class) in the composed copy so the test harness's forced
+  `class="light"` / `class="dark"` on <html> actually controls the theme
+  instead of being overridden at parse time — the headless Chrome instance
+  axe-core CLI drives apparently defaults prefers-color-scheme:dark, which
+  silently forced BOTH themes to render dark in my first pass (both
+  axe-light.json and axe-dark.json showed identical dark-theme computed
+  colors for the label/select — a harness bug I caught by diffing the two
+  JSON files against each other, not a page bug). Added `<base
+  href="http://127.0.0.1:8977/">` so the composed file:// page's
+  absolute-path /static/css/tailwind.css resolves against the live
+  instance's real built stylesheet.
+
+A-1 / A-2 — axe-core, composed page, both themes, populated scan (7) + result (4):
+  $ npx @axe-core/cli "file://.../composed-light.html" --chrome-options=no-sandbox --tags wcag2a,wcag2aa,wcag22aa --save axe-light.json
+    -> 0 violations found! (1 incomplete: color-contrast on nav `.text-xl`
+       logo — background-gradient nav bar in web/templates/layouts/base.html,
+       0-line diff vs master, PRE-EXISTING, out of scope — axe cannot
+       compute contrast against a CSS gradient background and always flags
+       it "incomplete" regardless of this task)
+  $ npx @axe-core/cli "file://.../composed-dark.html" --chrome-options=no-sandbox --tags wcag2a,wcag2aa,wcag22aa --save axe-dark.json
+    -> 0 violations found! (same 1 pre-existing incomplete)
+  Also ran the post-import /filemanager page (17-file table, empty rescan
+  list) and the /accounts "Unassigned files" empty state, both themes:
+  0 violations each (axe-postimport-{light,dark}.json,
+  axe-accounts-{light,dark}.json).
+  PASS.
+
+A-3 — contrast, real computed colours (getComputedStyle via
+  `google-chrome --headless=new --dump-dom` on the composed pages, probe
+  script walking effective background up the ancestor chain — cross-checked
+  against axe's own reported fgColor/bgColor for the label+select, which
+  matched exactly):
+    LIGHT "(identical to ..., will be skipped)" / "(could not detect the
+      account — choose one)" span (same class:
+      text-body-sm text-gray-600 dark:text-gray-400):
+      rgb(87,83,78) on rgb(255,255,255) = 7.63:1 (need 4.5:1)   PASS
+    LIGHT <select> text (no explicit light text-color class -> native UA
+      rendering): rgb(0,0,0) on rgb(239,239,239) = 18.26:1      PASS
+    LIGHT "Account for {file}" label (text-gray-700):
+      rgb(68,64,60) on rgb(255,255,255) = 10.27:1               PASS
+    DARK  identical-to/could-not-detect span (text-gray-400):
+      rgb(168,162,158) on rgb(41,37,36) = 6.01:1                PASS
+    DARK  <select> text (dark:text-gray-100 on dark:bg-gray-700):
+      rgb(245,245,244) on rgb(68,64,60) = 9.42:1                PASS
+    DARK  "Account for {file}" label (dark:text-gray-300):
+      rgb(214,211,209) on rgb(41,37,36) = 10.18:1               PASS
+  The "(could not detect the account — choose one)" string never rendered
+  in this real fixture (all 4 non-identical exports were detected — see
+  handlers_test.go / im2_test.go for the ambiguous-detection code path);
+  it shares the exact class list with "(identical to ...)", so the
+  measurement above applies unchanged (noted as an OBSERVATION, not a gap,
+  since the constitution requires the *class* to meet AA, and it does).
+  Colours sourced from web/static/css/tailwind.css:
+    .text-gray-600 #57534e / .dark .text-gray-400 #a8a29e /
+    .text-gray-700 #44403c / .dark .text-gray-300 #d6d3d1 /
+    .dark .bg-gray-700 #44403c / .dark .text-gray-100 #f5f5f4 /
+    .bg-white #ffffff / dark section bg .bg-gray-800 #292524.
+  PASS.
+
+A-4 / A-5 — keyboard + focus, reasoning from the markup + CSS:
+  No `tabindex` attribute anywhere in the changed partial (only pre-existing
+  `tabindex="-1"` on #file-list, untouched). DOM order per row is
+  checkbox -> label (not focusable) -> select, matching visual order, so
+  default browser tab order is already correct; no positive tabindex to
+  create a trap or skip.
+  Disabled checkboxes (`{{if or $e.Exists $e.IdenticalTo}}disabled{{end}}`)
+  render the real HTML `disabled` boolean attribute (confirmed in scan.html
+  output: `<input ... disabled class="...disabled:opacity-60">`) — genuinely
+  non-focusable/non-operable, not merely styled; `disabled:opacity-60` is
+  the Tailwind `:disabled` pseudo-class variant riding the real attribute,
+  not an independent visual-only fake.
+  Focus indicator: neither the new `<select>` nor the pre-existing checkbox
+  carries its own focus-ring/outline-none Tailwind classes beyond
+  `focus:ring-2 focus:ring-accent` (checkbox, pre-existing) and
+  `focus:ring-accent focus:border-accent` (new select) — both resolve
+  through the sitewide rule in web/static/css/styles.css:
+    input:focus, select:focus, textarea:focus {
+      outline: none; box-shadow: 0 0 0 2px rgb(var(--accent));
+    }
+  --accent (styles.css): light rgb(79,70,229) / dark rgb(165,180,252).
+  Ring contrast: light 6.29:1 vs white; dark 5.15:1 vs the select's own
+  gray-700 fill, 7.61:1 vs the card's gray-800 background — both ≥3:1.
+  No new JS shipped by this diff (`git diff master -- web/static/js/` is
+  empty) and no `autofocus` attribute added, so no keyboard trap and no
+  focus theft is introduced.
+  PASS.
+
+A-9 — never colour-only:
+  Detection: pre-selected `<option selected>` in each row's select (a
+  semantic, AT-announced state, not a colour cue). Ambiguity: literal text
+  "(could not detect the account — choose one)". Identical/skip: literal
+  text "(identical to <name>, will be skipped)". import-result: literal
+  "— imported" / "— skipped" / "— rejected" beside (not instead of) the
+  semantic colour class. All conditions are readable with colour removed.
+  PASS.
+
+A-10 — live regions / no focus theft:
+  #import-scan-list (`aria-live="polite" aria-busy="false"`) and
+  #import-result (`role="status" aria-live="polite"`) wrapper divs are
+  OUTSIDE the diff's single hunk (lines 65-102, confirmed unchanged by
+  `git diff master`); this task only changed what gets swapped *inside*
+  them. No JS touched, no autofocus added -> no focus theft introduced.
+  PASS.
+
+A-15 — target size, composed page, axe `target-size` rule (part of the
+  wcag22aa tag set already run above): 0 violations in the corroborated,
+  server-verified run (both themes) for the new select/checkbox row
+  controls. See DISCREPANCY note below for one earlier, non-reproduced run
+  that is not being relied on.
+  PASS.
+
+Accessible names / unique ids:
+  `<label for="import-account-{{$i}}">Account for {{$e.Name}}</label>` +
+  `<select id="import-account-{{$i}}">` — bound, names the specific file.
+  Ids indexed by `$i` (0..6 across the 7 rendered entries) -> unique;
+  confirmed in the real scan.html output (import-entry-0..6,
+  import-account-0..6, no collisions).
+  PASS.
+
+Regression walk (surfaces the change could break):
+  File-manager table after import: 17 rows (13 + 4 imported), correct new
+  filenames (usaa-credit-card_2026-07-01_to_2026-08-27.csv etc.), no
+  ZgotmplZ, no panic/stack-trace text in any fetched fragment.
+  Upload form (top of /filemanager, pre-existing, untouched): inside the
+  composed page, covered by the 0-violation axe run above.
+  /accounts "Unassigned files" after the import: renders the calm labelled
+  empty state ("Every CSV file in the data directory matches an account, or
+  no CSV files are present.") — A-13 — not an error/blank region; targeted
+  axe run (both themes) on that section: 0 violations.
+
+DISCREPANCY NOTE (for the record, not relied on for the verdict):
+  Mid-session the throwaway server died between tool calls (a plain
+  `nohup ... &` inside a foreground Bash call was reaped when that call
+  returned) and I didn't notice immediately; the next axe pass against
+  stale/partially-unreachable assets produced two inconsistent results —
+  one where light and dark showed identical (wrongly dark) computed
+  colours, and one showing a spurious 5-occurrence "target-size" violation
+  (nav logo, #theme-toggle-mobile, #mobile-nav-toggle, "Load Test Data"
+  link, "Clear All" button). I caught this by cross-checking axe's own
+  fgColor/bgColor between the two theme runs (they were identical, which is
+  impossible for a correctly-forced light vs dark render) and by re-curling
+  the CSS URL (000/timeout). I restarted the server with `run_in_background`
+  (survives across tool calls), re-fetched shell/scan/result fresh, verified
+  200s on /static/css/tailwind.css and /filemanager first, and re-ran
+  everything — the corroborated result (0 violations, contrast numbers that
+  independently match two different measurement methods: axe's own
+  color-contrast `any.data` and a getComputedStyle probe script dumped via
+  `google-chrome --headless=new --dump-dom`) is what this verdict is based
+  on. For completeness: even if the spurious 5 target-size hits had been
+  real, all 5 elements are confirmed byte-identical to master (`git diff
+  master -- web/templates/layouts/base.html` empty; filemanager.html's
+  "Load Test Data"/"Clear All" buttons at lines ~205-224, outside the
+  diff's only hunk at line 576) — PRE-EXISTING, would be an OBSERVATION,
+  not a FAIL for IM2 either way.
+
+OBSERVATIONS (non-blocking):
+  1. Axe "incomplete" color-contrast on the nav logo (`.text-xl` over a
+     gradient nav) — PRE-EXISTING (web/templates/layouts/base.html, 0-line
+     diff vs master). Axe cannot resolve a gradient background
+     automatically; out of scope for IM2.
+  2. The "(could not detect the account — choose one)" note is a DOM
+     sibling of its `<select>`, not bound via `aria-describedby`. It
+     satisfies A-9 (it's text, not colour-only) and sits immediately after
+     the select in reading order, so it's discoverable in browse/virtual-
+     cursor mode, but a screen-reader user who tabs directly select-to-
+     select may not hear it announced on focus. The constitution doesn't
+     require programmatic binding, so this isn't a FAIL — worth a backlog
+     line if the team wants to strengthen it (`aria-describedby` pointing
+     at the note's id).
+  3. This real fixture's four "detectable" exports were all successfully
+     detected, so the "(could not detect...)" string was never actually
+     rendered by the live server in this check — verified instead by
+     class-identity with the "(identical to ...)" string, which did render
+     and was measured directly (see A-3). The ambiguous-detection code path
+     itself is exercised by internal/handlers/explorer/im2_test.go /
+     handlers_test.go (not this checker's lane).
+
+Servers/processes: throwaway instance on 127.0.0.1:8977 stopped
+(confirmed via curl timeout post-session); its /tmp/im2-serve.* temp dirs
+are harmless leftovers outside the project tree. No files in the worktree
+or the main repo were modified by this check (read-only GET/POST calls to
+a throwaway instance over data/import copies only).

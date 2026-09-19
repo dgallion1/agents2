@@ -1,0 +1,104 @@
+VERDICT: PASS
+CHECKER: checker-tests
+FAMILY: anthropic
+TASK: IM1T
+ATTEMPT: 1
+---
+Scratch method: `cp -a /home/darrell/bin/ai/budget2/.worktrees/import-superseded
+<scratch>/wt` (and wt-mut, wt-mut2, wt-probe for mutations/probes).
+`diff -r <real>/internal <scratch>/wt/internal` -> "INTERNAL IDENTICAL". No git
+state command was run in the work tree beyond read-only `git status`/`git diff`.
+The real tree was never built, mutated, or tested in place.
+
+CRITERION 1 — the new test asserts the loaded set (3 rows, "Cross Pending"
+present) in the three intended constructions. MET.
+Command: `go test -count=1 -run 'TestDropSupersededPending_AC5b' -v
+./internal/services/dataloader/` (in <scratch>/wt, via `rtk proxy`), exit 0.
+The loader's own per-file log lines in that run prove each case's construction:
+  (a) "Loaded 1 transactions from usaa-checking-2026-04a.csv (account usaa-checking)"
+      + "Loaded 2 transactions from usaa-savings-2026-04b.csv (account usaa-savings)"
+      -> two DISTINCT accounts, both files matched (writeAccounts wrote both
+      usaa-checking / usaa-savings with FilePatterns usaa-checking*.csv /
+      usaa-savings*.csv; the fixture names match those patterns).
+  (b) "Loaded 2 transactions from random-newer.csv (unassigned: no account
+      matches this file)" + "...usaa-checking-2026-04a.csv (account usaa-checking)"
+      -> assigned pending file, UNASSIGNED newer covering file.
+  (c) "Loaded 1 transactions from random-older.csv (unassigned: ...)" +
+      "Loaded 2 transactions from usaa-checking-2026-04b.csv (account
+      usaa-checking)" -> unassigned pending file, ASSIGNED newer covering file.
+All three subtests PASS at baseline; "Total transactions after processing: 3"
+in each.
+Date/status/account facts asserted mechanically, not by reading, with a
+throwaway probe (<scratch>/wt-probe/internal/services/dataloader/zz_probe_test.go,
+since discarded — it was never written to the work tree) that dumps the loaded
+rows for case (a):
+  PROBE row desc="Cross Pending" file=usaa-checking-2026-04a.csv
+        account="usaa-checking" date=2026-04-01 status="Pending" pendingStatus=true
+  PROBE row desc="Cover Row"     file=usaa-savings-2026-04b.csv
+        account="usaa-savings"  date=2026-03-25 status="Posted" pendingStatus=false
+  PROBE row desc="Cover Row Two" file=usaa-savings-2026-04b.csv
+        account="usaa-savings"  date=2026-04-10 status="Posted" pendingStatus=false
+=> covering file coverage [2026-03-25, 2026-04-10] strictly covers the pending
+row's 2026-04-01, and its maxDate 2026-04-10 is strictly after the pending
+file's maxDate 2026-04-01 (rule (c)'s date half is satisfied; only the SAME
+account clause blocks the drop). The pending row really is pending
+(isPendingStatus("Pending")=true).
+Assertions read at superseded_pending_test.go:638-643: `len(ts.Transactions)
+!= 3` -> t.Fatalf, and `!containsDescription(descriptions(...), "Cross
+Pending")` -> t.Error. They assert what the test name claims.
+
+CRITERION 2 — mutation kill. MET.
+Mutation (in <scratch>/wt-mut, production file only): deleted the three lines
+        if g.accountID != f.accountID {
+                continue
+        }
+from isSupersededPending (superseded_pending.go:105-107).
+Command: `go test -count=1 -run TestDropSupersededPending_AC5b -v
+./internal/services/dataloader/` -> exit 1:
+  --- FAIL: .../assigned_pending_row,_newer_cover_in_another_account
+      superseded_pending_test.go:639: loaded 2 rows, want 3 (nothing may be
+      dropped): [Cover Row Cover Row Two]
+  --- PASS: .../assigned_pending_row,_unassigned_newer_cover
+  --- PASS: .../unassigned_pending_row,_assigned_newer_cover
+So case (a) fails and (b)/(c) still pass — stated plainly, exactly as the brief
+documents: coverage is only recorded for account-matched files, so the two
+unassigned cases are blocked before the accountID comparison is reached.
+Whole delivered suite under the SAME mutation: `go test -count=1 -v
+./internal/services/dataloader/` -> exit 1 with exactly ONE failing top-level
+test: TestDropSupersededPending_AC5b_OtherAccountsAndUnassignedFilesNeverSupersede.
+No pre-existing test in the package kills the same-account mutation => IM1T
+adds coverage, it does not duplicate it.
+Extra (not required, to show cases (b)/(c) are not inert): a second mutation in
+<scratch>/wt-mut2 deleting rule (b) entirely — loader.go records
+coverageOf("", ...) for unmatched files too AND isSupersededPending drops both
+`f.accountID == ""` and the same-account guard — makes ALL THREE subtests fail
+(all three report `loaded 2 rows, want 3 ... [Cover Row Cover Row Two]`). Under
+that mutation the pre-existing TestDropSupersededPending_AC5_UnassignedFiles-
+NeverParticipate also fails, i.e. it covers only the both-unassigned shape,
+which is why the new test was needed.
+
+CRITERION 3 — gates green, manifest test-only. MET.
+`go test -count=1 ./internal/services/dataloader/...` (in <scratch>/wt) ->
+  "ok  budget2/internal/services/dataloader  1.412s", exit 0.
+`gofmt -l internal/services/dataloader/superseded_pending_test.go` -> no output
+  (exit 0).
+`go vet ./internal/services/dataloader/` -> no issues, exit 0.
+Repo composite target `make check` (vet + staticcheck + govulncheck +
+css-verify + test) -> exit 0, final line "all checks passed"; "tailwind.css is
+up to date"; govulncheck "Your code is affected by 0 vulnerabilities".
+Cache defeated beyond make's cached lines: `go test -count=1 ./...` over the
+whole module -> exit 0, 50 "ok" package lines, zero FAIL lines.
+Manifest .swarm/manifests/IM1T.1.files contains exactly
+`internal/services/dataloader/superseded_pending_test.go` — a _test.go path, no
+production file.
+
+SCOPE
+`git status --porcelain --untracked-files=all` in the work tree returns exactly
+one line: ` M internal/services/dataloader/superseded_pending_test.go`. Nothing
+else modified, nothing untracked added; the diff is +82/-0, all inside the one
+new test function appended after line 564. IM1's commit dca7dfd is untouched.
+Note (fact, not a finding): the manifest path lies under the
+.swarm/critical.globs entry `internal/services/dataloader/**`, but .swarm/
+test.globs is absent so gate.sh's DEFAULT_TEST_GLOBS applies, and
+manifest_hits_glob counts only NON-TEST paths — a _test.go-only manifest is
+exempt from critical-glob escalation.

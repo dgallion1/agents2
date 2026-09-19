@@ -1,0 +1,150 @@
+VERDICT: PASS
+CHECKER: checker-second
+FAMILY: adversarial
+TASK: IM1
+ATTEMPT: 1
+---
+Scope: worktree /home/darrell/bin/ai/budget2/.worktrees/import-superseded
+(feat/import-superseded, uncommitted over 86d3a7c). `git status --porcelain`
+in the real worktree matches the manifest exactly (GLOSSARY.md,
+internal/services/dataloader/{loader.go,stable_id.go,stable_id_test.go},
+internal/services/mcpsvc/admin/files.go modified;
+internal/services/dataloader/superseded_pending{.go,_test.go} new). All
+probing done in a `cp -a` scratch copy; only write to the real tree is this
+verdict file.
+
+AC1 Rule / AC3 newest-keeps-own / AC4 uncovered-survives / AC6 equal-maxDate
+/ AC7 only-pending-dropped: the worker's own tests
+(TestDropSupersededPending_AC1/3/4/6/7) exercise these; re-ran them plus
+`isSupersededPending`'s logic by hand
+(internal/services/dataloader/superseded_pending.go:93-117) — rule (a)
+isPendingStatus, (b) F.accountID != "", (c) some OTHER file G with
+G.accountID==F.accountID, G.maxDate strictly after F.maxDate, and
+G.minDate<=R.Date<=G.maxDate (both inclusive: `t.Date.Before(g.minDate) ||
+t.Date.After(g.maxDate)` excludes only strictly-outside dates) — matches
+SPEC.md 2.1 exactly.
+
+AC2 decision inertness: worker's
+TestDropSupersededPending_AC2_DecisionInertWhenPendingSideDropped covers
+KEPT=P(pending,dropped)/SUPPRESSED=twin(posted,survivor) exactly as
+SPEC.md's AC2 fixture specifies. I additionally probed the REVERSE polarity
+the checker brief calls "today's pattern" (KEPT=posted twin,
+SUPPRESSED=pending row that gets dropped) with a real duplicate_decisions.json
+fixture — command: `go test ./internal/services/dataloader/... -run
+TestZZProbe_ReversedPolarityRealDecisionFile -v` — PASS: twin stays
+Suppressed=false, UnresolvedDuplicates()==0, SumAmount counts the twin. Root
+cause confirmed by code reading: applyDuplicateDetection's idxByIdentity is
+built from POST-drop txns (loader.go:1047-1076), so a decision naming the
+dropped row's identity is simply never matched — no panic, no
+misattribution (confirmed rekeyToStable's miss path,
+stable_id.go:177-195, leaves the map entry untouched on `!ok`).
+
+Also probed kept_both with a dropped side
+(TestZZProbe_KeptBothDecisionWithDroppedSideInert) — PASS, no error,
+KeptBothDuplicates()==0. undo_resolve
+(internal/services/mcpsvc/admin/undo.go) operates on the decisions JSON
+file directly via LookupDuplicateDecision/ClearDuplicateDecision, code this
+task does not touch and whose behavior on a decision naming a since-dropped
+row is unaffected by this change (no file corruption risk: it edits by
+key, not by resolving the row).
+
+AC5/6 unassigned + equal-maxDate: worker's AC5/AC6 tests plus my own two
+probes — command: `go test ./internal/services/dataloader/... -run
+'TestZZProbe_(DisabledFileDoesNotContributeCoverage|UnassignedFileNeverSupersedesAssigned)'
+-v` — both PASS: a DISABLED newer file (SetEnabledFiles excludes it, so it
+never enters the per-file loop that builds `coverage`, loader.go:320-352)
+contributes no coverage; an UNASSIGNED newer file (acct==nil, so never
+gets a `coverage[filename]` entry per loader.go:342-350) never supersedes
+an assigned file's pending row.
+
+Boundary equality: probed R.Date exactly at G.minDate and exactly at
+G.maxDate in one fixture — command: `go test
+./internal/services/dataloader/... -run TestZZProbe_BoundaryDatesInclusive
+-v` — both dropped (inclusive both ends, matching spec's <=).
+
+AC8 StableID stability / index: worker's
+TestDropSupersededPending_AC8_StableIDStabilityAndIndexOnIdenticalKeyCopies
+confirms survivor keeps |1 and stableIDIndex()[hash] points at |1.
+Confirmed by reading loader.go:362-380 and stable_id.go: stampStableIDs
+runs before the drop (occurrence numbers frozen pre-drop), buildStableIDIndex
+runs after (survivors only) — matches SPEC.md 2.1's exact requirement.
+
+AC9 transfers unaffected: worker's
+TestDropSupersededPending_AC9_TransfersUnaffected passed; also confirmed
+via the oracle's real-data `transfer_8448_legs` and `jul13_1495_legs`
+checks (both PASS against the live fixture with the drop stage active).
+
+AC10 log line: worker's
+TestDropSupersededPending_AC10_LogsSummaryLineOnlyWhenDropped covers both
+the present- and zero-drop cases; matches exactly
+(logDroppedSupersededPending, superseded_pending.go:123-141).
+
+AC11 ParseCSV refactor: the worker's new test
+(TestParseCSV_AC11_MatchesLoadCSVFileForAccount) is close to tautological
+since loadCSVFileForAccount now trivially delegates to ParseCSV — so I did
+the line-by-line diff the brief asked for instead:
+`git diff 86d3a7c -- internal/services/dataloader/loader.go`. Every step
+(column mapping / colIndex validation, Debit-Credit branch incl.
+parseDebitCredit sign convention, per-line Date/Amount/Description/
+Category/Status/OriginalDescription parsing, Hash compute, the sign-flip
+heuristic vs forcedByKind, the re-hash after flip, the two log lines, final
+AccountID stamping) is present, unreordered, with only `filepath.Base(filePath)`
+replaced by the already-identical `sourceFile` parameter. I additionally fed
+it inputs the worker's own test doesn't: a Debit/Credit-column CSV (no
+Amount column) — command: `go test ./internal/services/dataloader/... -run
+TestZZProbe_DebitCreditColumnsRoundTrip -v` — PASS, correct signs (Credit
+positive, Debit negative) and loadCSVFileForAccount/ParseCSV agree via
+reflect.DeepEqual.
+
+AC12 wording: grepped the tree myself —
+`grep -rn "merges exact duplicates\|Deduplicate\*\* exact" --include="*.md"
+--include="*.go" .` — matches only GLOSSARY.md (updated, load-pipeline step
+5) and internal/services/mcpsvc/admin/files.go (updated, list_data_files
+description); the only other hit is
+docs/superpowers/plans/2026-08-14-app-wide-mcp-phase-4a.md, a historical
+plan doc (CLAUDE.md: "existing ones are history to read", not live docs).
+Checked README.md and internal/services/mcpsvc/server.go's serverInstructions
+by hand for load-pipeline wording needing the new clause: both use only a
+generic "raw, unfiltered row counts... will not match search_transactions"
+statement with no enumerated list of causes, so neither matches the grep
+pattern and neither needed the new clause under AC12's literal, mechanical
+test. `go test ./internal/services/mcpsvc/...` green (command run,
+all ok).
+
+AC13 suite: ran independently in the scratch copy —
+`go build ./... && go vet ./... && go test -count=1 ./...` — all packages
+ok, no vet errors; `gofmt -l` on all 7 touched files empty; `make check`
+(vet, static, vuln, css-verify, test) exits with "✓ all checks passed".
+
+AC14 oracle: re-ran `.swarm/tier3/IM1/accept.sh
+/home/darrell/bin/ai/budget2/.worktrees/import-superseded` myself
+(independent of the lead's logged run) — 37/37 checks passed against the
+real MCP protocol surface (list_data_files, list_duplicates,
+search_transactions, get_transfers, etc. via actual JSON-RPC) on a copy of
+frozen live-shaped fixture data, final line `ORACLE PASS`.
+
+Consumer enumeration (recurring-defect-class #1, split classification):
+grepped for every csv.NewReader / ParseCSV / loadCSVFileForAccount site —
+only internal/services/dataloader/loader.go (the funnel) and
+internal/services/amazon/order.go (a different domain, Amazon order
+history, not bank CSVs) parse CSVs directly. accounts.BalanceAt/Freshness
+take a `txs []models.Transaction` parameter fed from the already-loaded
+set (dashboard/accounts_card.go, mcpsvc/ledger/accounts.go) — no
+independent re-parse. GetFileInfo/scanCSVMetadata is a separate raw
+per-file scan by design (its own MCP tool description already says "RAW
+row count from a fast scan of the file... will NOT match
+search_transactions") — not required to reflect the drop and not part of
+this task's contract (SPEC.md 2.1 scopes the new stage to LoadDataContext
+only).
+
+No defects found. Every criterion in SPEC.md's "IM1 acceptance criteria"
+holds under adversarial probing beyond what the worker's own tests cover.
+
+Backlog (not grounds for FAIL, beyond this task's scope):
+- README.md:136 ("You can upload multiple CSV files - they'll all be
+  loaded and deduplicated automatically") and server.go's
+  serverInstructions / README.md:431's generic list_data_files summary
+  could eventually gain the same clause GLOSSARY.md/files.go got, for a
+  reader who only sees the terse summary — but neither is a "known site"
+  under SPEC.md 2.1's own grep test, so leaving them is in-scope-defensible
+  for this task.

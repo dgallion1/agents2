@@ -1,0 +1,320 @@
+VERDICT: PASS
+CHECKER: checker-tests
+FAMILY: anthropic
+TASK: IM1
+ATTEMPT: 1
+---
+Method: worked in a `cp -a` copy of the worktree at
+/tmp/.../scratchpad/wt (plus mutation copies mut/mutA/probe/probeMut/probeMut3
+and a `git archive 86d3a7c` extraction at scratchpad/master). The only write to
+a real tree is this verdict file. No state-changing git command was run in
+/home/darrell/bin/ai/budget2/.worktrees/import-superseded.
+
+MANIFEST / SCOPE (checked first)
+  cmd: (worktree) git status --porcelain
+       -> M GLOSSARY.md; M internal/services/dataloader/loader.go;
+          M internal/services/dataloader/stable_id.go;
+          M internal/services/dataloader/stable_id_test.go;
+          M internal/services/mcpsvc/admin/files.go;
+          ?? internal/services/dataloader/superseded_pending.go;
+          ?? internal/services/dataloader/superseded_pending_test.go
+  cmd: rtk proxy git --no-pager diff --name-status 86d3a7c -- .
+     + rtk proxy git ls-files --others --exclude-standard
+       -> the same 5 modified + 2 untracked, nothing else.
+  cmd: rtk proxy git rev-parse HEAD 86d3a7c -> both 86d3a7cd8c84...
+       (work is UNCOMMITTED on top of the base; the working-tree diff above is
+        the real evidence).
+  Exactly the 7 manifest paths, no more. `internal/services/dataloader/**` is in
+  .swarm/critical.globs, which is why the task is Tier 3 — the tier permits it.
+
+AC1 — Rule (F pending covered by strictly newer G -> absent)
+  cmd: go test -count=1 -v -run TestDropSupersededPending ./internal/services/dataloader/
+       -> --- PASS: TestDropSupersededPending_AC1_DropsRowCoveredByStrictlyNewerExport
+  Read the test (superseded_pending_test.go:59-88): F = usaa-checking-2026-01a.csv
+  (pending 2026-01-03, maxDate 01-03), G = ...01b.csv (min 01-01, max 01-05).
+  Asserts len(ts.Transactions)==2 AND "Coffee Shop" absent. Asserts the criterion.
+  MUTATION PROOF (MUT-A: `return false` injected at the head of
+  isSupersededPending, feature inert) -> --- FAIL: ..._AC1_... . Test kills it.
+
+AC2 — Decision inertness
+  Test (:97-161) writes a duplicate_decisions.json kept_winner whose KeptHash is
+  P's StableID (|0) and SuppressedHash is the posted twin's (|1); asserts exactly
+  one row with the twin's StableID, twin.Suppressed == false,
+  len(loader.UnresolvedDuplicates()) == 0, and Active().SumAmount() == -23.00
+  (i.e. the twin IS counted). Matches the criterion field for field.
+  cmd: go test -count=1 -v -run TestDropSupersededPending ...
+       -> --- PASS: ..._AC2_DecisionInertWhenPendingSideDropped
+  MUTATION PROOF: MUT-A -> FAIL; MUT-K (stage moved after dedup) ->
+  "found 0 rows with StableID usaa-checking|2026-01-03|-2000|1, want exactly 1".
+  The MCP-surface half of the criterion ("list_duplicates 0 unresolved") is
+  additionally covered by the oracle: PASS dup_unresolved: expected 0 observed 0.
+
+AC3 — Newest export keeps its pending rows
+  Test (:166-191): a = Posted 2026-02-01 (max 02-01), b = Pending 2026-02-10
+  (max 02-10); asserts "New Pending" survives. Asserts the criterion.
+  cmd: go test ... -> --- PASS: ..._AC3_NewestExportKeepsItsOwnPendingRows
+  MUTATION PROOF (MUT-J: `if false` for both the strictly-newer test and the
+  coverage-window test, i.e. any other same-account file supersedes) ->
+  "--- FAIL: ..._AC3_...: New Pending (in the newest file for its account) was
+  dropped, want it to survive".
+
+AC4 — Uncovered pending rows survive (G.minDate > D)
+  Test (:196-222): P dated 2026-03-01, G covers 03-15..03-20. Asserts survival.
+  cmd: go test ... -> --- PASS: ..._AC4_UncoveredPendingRowSurvives
+  MUTATION PROOF (MUT-E: coverage-window test replaced with `if false`) ->
+  "--- FAIL: ..._AC4_...: Early Pending (dated before the newer file's coverage
+  begins) was dropped".
+
+AC5 — Unassigned files never participate  [criterion MET; see FINDING 1 on the test]
+  Test (:228-258) covers only the BOTH-files-unassigned case (no accounts
+  written). The criterion's second half — "an unassigned file never supersedes an
+  assigned one and vice versa" — is NOT asserted by the worker's test.
+  I proved the behavior myself with a throwaway probe
+  (scratchpad/probe/.../zz_checker_probe_test.go, TestCheckerProbe_MixedAssignedUnassigned):
+  4 files — assigned-older(pending 2026-01-03) + UNASSIGNED-newer covering it,
+  and unassigned-older(pending 2026-06-03) + ASSIGNED-newer covering it.
+  cmd: go test -count=1 -v -run TestCheckerProbe_MixedAssignedUnassigned ./internal/services/dataloader/
+       -> --- PASS; "loaded: [U One U Two Unassigned Pending Assigned Pending A One A Two]"
+       i.e. BOTH pending rows survive, as the criterion requires.
+  MUTATION PROOF of my probe (MUT-D: unassigned files given coverage under the
+  assigned account's ID + the `f.accountID == ""` guard removed) ->
+  "--- FAIL: Assigned Pending was dropped by an UNASSIGNED file ...;
+   Unassigned Pending was dropped ...; loaded: [U One U Two A One A Two]".
+  So the probe is a real guard and the branch behavior is correct.
+  The worker's AC5 test is also mutation-killed by MUT-D (--- FAIL: ..._AC5_...),
+  it is simply narrower than the criterion.
+
+AC6 — Equal maxDate never supersedes
+  Test (:263-289): two files, both maxDate 2026-05-10. Asserts "Equal Pending"
+  survives. cmd: go test ... -> --- PASS: ..._AC6_EqualMaxDateNeverSupersedes
+  MUTATION PROOF (MUT-C: `!g.maxDate.After(f.maxDate)` -> `g.maxDate.Before(f.maxDate)`,
+  i.e. equal now supersedes) -> "--- FAIL: ..._AC6_...: Equal Pending was dropped
+  by a file with an equal (not strictly later) maxDate".
+
+AC7 — Only pending status
+  Test (:295-334): older file has Posted/Cleared/empty/Scheduled/Pending rows all
+  dated 2026-06-01, newer file covers 05-30..06-15. Asserts all four non-pending
+  survive, Pending Row is dropped, and total == 6.
+  cmd: go test ... -> --- PASS: ..._AC7_OnlyPendingStatusDropped
+  MUTATION PROOF (MUT-H: isPendingStatus guard deleted) -> --- FAIL: ..._AC7_... .
+  Also MUT-A -> FAIL.
+  Read the classifier: isPendingStatus (near_duplicates.go:358) is
+  `s != "" && strings.Contains(s, "pending")` — "Scheduled"/"Cleared"/"" all
+  correctly excluded.
+
+AC8 — StableID stability + identical-key copies + index points at the survivor
+  Test (:344-397): F pending 2026-02-10 Coffee Shop -20.00; G has an identical
+  (date, desc, amount) Posted copy. Asserts exactly 1 Coffee Shop row, Status ==
+  "Posted", StableID == StableIDFor("usaa-checking", 2026-02-10, -2000, 1), and
+  loader.stableIDIndex()[survivor.Hash] == that |1 StableID.
+  I confirmed the two rows really do share one Hash: models.Transaction.ComputeHash
+  (transaction.go:106) hashes date|lowercased-desc|%.2f amount — Status is NOT in
+  the hash, so the index assertion is meaningful rather than vacuous.
+  cmd: go test ... -> --- PASS: ..._AC8_StableIDStabilityAndIndexOnIdenticalKeyCopies
+  MUTATION PROOF (MUT-F: setStableIndex(buildStableIDIndex(...)) moved to BEFORE
+  the drop) ->
+    "stableIDIndex()[7786177c239479a9] = usaa-checking|2026-02-10|-2000|0,
+     want usaa-checking|2026-02-10|-2000|1"
+  — the index assertion is specifically load-bearing, not incidental.
+  MUTATION PROOF (MUT-K: drop stage moved after deduplicateTransactions) ->
+    "found 0 Coffee Shop rows, want exactly 1" — confirms SPEC 2.1's
+  before-dedup rationale empirically (the purchase would vanish entirely).
+
+AC9 — Transfers unaffected
+  Test (:402-457): checking pair leg -300.00 + credit leg (kind credit, flipped to
+  +300.00) 1 day apart, alongside a dropped pending "Random Charge". Asserts the
+  pending copy is dropped AND both legs are TransactionType Transfer,
+  TransferClass "paired", with equal non-empty TransferPairKey.
+  cmd: go test ... -> --- PASS: ..._AC9_TransfersUnaffected
+  MUTATION PROOF: MUT-A -> FAIL; MUT-K -> "found 0 Random Charge rows, want 1".
+  Real-data half: oracle PASS transfer_8448_legs: expected
+  [['usaa-checking','paired','1c65f93c177c'],['usaa-credit-card','paired','1c65f93c177c']]
+  observed identical, and PASS jul13_1495_legs: expected 1 observed 1.
+
+AC10 — Log line once per load with breakdown; zero drops log nothing
+  Test (:462-515) captures log output, asserts it contains
+  "Dropped 1 superseded pending rows" and "usaa-checking-2026-01a.csv: 1", then
+  reloads a nothing-to-drop fixture and asserts the buffer contains no "Dropped".
+  cmd: go test ... -> --- PASS: ..._AC10_LogsSummaryLineOnlyWhenDropped
+  The worker's test uses Contains, not a count, so I asserted on the RENDERED
+  string and its multiplicity myself (TestCheckerProbe_LogLineExactlyOncePerLoad,
+  4 files / 2 accounts / 3 drops):
+  cmd: go test -count=1 -v -run TestCheckerProbe_LogLineExactlyOncePerLoad ./internal/services/dataloader/
+    -> PASS, exactly 1 matching line, rendered as:
+       "Dropped 3 superseded pending rows (usaa-checking-a.csv: 2, usaa-credit-a.csv: 1)"
+    (total correct, multi-file breakdown correct, files sorted).
+  MUTATION PROOF of the silence half (MUT-L: `if total == 0 { return }` deleted)
+  -> "--- FAIL: ..._AC10_...: log output should be silent on zero drops".
+
+AC11 — ParseCSV refactor
+  Delegation, read in source: loader.go:440-447 loadCSVFileForAccount now only
+  opens the file and `return ParseCSV(file, filepath.Base(filePath), acct)`;
+  ParseCSV is at loader.go:467 with the exported signature
+  `ParseCSV(r io.Reader, sourceFile string, acct *models.Account) ([]models.Transaction, error)`.
+  New test (:522-564) parses the same bytes through both paths and compares with
+  reflect.DeepEqual over the whole []models.Transaction (so Hash, Status,
+  SourceFile, AccountID and sign are all covered), for a credit-kind account and
+  for acct == nil.
+  cmd: go test -count=1 -v -run TestParseCSV_AC11 ./internal/services/dataloader/
+       -> --- PASS: TestParseCSV_AC11_MatchesLoadCSVFileForAccount
+  MUTATION PROOF (MUT-N: loadCSVFileForAccount passes nil instead of acct)
+       -> --- FAIL: TestParseCSV_AC11_MatchesLoadCSVFileForAccount
+  "existing dataloader tests unchanged": the ONLY edit to an existing test file is
+  a 1-line COMMENT in stable_id_test.go:529 ("LoadData runs assignStableIDs" ->
+  "LoadData stamps StableIDs"); no assertion changed.
+  cmd: rtk proxy git --no-pager diff -- internal/services/dataloader/stable_id_test.go
+       -> a single -/+ pair, both comment lines.
+  cmd: go test -count=1 ./internal/services/dataloader/ -> ok (2.130s in make check).
+
+AC12 — Wording
+  cmd: grep -rn "merges exact duplicates\|Deduplicate\*\* exact\|exact duplicates" \
+         --include=*.go --include=*.md .
+    branch -> GLOSSARY.md:184 (the **Deduplicate** step, now numbered 6) and
+              stable_id.go:84 (a code comment about dedup, not a loading blurb).
+    master (same grep, on the 86d3a7c extraction) -> GLOSSARY.md:175 and
+              stable_id.go:61. Same two sites.
+  Both spec-enumerated sites carry the clause:
+   - GLOSSARY.md: a NEW step 5 "**Drop superseded pending rows**: loading drops
+     pending rows that a newer export for the same account supersedes -- ..." and
+     steps 5-9 correctly renumbered to 6-10. I verified the renumbering is
+     complete and consistent (branch list reads 1..10 with no gaps or repeats) and
+     that no text anywhere references the pipeline steps BY NUMBER
+     (cmd: grep -n "step [0-9]\|Step [0-9]\|stage [0-9]" GLOSSARY.md -> no output,
+      on branch and on master).
+   - internal/services/mcpsvc/admin/files.go:34, whose RENDERED description now
+     reads "... loading drops internal transfers, merges exact duplicates, drops
+     pending rows that a newer export for the same account supersedes, and
+     suppresses rows the user resolved as near-duplicates, ..." — the exact clause
+     is present and the sentence still reads correctly.
+  Worker's server.go claim CHECKED and CORRECT: cmd:
+    grep -rn "drops\|dropped\|load time\|at load" internal/services/mcpsvc/server.go
+  -> the only drop-on-load text in serverInstructions is "...unlike the old
+  drop-on-load filter the rows REMAIN in the ledger and are visible through
+  get_transfers", which is about the TRANSFER filter, not about which rows load.
+  Leaving it alone is right.
+  cmd: grep -rn "merges exact\|duplicates, and suppresses\|RAW row count" \
+         --include=*_test.go internal/ (on master) -> no output: no server_test.go
+  pin on that wording exists, so nothing was missed there.
+  cmd: go test -count=1 ./internal/services/mcpsvc/... -> all 8 packages ok.
+
+AC13 — Suite
+  cmd: go build ./... -> BUILD_EXIT=0
+  cmd: go vet ./...   -> VET_EXIT=0
+  cmd: go test -count=1 ./... -> FULL_TEST_EXIT=0, 50 "ok" package lines, no FAIL
+       (cache defeated with -count=1).
+  cmd: gofmt -l <the 6 touched .go files> -> empty output (clean).
+       loader_test.go's pre-existing master drift is untouched, per the brief.
+  cmd: make check -> MAKE_CHECK_EXIT=0 (target is `vet static vuln css-verify
+       test` — the repo's real composite gate, not just build+test).
+
+AC14 — Oracle
+  cmd: bash .swarm/tier3/IM1/accept.sh /home/darrell/bin/ai/budget2/.worktrees/import-superseded
+       -> "== 37/37 checks passed" / "ORACLE PASS", exit 0. Independently
+       reproduces the lead's oracle.1.log.
+  ORACLE NOT VACUOUS — I re-ran the same oracle against a copy with the feature
+  inert (MUT-A):
+       -> "== 14/37 checks passed" / "ORACLE FAIL", with e.g.
+          "FAIL roam_pending_89_08: expected False observed True",
+          "FAIL unmatched_count: expected 1 observed 0".
+       14/37 matches the lead's recorded base-end validation exactly.
+  Gate preconditions I could see: accept.sh is mode -rwxrwxr-x (executable),
+  oracle.1.log exists with final line exactly "ORACLE PASS", and there is NO
+  report.md in .swarm/tier3/IM1/ (so the legacy blind-arm contract is not armed).
+
+DEFECT-CLASS HUNT (constitution)
+ 1. SPLIT CLASSIFICATION — the "is this row superseded" decision lives in exactly
+    ONE place. cmd: grep -rn "isSupersededPending\|dropSupersededPending" --include=*.go .
+    -> isSupersededPending has ONE caller (dropSupersededPending, superseded_pending.go:83);
+       dropSupersededPending has ONE caller (loader.go:377, inside LoadDataContext).
+    cmd: grep -rn "supersede\|Supersede" --include=*.go internal/ | grep -v superseded_pending | grep -v _test
+    -> no parallel implementation anywhere (remaining hits are unrelated prose in
+       transaction_pins.go, whatif/handlers.go, retirement tax comments, plus the
+       files.go wording).
+    I ENUMERATED the consumers rather than trusting the diff:
+    cmd: grep -rn "loadCSVFileForAccount\|loadCSVFile(\|ParseCSV(" --include=*.go .
+    -> outside dataloader's own tests, the ONLY production caller of the parser is
+       loader.go:336 inside LoadDataContext. No surface parses CSVs on its own.
+    cmd: per-package tally of `LoadDataContext(|.LoadData()` vs
+         `NewTransactionSet(|ParseCSV(` over dashboard, insights, explorer,
+         transfers, duplicates, majorexpenses, mcpsvc/{spend,ledger,curate,admin}
+    -> every one sources its data from the loader; the only three
+       NewTransactionSet( call sites in consumers (explorer/handlers.go:94,
+       dashboard/handlers.go:690, mcpsvc/spend/search.go:74) re-wrap an
+       ALREADY-LOADED, filtered slice — none re-parses. So every surface reads the
+       post-drop set by construction.
+    Surface-level confirmation from the oracle on frozen real data:
+      search_transactions (all_total 1606, aug/mar/nov/dec/mar windows),
+      list_duplicates (dup_unresolved 0), get_transfers (2 windows),
+      get_accounts (all three balances), list_major_expenses (5 expenses +
+      delivery, totals and counts), list_exceptions (unmatched rows), and
+      list_data_files raw counts STAYING raw (files_raw_rows 2837 vs all_total
+      1606) — 37/37.
+ 2. ORDER-OF-STAGES — on master (86d3a7c extraction, loader.go:349-366) NOTHING
+    ran between assignStableIDs and deduplicateTransactions except
+    setStableIndex; the branch inserts only the drop + buildStableIDIndex there.
+    No other stage now sees a shorter slice.
+    stableIDIndex publication on EVERY exit path: cmd: grep -n "setStableIndex"
+    on both trees -> 3 call sites on each. The two early-exit paths (no CSV files,
+    loader.go:293; zero rows parsed, :357) still publish nil exactly as on master;
+    only the main path changed (:380, built from SURVIVORS). No path leaves the
+    index stale.
+    setUnassignedCount is computed at loader.go:420, i.e. AFTER the drop, from the
+    final slice (and unassigned rows are never dropped, so the figure is
+    unchanged either way).
+ 3. ZERO-DATE COVERAGE POISONING — probed, not reasoned.
+    cmd: go test -count=1 -v -run TestCheckerProbe_ZeroDateSurvival ./internal/services/dataloader/
+    (a) an UNPARSEABLE date string -> the row is SKIPPED by the parser
+        (loader.go:525-528 `continue`): 2 input rows -> 1 parsed row. No zero Date
+        can reach coverage this way.
+    (b) a record SHORTER than the Date column index -> the guard
+        `idx < len(record)` (loader.go:522) is skipped and the row IS kept with a
+        zero Date: probe logged desc="Row C" dateZero=true.
+    (c) coverageOf over that mixed slice -> min=2026-01-09 max=2026-01-09, i.e.
+        the zero-date row is IGNORED, because coverageOf uses IsZero() as its
+        "unset" sentinel. Coverage is NOT poisoned. (An all-zero-date file gets
+        min=max=zero, which can neither supersede — zero is never After a real
+        maxDate — nor be superseded — a zero Date is never >= a real minDate.)
+ 4. DISABLED FILES — proved, not assumed.
+    Probe TestCheckerProbe_DisabledFileNoCoverage: SetEnabledFiles keeps only the
+    OLDER file; the superseding newer file is skipped at loader.go:329-331 BEFORE
+    coverage is recorded at :350.
+    cmd: go test -count=1 -v -run TestCheckerProbe_DisabledFileNoCoverage ./internal/services/dataloader/
+    -> PASS, "loaded with newer file disabled: [Coffee Shop]" — the pending row
+       survives, as it must.
+    MUTATION PROOF of that probe (disabled files made to contribute coverage) ->
+    "--- FAIL: Coffee Shop dropped although the superseding file is DISABLED".
+
+FINDINGS (none of these is a criterion failure)
+ F1 (AC5, test-coverage gap in the work — criterion still MET): the worker's
+    AC5 test asserts only the both-files-unassigned case. The criterion's
+    "an unassigned file never supersedes an assigned one and vice versa" is
+    unasserted by the delivered suite. The BEHAVIOR is correct — I proved it with
+    a mutation-killed probe (see AC5 above). Recommend promoting
+    TestCheckerProbe_MixedAssignedUnassigned into the suite as a test-only
+    follow-up (V3 pattern) so the evidence outlives this verdict.
+ F2 (defect in SPEC.md, a LEAD artifact — backlog, not a worker FAIL):
+    SPEC.md:249 (criterion 8) says "the stage runs after `assignStableIDs` and
+    `deduplicateTransactions`, before `classifyTransfers`", which CONTRADICTS
+    SPEC.md:110-111 and :117-123 ("BEFORE `deduplicateTransactions`" plus the
+    Cybernet/Chateau rationale) and the dispatch brief. The implementation follows
+    2.1 and the brief. MUT-K is the proof that 2.1 is the correct reading and the
+    AC8 parenthetical is the error: with the stage after dedup, AC1/AC2/AC8/AC9
+    all fail and the Coffee Shop purchase disappears entirely
+    ("found 0 Coffee Shop rows, want exactly 1").
+ F3 (observation, PRE-EXISTING on master, outside this task): a CSV record with
+    fewer fields than the Date column index keeps a row with a zero Date
+    (loader.go:522). It is harmless for IM1 (see hunt item 3), but it is a latent
+    parser wart worth a backlog line.
+ F4 (observation on the criterion's own tooling): AC12's literal grep no longer
+    matches files.go on the branch because the edit splits "merges exact " /
+    "duplicates, ..." across two Go source lines — but it did not match on master
+    either, for the same pre-existing split. Both spec-enumerated wording sites
+    are in fact handled; the grep is just an imperfect enumerator. No action on
+    the worker.
+
+SCOPE: clean. Exactly the 7 manifest paths changed, nothing else in the tree.
+`internal/services/dataloader/**` is in .swarm/critical.globs and is permitted at
+this task's Tier 3. The foreign territories named in the brief (the budget2 main
+checkout, .worktrees/apply-names, .claude/worktrees/*) were not read into any
+evidence here; all commands ran against a cp -a copy of the IM1 worktree or a
+`git archive 86d3a7c` extraction.

@@ -1,0 +1,154 @@
+VERDICT: PASS
+CHECKER: checker-second
+FAMILY: adversarial
+TASK: IM2
+ATTEMPT: 1
+---
+Scope confirmed: `git status --short` in the worktree matches the manifest
+exactly (handlers.go, handlers_test.go, import_binding_race_test.go,
+filemanager.html modified; im2_test.go and internal/services/importer/ new).
+
+Attacks attempted against AC1-AC7, AC9 (AC8 a11y excluded, checker-a11y's lane):
+
+1. WRONG-ACCOUNT ASSIGNMENT (real data). Ran the actual "full" and
+   "preupload" fixture variants via serve.sh (ports 18099/18199/18299,
+   isolated tmp instances, never touched :8080). Scanned all 7 real
+   browser-named exports (`bk_download*.csv`, `creditCard24-25.csv`)
+   against the real accounts.json/ledger. All 7 detected correctly:
+   checking-leg files (bk_download (1), (5)) -> usaa-checking; the 5-row
+   health export (bk_download (2)) -> usaa-health-checking; the four
+   credit exports -> usaa-credit-card. Specifically verified the
+   checking-vs-credit transfer-leg collision the task named: checking's
+   "USAA Credit Card"/-8448.62/2026-09-08 row and credit's "Credit Card
+   Payment"/-8448.62/2026-09-04 row differ on BOTH date and normalized
+   description, so they never share a txnKey — confirmed via
+   `grep -n "8448.62" usaa-credit_2026-07-01_to_2026-09-18.csv` against
+   the checking export's own line. No misdetection found. (One self-raised
+   false alarm ruled out before filing, see below.)
+   POST-imported the 4 non-identical real files end to end (curl against
+   the live throwaway instance); outcomes and generated names were all
+   correct: `imported as usaa-credit-card_2026-07-01_to_2026-08-27.csv
+   (USAA Credit Card)`, etc. Confirmed AC7: after import,
+   `loader.UnassignedCount()`-backed Accounts page "Unassigned files"
+   section shows "Every CSV file in the data directory matches an
+   account...".
+
+2. Self-raised, self-refuted false alarm (rule 6 discipline). Built a
+   probe file from 3 real Pending rows of `creditCard24-25.csv`
+   (Amazon 54.98 etc.) after importing that file in an isolated instance,
+   and got "could not detect" on rescan. Traced this to IM1's
+   `dropSupersededPending` correctly dropping those exact Pending rows
+   (a newer real credit file in the preupload fixture covers that date
+   range) BEFORE Detect ever sees them — this is literally the IM1
+   oracle's own Amazon-54.98-absent assertion, not an IM2 defect. Redid
+   the probe with 3 Posted rows from the same file: detection was
+   immediate and correct (`usaa-credit-card selected`), on a freshly
+   restarted, single-import isolated instance. This closes attack #9
+   (stale ledger) as PASS: `loadLedgerOrEmpty()`/`loader.LoadData()`
+   re-globs and re-parses every call, no cache staleness.
+
+3. Ambiguity handling (attack #3). Unit-level: `TestDetect_Ambiguous_
+   ListsBothNamesSorted` confirms both names, sorted. Template level:
+   `web/templates/pages/filemanager.html` gates both "no match" and
+   "ambiguous" on the same `{{if eq $e.Detected ""}}` branch, rendering
+   the generic "(could not detect the account — choose one)" text and
+   pre-selecting `unassigned` — never a candidate account — which matches
+   SPEC.md §2.2's own wording ("ambiguous/no-match shown as text...")
+   verbatim; this is spec-compliant, not a bug, even though no dedicated
+   handler-level test exercises the ambiguous branch (importer_test.go
+   covers it at the pure-function level; the template branch is identical
+   code for both reasons, so the handler-level "no match" test in
+   im2_test.go exercises the same rendering path).
+
+4. Naming/suffix/MatchFile (attack #4). `TestHandleImport_AccountChosen_
+   SuffixesOnNameCollisionWithDifferentContent` and `...PatternMismatch
+   Rejected` cover the two required paths; `saveUnderDetectedName`
+   re-verifies MatchFile on the suffixed name before writing (code read),
+   so a pattern that stops matching after a `_2` suffix is rejected, not
+   silently written — confirmed by code path, not by a dedicated test for
+   that exact combination (minor coverage gap, not a functional defect).
+
+5. Identical-content / encrypted store (attack #5). Confirmed
+   `existingDataCSVs()` reads data-dir files via `store.ReadFile` (the
+   encryption-aware path) while import-folder source reads use
+   `os.ReadFile` (correct — import dir is outside the encrypted data
+   dir, same choice `defaultImportDeps.readSource` already makes).
+   `ContentIdentical` is exact-sha256, so a CRLF/trailing-newline variant
+   correctly does NOT match and instead exercises the suffix path
+   (by design per spec).
+
+6. Sign independence (attack #6). `usesCreditCardSignConvention` requires
+   >=10 non-zero rows before flipping; below that a small credit export is
+   left in its original convention. `Detect`'s absolute-cents key makes
+   the match sign-independent regardless of which way ParseCSV happens to
+   go — verified by reading both `keyFor`/`absCents` and the loader's
+   `minSignConventionSample` gate, plus the existing
+   `TestDetect_CreditKindSignFlip_StillMatchesOnAbsoluteCents` unit test.
+
+7. Concurrency (attack #7). Re-read `import_binding_race_test.go`'s IM2
+   widening: it still asserts exactly one goroutine reports "imported"
+   per round (10 rounds x 16 goroutines), now tolerating either
+   "already exists" or "identical to race.csv" as the loser's reason.
+   Ran it 5x with `-race`: all green. Traced the theoretical "two
+   different-content files both land under different generated names"
+   case: since `Name()` is a pure function of (accountID, rows) and
+   identical bytes always parse to identical rows, two truly
+   byte-identical imports always compute the SAME destination name and
+   the second write always fails on `store.CreateExclusive`'s OS-level
+   exclusivity (or is caught earlier by ContentIdentical) — no path
+   found that writes duplicate content under two different names.
+
+8. Hostile/malformed inputs (attack #8). Live-tested against a running
+   throwaway instance: empty.csv, a non-CSV renamed .csv, a CSV with no
+   Date column, and a 20MB/400k-row CSV. Scan returned 200 in all cases
+   (fastest ~24ms, huge-file case ~0.86s), server stayed responsive
+   afterward, and POST /explorer/import rejected the three malformed
+   files cleanly with no 500s. (An earlier 100MB-file run showed the
+   server exit; traced to the harness's own 2-minute command timeout
+   killing the backgrounded server process — the log showed a graceful
+   "shutting down", not a panic, and the in-flight scan request still
+   completed and returned 200 in 4.1s before the process exited. Not a
+   product defect.)
+
+9. Wording sites (attack #10). Searched README.md, GLOSSARY.md, docs/,
+   and accounts.html for stale import/upload copy — no stale claims about
+   "same name" or "rename to..." need updating; IM1's wording-site list
+   was IM1-scoped (pending-drop description) and unaffected by IM2.
+
+Build/test evidence:
+- `go build ./...` clean, `go vet ./...` clean.
+- `go test ./internal/services/importer/... ./internal/handlers/explorer/...` -> both packages `ok`.
+- `go test -race -run TestImportOneFile_ProductionWriteBindingIsExclusive ./internal/handlers/explorer/... -count=1` x5 -> all `ok`.
+- `make css-verify` -> "tailwind.css is up to date" (no drift, satisfies AC9).
+- `make test` (full suite) -> all packages `ok`, including storage/dataloader/mcpsvc.
+
+Two pre-existing (not IM2-introduced) modified tests reviewed and found to
+be legitimate adaptations, not regression-hiding: handlers_test.go's
+`good.csv` content change (needed once ContentIdentical exists, so the test
+still proves "an unrelated valid file still imports" rather than
+accidentally colliding with dupe.csv's bytes); import_binding_race_test.go's
+widened accepted-reason set (both reasons still prove the same OS-level
+exclusivity invariant: exactly 1 "imported" outcome).
+
+No FAIL-worthy defect found inside IM2's scope.
+
+BACKLOG (observations, not grounds for FAIL — pre-existing/out-of-scope):
+- The browser upload path's per-file `Reason` text (e.g. "saved unassigned:
+  could not detect the account...") is computed correctly but is NEVER
+  rendered to the user: `handleFileUpload`'s own code comment says
+  "filemanager-file-list ignores .Results and only renders .Files"
+  (confirmed identical at 2b3bafd, pre-IM2), and `dashboard.js`'s
+  `uploadFile()` discards the response body entirely, showing only a
+  generic "success" toast before reloading. AC6's "spelled-out reason" is
+  satisfied at the Go/JSON level (which is what TestHandleFileUpload_*
+  asserts) but a real user dragging a file onto /filemanager currently has
+  no way to see WHY a file was saved unassigned. This predates IM2
+  (dashboard.js is not in the manifest) and IM2's spec explicitly excludes
+  "a picker on the upload form" — flagging for the backlog, not a FAIL.
+- No dedicated handler-level test renders the "ambiguous" (as opposed to
+  "no match") scan branch, and no dedicated test combines a suffix
+  collision with a pattern that only matches the un-suffixed name. Both
+  paths are covered by code-reading + the identical shared branches/
+  re-verify call already tested for the adjacent case; worth a follow-up
+  test-only task (V3-pattern) if the run wants belt-and-suspenders
+  coverage on these two exact combinations.
