@@ -1,0 +1,16 @@
+scan entries: 7
+  bk_download (1).csv: select=usaa-checking identical_to='usaa-checking_2026-05-05_to_2026-08-12.csv' disabled=True
+  bk_download (2).csv: select=usaa-health-checking identical_to='usaa-health_2026-06-11_to_2026-08-11.csv' disabled=True
+  bk_download (3).csv: select=usaa-credit-card identical_to='' disabled=False
+  bk_download (4).csv: select=usaa-credit-card identical_to='usaa-credit_2026-07-01_to_2026-09-18.csv' disabled=True
+  bk_download (5).csv: select=usaa-checking identical_to='usaa-checking_2026-07-06_to_2026-09-14.csv' disabled=True
+  bk_download.csv: select=usaa-credit-card identical_to='usaa-credit_2026-05-01_to_2026-08-12.csv' disabled=True
+  creditCard24-25.csv: select=usaa-credit-card identical_to='usaa-credit_2024-08-02_to_2025-11-18.csv' disabled=True
+PASS scan identical bk_download.csv: {'selected': 'usaa-credit-card', 'identical_to': 'usaa-credit_2026-05-01_to_2026-08-12.csv', 'disabled': True, 'text': ' bk_download.csv (25K) 2026-05-01 - 2026-08-12 (identical to usaa-credit_2026-05-01_to_2026-08-12.csv, will be skipped) Account for bk_download.csv USAA Checking USAA Health Checking (*7977) USAA Credit Card Unassigned ('}
+PASS scan identical bk_download (1).csv: {'selected': 'usaa-checking', 'identical_to': 'usaa-checking_2026-05-05_to_2026-08-12.csv', 'disabled': True, 'text': ' bk_download (1).csv (4K) 2026-05-05 - 2026-08-12 (identical to usaa-checking_2026-05-05_to_2026-08-12.csv, will be skipped) Account for bk_download (1).csv USAA Checking USAA Health Checking (*7977) USAA Credit Card Una'}
+PASS scan identical bk_download (2).csv: {'selected': 'usaa-health-checking', 'identical_to': 'usaa-health_2026-06-11_to_2026-08-11.csv', 'disabled': True, 'text': ' bk_download (2).csv (0K) 2026-06-11 - 2026-08-11 (identical to usaa-health_2026-06-11_to_2026-08-11.csv, will be skipped) Account for bk_download (2).csv USAA Checking USAA Health Checking (*7977) USAA Credit Card Unass'}
+PASS scan identical bk_download (4).csv: {'selected': 'usaa-credit-card', 'identical_to': 'usaa-credit_2026-07-01_to_2026-09-18.csv', 'disabled': True, 'text': ' bk_download (4).csv (19K) 2026-07-01 - 2026-09-18 (identical to usaa-credit_2026-07-01_to_2026-09-18.csv, will be skipped) Account for bk_download (4).csv USAA Checking USAA Health Checking (*7977) USAA Credit Card Unas'}
+PASS scan identical bk_download (5).csv: {'selected': 'usaa-checking', 'identical_to': 'usaa-checking_2026-07-06_to_2026-09-14.csv', 'disabled': True, 'text': ' bk_download (5).csv (3K) 2026-07-06 - 2026-09-14 (identical to usaa-checking_2026-07-06_to_2026-09-14.csv, will be skipped) Account for bk_download (5).csv USAA Checking USAA Health Checking (*7977) USAA Credit Card Una'}
+PASS scan identical creditCard24-25.csv: {'selected': 'usaa-credit-card', 'identical_to': 'usaa-credit_2024-08-02_to_2025-11-18.csv', 'disabled': True, 'text': ' creditCard24-25.csv (70K) 2024-08-02 - 2025-11-18 (identical to usaa-credit_2024-08-02_to_2025-11-18.csv, will be skipped) Account for creditCard24-25.csv USAA Checking USAA Health Checking (*7977) USAA Credit Card Unas'}
+PASS scan detects bk_download (3).csv -> usaa-credit-card: usaa-credit-card
+== ALL PASS

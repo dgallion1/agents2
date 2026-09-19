@@ -1,0 +1,41 @@
+== build /home/darrell/bin/ai/budget2/.worktrees/import-superseded
+== probe
+PASS all_total: expected 1606 observed 1606
+PASS amazon_count: expected 358 observed 358
+PASS amazon_total: expected 23726.9 observed 23726.9
+PASS aug_outflow_sum: expected -9366.35 observed -9366.35
+PASS aug_outflow_total: expected 80 observed 80
+PASS balances: expected {'usaa-checking': 13808.9, 'usaa-credit-card': -10873.65, 'usaa-health-checking': 4772.08} observed {'usaa-checking': 13808.9, 'usaa-credit-card': -10873.65, 'usaa-health-checking': 4772.08}
+PASS chateau_0429_count: expected 1 observed 1
+PASS chick_pending_36_86: expected False observed False
+PASS chick_posted_41_98: expected True observed True
+PASS christine_count: expected 3 observed 3
+PASS christine_total: expected 474.04 observed 474.04
+PASS cybernet_1230_count: expected 1 observed 1
+PASS dec29_38_73: expected False observed False
+PASS delivery_count: expected 2 observed 2
+PASS delivery_total: expected 179.52 observed 179.52
+PASS dup_unresolved: expected 0 observed 0
+PASS eating_out_count: expected 100 observed 100
+PASS eating_out_total: expected 4017.3 observed 4017.3
+PASS files_count: expected 16 observed 16
+PASS files_raw_rows: expected 2837 observed 2837
+PASS fiveguys_grubhub_rows: expected [['2025-11-16', -48.0, 'Eating out — restaurants & fast food'], ['2025-12-01', -58.0, 'Eating out — restaurants & fast food'], ['2026-01-20', -59.0, 'Eating out — restaurants & fast food'], ['2026-02-14', -59.0, 'Eating out — restaurants & fast food'], ['2026-05-02', -59.0, 'Eating out — restaurants & fast food'], ['2026-07-13', -58.0, 'Eating out — restaurants & fast food'], ['2026-07-13', -3.0, 'Eating out — restaurants & fast food']] observed [['2025-11-16', -48, 'Eating out — restaurants & fast food'], ['2025-12-01', -58, 'Eating out — restaurants & fast food'], ['2026-01-20', -59, 'Eating out — restaurants & fast food'], ['2026-02-14', -59, 'Eating out — restaurants & fast food'], ['2026-05-02', -59, 'Eating out — restaurants & fast food'], ['2026-07-13', -58, 'Eating out — restaurants & fast food'], ['2026-07-13', -3, 'Eating out — restaurants & fast food']]
+PASS groceries_count: expected 272 observed 272
+PASS groceries_total: expected 28052.49 observed 28052.49
+PASS ignore_count: expected 1 observed 1
+PASS ignore_total: expected -3 observed -3
+PASS jul13_1495_legs: expected 1 observed 1
+PASS mar_22_17_neg: expected False observed False
+PASS mar_22_17_pos: expected False observed False
+PASS mar_sum: expected -2484.25 observed -2484.25
+PASS mar_total: expected 17 observed 17
+PASS nov16_54_98: expected False observed False
+PASS roam_pending_89_08: expected False observed False
+PASS roam_posted_104_08: expected True observed True
+PASS sep_live_count: expected 6 observed 6
+PASS transfer_8448_legs: expected [['usaa-checking', 'paired', '1c65f93c177c'], ['usaa-credit-card', 'paired', '1c65f93c177c']] observed [['usaa-checking', 'paired', '1c65f93c177c'], ['usaa-credit-card', 'paired', '1c65f93c177c']]
+PASS unmatched_count: expected 1 observed 1
+PASS unmatched_rows: expected [['2026-05-01', -64.5, 'Membership']] observed [['2026-05-01', -64.5, 'Membership']]
+== 37/37 checks passed
+ORACLE PASS

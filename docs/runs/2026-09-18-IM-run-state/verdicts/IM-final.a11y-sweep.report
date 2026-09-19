@@ -1,0 +1,188 @@
+VERDICT: PASS
+CHECKER: checker-a11y
+FAMILY: anthropic
+TASK: IM-final
+ATTEMPT: 1
+---
+
+FULL-SITE ACCESSIBILITY SWEEP (constitution "before declaring done" pass, not a
+task verdict). Tree: /home/darrell/bin/ai/budget2/.worktrees/import-superseded
+@ e5a92dd (master 86d3a7c + IM1 dca7dfd + IM1T 2b3bafd + IM2 e5a92dd, clean,
+read-only — no checkout/stash/reset/clean run there).
+
+SCOPE (git diff 86d3a7c --stat, whole tree):
+  GLOSSARY.md, internal/handlers/explorer/{handlers.go,handlers_test.go,
+  im2_test.go,import_binding_race_test.go}, internal/services/dataloader/
+  {loader.go,stable_id.go,stable_id_test.go,superseded_pending.go,
+  superseded_pending_test.go}, internal/services/importer/*,
+  internal/services/mcpsvc/admin/files.go — Go only, no markup.
+  web/templates/pages/filemanager.html — the ONLY web/ file touched (26+/10-,
+  one hunk @@ -576,16 +576,32 @@: the import-scan partial gained a per-file
+  <select> + <label> + "(identical to ...)"/"(could not detect...)" status
+  text). No CSS, no JS, no other template changed anywhere in the tree
+  (`git diff 86d3a7c --stat -- web/` confirmed = filemanager.html only).
+  This partial is IDENTICAL to what IM2's checker-a11y already hand-audited
+  (current HEAD e5a92dd IS the IM2 commit) — see
+  .swarm/verdicts/IM2.1.checker-a11y.verdict, PASS, 0 violations both themes,
+  by-hand A-3/A-4/A-5/A-9/A-15 walk of exactly this markup. Relied on that
+  prior audit rather than re-measuring by hand, per the task's own
+  "if identical and it passed on a previous run's sweep, say so" allowance.
+
+METHOD
+  Started the lead's throwaway instance via serve.sh (full/frozen-live-data
+  variant, port 8965, run_in_background — a plain `nohup ... &` inside a
+  foreground Bash call is reaped when that call returns, per prior-run
+  lesson; confirmed with curl 200 on /dashboard and /static/css/tailwind.css
+  before composing anything). GET-fetched all 9 server-rendered pages
+  (dashboard/explorer/filemanager/accounts/transfers/duplicates/insights/
+  major-expenses/whatif; "/" redirects 307 to /dashboard, confirmed in
+  cmd/server/main.go — not a distinct page) plus the HX-Request:true
+  fragment for GET /explorer/import/scan (7 entries: 6 identical/disabled +
+  1 checked/detected on this frozen data — different mix than IM2's fixture
+  variant but same markup shape).
+  Composed each page x {light, dark}: forced the real theme class onto
+  <html> and neutralized the boot theme-detection script. IMPORTANT: the
+  boot script's own HTML COMMENT ("<!-- Theme initialization... -->") is
+  stripped by html/template server-side (the documented "don't anchor on
+  comments" trap) — my first compose pass anchored on that comment and hit
+  0/1 matches on every page; fixed by anchoring the neutralizing regex on
+  the actual <script>...localStorage.getItem('theme')... content instead,
+  confirmed by grep on the raw fetched HTML before proceeding.
+  Spliced the scan fragment into filemanager's #import-scan-list (regex
+  innerHTML swap, matching what htmx produces). Opened one major-expenses
+  row (Amazon, 358 matched txns) by setting its tbody's data-open="true" and
+  the toggle button's aria-expanded="true" — the exact attribute pair
+  internal/../major-expenses.js's setRowOpen() sets client-side; the detail
+  <tr> (a real <table> of matched transactions, A-7) is server-rendered
+  already, CSS-only hidden via `tbody[data-open="false"] > tr.detail-row
+  {display:none}`, so this reproduces the opened state faithfully without
+  executing page JS (tracing, not running, per this lane's job).
+  Added <base href="http://127.0.0.1:8965/"> so absolute /static/... paths
+  resolve against the live instance's real built stylesheet.
+  Ran `npx @axe-core/cli` (v4.13.0) with --tags wcag2a,wcag2aa,wcag22aa on
+  all 18 composed files.
+  HARNESS BUG CAUGHT AND DISCARDED: the first parallel batch used a
+  *relative* `file://$f` path per invocation; Chrome/axe silently resolved
+  that to its own internal error page (host="composed" is not a valid
+  file:// authority) and reported an IDENTICAL bogus 1-violation
+  "meta-viewport / user-scalable=no" on all 18 outputs — the reported
+  offending <meta> HTML (`maximum-scale=1.0, user-scalable=no`) does not
+  exist anywhere in raw/ or composed/ output (verified by grep), which is
+  what exposed it as a harness artifact rather than a real defect. Re-ran
+  with `file://$(pwd)/...` (absolute paths) and got materially different,
+  self-consistent results — those are what this verdict is based on.
+
+PER-PAGE TABLE (axe violations / incomplete, both themes; "identical to
+master" = `git diff 86d3a7c -- <template>` empty)
+
+  Page            Theme  Violations  Incomplete  Template vs master 86d3a7c
+  dashboard       light  0           1           identical (0-diff)
+  dashboard       dark   0           1           identical
+  explorer        light  0           2           identical
+  explorer        dark   0           2           identical
+  filemanager     light  0           1           CHANGED this run (audited
+                                                  at IM2, see SCOPE above)
+  filemanager     dark   0           1           CHANGED this run
+  accounts        light  0           1           identical
+  accounts        dark   0           1           identical
+  transfers       light  0           1           identical
+  transfers       dark   0           1           identical
+  duplicates      light  0           1           identical
+  duplicates      dark   0           1           identical
+  insights        light  0           1           identical
+  insights        dark   0           1           identical
+  major-expenses  light  0           1           identical
+  major-expenses  dark   0           1           identical
+  whatif          light  0           1           identical
+  whatif          dark   1           1           identical (see below)
+
+  Zero violations on every page in both themes EXCEPT whatif-dark (1). That
+  one violation traces to markup byte-identical to master 86d3a7c
+  (web/templates/pages/whatif.html AND components/whatif/guardrails.html
+  both confirmed 0-diff) — PRE-EXISTING, not introduced or replicated by
+  this run (which touched only filemanager.html + Go backend). Per this
+  checker's scope rule and this task's own instruction ("pre-existing items
+  go [in OBSERVATIONS], not into the verdict, with evidence that they
+  predate this run"), it is reported below as an OBSERVATION, not a FAIL.
+
+  duplicates queue: "Unresolved" section renders "No unresolved candidate
+  pairs." (raw/duplicates.html:191) — a calm, labelled, in-band empty
+  state, A-13, not a stack trace or blank region.
+
+OBSERVATIONS (non-blocking; none affect the VERDICT above)
+
+  1. PRE-EXISTING, real, dark-theme-only contrast bug (found by this
+     sweep, not this run): whatif page, "Adjust spending rules manually"
+     <summary> (web/templates/components/whatif/guardrails.html, 0-diff vs
+     master). It carries no text-color class at all
+     (`class="cursor-pointer rounded font-medium focus:outline
+     focus:outline-2 focus:outline-accent"`), so it inherits the browser
+     default black text. Its ancestor card is `bg-white dark:bg-gray-800`.
+     In light theme that's black-on-white — fine. In dark theme axe
+     measured fgColor #000000 on bgColor #292524 = 1.38:1 (need 4.5:1) —
+     axe rule color-contrast, impact "serious". This is exactly the
+     ACCESSIBILITY.md A-2 failure mode in its own words ("a control
+     readable in one theme and invisible in the other is a FAIL, not a
+     nitpick") — genuinely fails A-2/A-3, but predates this run entirely
+     (guardrails.html and whatif.html are both byte-identical to master
+     86d3a7c; no IM/IM1/IM1T/IM2 commit touches whatif.html,
+     components/whatif/, or any CSS). Recommend a backlog task: add e.g.
+     `text-gray-800 dark:text-gray-100` (or the sitewide heading-color
+     token) to that <summary>'s class list. Confirmed not a JS-driven
+     state — no script in web/static/js/ references this element's class
+     or color; the composed page's forced class="dark" reproduces exactly
+     what the real boot script would leave on <html> in a real browser.
+
+  2. Same pre-existing axe "incomplete" nav-logo item IM2's checker already
+     recorded: `.text-xl`/`.md:text-2xl` (the SAME <a> element — Tailwind's
+     responsive class split just gives axe two selectors for one node) over
+     `<nav class="bg-gradient-to-r ...">` — axe cannot resolve a CSS
+     gradient background, "messageKey: bgGradient". base.html 0-diff vs
+     master. Present on every page. Not re-measured by hand (out of scope
+     per this task's instruction — only markup changed this run needs
+     hand-verified contrast).
+
+  3. whatif page also shows 2 more pre-existing "incomplete" color-contrast
+     items (`.rounded-l` "ACA $1,655", `.rounded-r` "Medicare $800" —
+     web/templates/components/whatif/healthcare-person.html, 0-diff),
+     axe messageKey "elmPartiallyObscured" (adjacent flex siblings — a
+     known axe limitation on side-by-side rounded bars, not evidence of an
+     actual contrast failure). Static, non-interactive presentational
+     divs — no keyboard/target-size implication. Out of scope, inherited.
+
+  4. explorer page shows one extra pre-existing "incomplete":
+     th-has-data-cells on `.border-b > table` (explorer's ledger table,
+     JS-populated) — axe can't statically confirm data cells exist before
+     JS runs. explorer.html 0-diff vs master; out of scope.
+
+  5. transfers page's Plotly-rendered SVG trend chart produces ~18
+     "incomplete" color-contrast sub-nodes (axis labels, legend, titles) —
+     axe cannot reliably sample SVG text color against the chart's
+     internal fills. Pre-existing chart mechanism, 0-diff vs master;
+     out of scope, consistent with prior runs' treatment of Plotly output.
+
+  6. explorer.html omits the sitewide <footer> (0 `<footer>` matches vs 1
+     on every other page). Traced to a deliberate, pre-existing conditional
+     in base.html (`{{if ne .ActiveTab "explorer"}}` wraps the footer,
+     0-diff vs master) — the explorer page intentionally runs full-height
+     (`h-screen overflow-hidden`) without one. Noting for the record only;
+     not a finding, base.html not touched this run.
+
+  7. A-6 structure (exactly one <h1>, header/main present, no skipped
+     heading level) verified by direct grep on every fetched page: h1
+     count = 1 on all 9; filemanager (the one changed template) goes
+     h1 -> h2 -> h2 -> h2 -> h2, no skip. All templates but filemanager.html
+     are 0-diff vs master, so this is confirmation of an inherited
+     property, not new evidence about this run's change.
+
+  8. axe's "bypass" (skip-link) rule passed on every page (in the `passes`
+     array of every JSON) — base.html 0-diff, inherited.
+
+Servers/processes: throwaway instance (127.0.0.1:8965, /tmp/im2-serve.*)
+stopped and confirmed down via curl timeout. Live :8080 process (pid
+145868, /home/darrell/bin/ai/budget2/budget2) was never touched — verified
+by pid/path before and after. No files in the worktree or the main repo
+were modified by this sweep; only write was this verdict file, listed
+below. Composed HTML/axe JSON/logs live under this session's scratchpad
+(/tmp/claude-1000/.../scratchpad/im-sweep/{raw,composed,results}) and are
+not part of the project tree.

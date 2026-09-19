@@ -1,0 +1,96 @@
+{
+ "all_total": 1606,
+ "amazon_count": 358,
+ "amazon_total": 23726.9,
+ "aug_outflow_sum": -9366.35,
+ "aug_outflow_total": 80,
+ "balances": {
+  "usaa-checking": 13808.9,
+  "usaa-credit-card": -10873.65,
+  "usaa-health-checking": 4772.08
+ },
+ "chateau_0429_count": 1,
+ "chick_pending_36_86": false,
+ "chick_posted_41_98": true,
+ "christine_count": 3,
+ "christine_total": 474.04,
+ "cybernet_1230_count": 1,
+ "dec29_38_73": false,
+ "delivery_count": 2,
+ "delivery_total": 179.52,
+ "dup_unresolved": 0,
+ "eating_out_count": 100,
+ "eating_out_total": 4017.3,
+ "files_count": 16,
+ "files_raw_rows": 2837,
+ "fiveguys_grubhub_rows": [
+  [
+   "2025-11-16",
+   -48.0,
+   "Eating out — restaurants & fast food"
+  ],
+  [
+   "2025-12-01",
+   -58.0,
+   "Eating out — restaurants & fast food"
+  ],
+  [
+   "2026-01-20",
+   -59.0,
+   "Eating out — restaurants & fast food"
+  ],
+  [
+   "2026-02-14",
+   -59.0,
+   "Eating out — restaurants & fast food"
+  ],
+  [
+   "2026-05-02",
+   -59.0,
+   "Eating out — restaurants & fast food"
+  ],
+  [
+   "2026-07-13",
+   -58.0,
+   "Eating out — restaurants & fast food"
+  ],
+  [
+   "2026-07-13",
+   -3.0,
+   "Eating out — restaurants & fast food"
+  ]
+ ],
+ "groceries_count": 272,
+ "groceries_total": 28052.49,
+ "ignore_count": 1,
+ "ignore_total": -3,
+ "jul13_1495_legs": 1,
+ "mar_22_17_neg": false,
+ "mar_22_17_pos": false,
+ "mar_sum": -2484.25,
+ "mar_total": 17,
+ "nov16_54_98": false,
+ "roam_pending_89_08": false,
+ "roam_posted_104_08": true,
+ "sep_live_count": 6,
+ "transfer_8448_legs": [
+  [
+   "usaa-checking",
+   "paired",
+   "1c65f93c177c"
+  ],
+  [
+   "usaa-credit-card",
+   "paired",
+   "1c65f93c177c"
+  ]
+ ],
+ "unmatched_count": 1,
+ "unmatched_rows": [
+  [
+   "2026-05-01",
+   -64.5,
+   "Membership"
+  ]
+ ]
+}

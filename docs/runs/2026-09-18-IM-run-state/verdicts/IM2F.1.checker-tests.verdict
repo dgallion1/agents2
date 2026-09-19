@@ -1,0 +1,144 @@
+VERDICT: PASS
+CHECKER: checker-tests
+FAMILY: anthropic
+TASK: IM2F
+ATTEMPT: 1
+---
+All work verified in `cp -a` copies under the session scratchpad
+(.../scratchpad/s1 = clean copy, m1/m2/m2b/m3/m3b = mutants). The real
+worktree /home/darrell/bin/ai/budget2/.worktrees/import-superseded was only
+read (go test / go build write nothing into it); its `git status --porcelain`
+is unchanged from dispatch. Scratch copy proven byte-identical to the work
+product: `cmp` on importer.go, importer_test.go, im2_test.go, handlers.go —
+all "IDENTICAL".
+
+CRITERION 1 — Detect counts DISTINCT shared keys. PASS
+  Production change (rtk proxy git diff e5a92dd -- internal/services/importer/importer.go):
+    +fileKeys := make(map[txnKey]bool, len(rows)) ; for _, r := range rows {fileKeys[keyFor(r)] = true}
+    +shared := make(map[string]int) ; for k := range fileKeys { ... }
+  Test passes on the delivered tree:
+    $ go test -count=1 -v -run TestDetect_RepeatedCoincidentalKey_DoesNotReachThreshold ./internal/services/importer/
+      --- PASS: TestDetect_RepeatedCoincidentalKey_DoesNotReachThreshold (0.00s)
+    Test body asserts BOTH halves the criterion names: one shared key x3 ->
+    {AccountID:"" Reason:"no match"}, and the control
+    Detect(threeSharedRows(""), threeSharedRows("checking")) -> AccountID=="checking".
+  MUTATION MUT-1 (scratchpad/m1): loop reverted verbatim to per-row counting
+    (`shared := make(map[string]int); for _, r := range rows { k := keyFor(r)`).
+    $ cd m1 && go test -count=1 ./internal/services/importer/
+      --- FAIL: TestDetect_RepeatedCoincidentalKey_DoesNotReachThreshold (0.00s)
+          importer_test.go:279: got {AccountID:checking AccountName:USAA Checking Reason:},
+              want no match: one distinct shared key repeated three times is still one key
+      FAIL  budget2/internal/services/importer   EXIT=1
+    WHICH OTHER TESTS FAIL UNDER MUT-1: NONE. The importer package run above
+    reports exactly one FAIL line, and
+    $ cd m1 && go test -count=1 ./internal/handlers/explorer/ ./internal/services/dataloader/
+      ok budget2/internal/handlers/explorer 0.631s / ok budget2/internal/services/dataloader 1.440s  EXIT=0
+    i.e. the new test is the ONLY guard on this behaviour — it earns its place.
+  AMBIGUITY + THRESHOLD UNCHANGED: pre-existing
+    TestDetect_Ambiguous_ListsBothNamesSorted (3 distinct keys vs two accounts ->
+    "ambiguous: USAA Checking, USAA Savings") and TestDetect_TwoSharedKeys_NoMatch
+    (2 distinct -> "no match") are green in the full run below, and were not edited
+    (`git diff --numstat e5a92dd` shows importer_test.go = 28 added / 0 deleted).
+    Additionally a throwaway boundary probe (written, run, then deleted from s1)
+    asserted four cases and PASSED on the delivered tree:
+      (a) 2 distinct keys with repeats (5 rows) -> "no match"
+      (b) 3 distinct + duplicate rows -> AccountID=="checking"
+      (c) same file vs two accounts -> "ambiguous: USAA Checking, USAA Savings"
+      (d) ledger-side duplicates do not inflate (1 shared key -> "no match")
+    The probe discriminates: the same file under MUT-1 fails on (a)
+      zz_probe_test.go:21: (a) 2 distinct keys w/ repeats: got {AccountID:checking ...}, want no match
+
+CRITERION 2 — suffixed name re-verified against patterns. PASS
+  $ go test -count=1 -v -run TestHandleImport_AccountChosen_SuffixedNameIsReverifiedAgainstPatterns ./internal/handlers/explorer/
+      --- PASS (0.01s)
+  Read the test (internal/handlers/explorer/im2_test.go:505-546): account acct3
+  with FilePatterns == [the exact base name], base pre-written with different
+  content; it asserts Status=="rejected"; Reason == exactly
+  "account Acct Three has no file pattern matching acct3_2026-01-01_to_2026-01-05_2.csv;
+   add the pattern on the Accounts page" (the _2 name); mustNotExist(_2 name);
+  base file bytes read back and compared to collisionContent; mustExist(source in
+  the import dir). mustExist/mustNotExist are real Lstat assertions
+  (handlers_test.go:2576-2588), not no-ops.
+  MUTATION MUT-2 (scratchpad/m2): the SECOND `accounts.MatchFile(accts, finalName)
+  != acct.ID` block inside saveUnderDetectedName deleted (python replace asserted
+  count==1, so the first guard was untouched).
+    $ cd m2 && go test -count=1 -v -run ...SuffixedNameIsReverified... ./internal/handlers/explorer/
+      im2_test.go:532: Status="imported" want rejected
+          (reason "imported as acct3_2026-01-01_to_2026-01-05_2.csv (Acct Three)")
+      --- FAIL  ... EXIT=1   (exactly one FAIL in the whole package run)
+  NEGATIVE ASSERTION PROVEN LIVE (not shadowed by the Status Fatalf): MUT-2b =
+  MUT-2 plus relaxing only this test's Status/Reason asserts to t.Logf:
+      im2_test.go:539: a refused import must write nothing: expected
+        /tmp/.../001/acct3_2026-01-01_to_2026-01-05_2.csv to be absent, got err=<nil>
+  i.e. mustNotExist is anchored on exactly the byte path the mutant writes.
+  filepath/path.Match semantics confirmed by reading
+  internal/services/accounts/accounts.go:291-311 (accountMatches = case-insensitive
+  path.Match, then a plain substring fallback) and by executing both tests in a
+  throwaway Go program:
+      pattern="acct3_2026-01-01_to_2026-01-05.csv" name=".._to_2026-01-05.csv"   path.Match=true  substring=true  -> claims=true
+      pattern="acct3_2026-01-01_to_2026-01-05.csv" name=".._to_2026-01-05_2.csv" path.Match=false substring=false -> claims=false
+  So an exact-name pattern claims only the base. (Note: the code uses path.Match,
+  not filepath.Match as the brief worded it — identical for a basename.)
+
+CRITERION 3 — upload no-match never picks the first account. PASS
+  $ go test -count=1 -v -run TestHandleFileUpload_NoMatchWithAccountsConfigured_NeverPicksFirstAccount ./internal/handlers/explorer/
+      Found 2 CSV files ... Loaded 3 transactions from acctA_... (account acctA)
+      Loaded 3 transactions from acctB_... (account acctB)  Total transactions after processing: 6
+      --- PASS (0.01s)
+  The log lines prove the precondition F4 was about is real this time: TWO accounts
+  seeded AND a 6-row ledger actually loaded (the IM2 version seeded zero accounts).
+  Test asserts Status=="saved", Reason == exactly "saved unassigned: could not
+  detect the account (use the import folder to choose one, or rename to an account
+  pattern)", mustExist(dataDir/mystery2.csv), mustNotExist(acctA_2026-04-01_to_2026-04-30.csv),
+  mustNotExist(acctB_2026-04-01_to_2026-04-30.csv).
+  MUTATION MUT-3 (scratchpad/m3): after `det := importer.Detect(...)` in
+  uploadOneFile, `if det.AccountID == "" && len(accts) > 0 { det.AccountID = accts[0].ID }`.
+    $ cd m3 && go test -count=1 -v -run ...NeverPicksFirstAccount ./internal/handlers/explorer/
+      im2_test.go:582: Reason="saved as acctA_2026-04-01_to_2026-04-30.csv (Account A)" want "saved unassigned: ..."
+      im2_test.go:584: the original name must be used: expected .../mystery2.csv to exist, got ... no such file
+      --- FAIL ... EXIT=1  (exactly one FAIL in the package)
+  MUT-3b (accts[1] instead) kills it too, and shows the SECOND negative assertion's
+  path is the exact one a second-account mutant writes:
+      im2_test.go:582: Reason="saved as acctB_2026-04-01_to_2026-04-30.csv (Account B)"
+
+CRITERION 4 — suite, formatting, vet, make check, real-data checks. PASS
+  $ cd s1 && go test -count=1 ./...            -> EXIT=0, every package "ok"
+     (includes importer 0.005s, explorer, dataloader, storage 69.0s)
+  $ gofmt -l internal/services/importer/importer.go internal/services/importer/importer_test.go internal/handlers/explorer/im2_test.go
+     -> no output (clean)
+  $ go vet ./...                                -> no output, EXIT=0
+  $ cd s1 && make check                         -> "✓ all checks passed", EXIT=0
+     (target = vet static vuln css-verify test, Makefile:84)
+  $ python3 .../\.swarm/tier3/IM2-fixture/check.py <worktree> preupload
+     -> last line "== ALL PASS", EXIT=0 (17 data files, 4 imported under generated
+        names, "no browser-named file in data dir", "accounts page: no unassigned files")
+  $ python3 .../check.py <worktree> full
+     -> last line "== ALL PASS", EXIT=0
+  Logs teed to the scratchpad (nothing written under .swarm/tier3). python3 difflib
+  comparison of my logs vs the stored ones: 0 diff lines against
+  check.preupload.IM2F.log AND check.full.IM2F.log (reproducible), and 0 diff lines
+  against check.preupload.1.log — the PRE-IM2F run — which is the direct evidence
+  that switching from per-row to distinct-key counting changed NO real-data
+  detection outcome.
+  "Existing tests unchanged": `rtk proxy git diff --numstat e5a92dd` =
+     87/0 im2_test.go, 9/2 importer.go, 28/0 importer_test.go — both test files are
+     pure appends (zero deletions); the only 2 deleted lines are the replaced
+     Detect loop header.
+
+SCOPE
+  `git status --porcelain` in the worktree lists exactly the three manifest files
+  and nothing untracked: internal/handlers/explorer/im2_test.go,
+  internal/services/importer/importer.go, internal/services/importer/importer_test.go.
+  Manifest == git status. No path in .swarm/critical.globs is touched (the globs are
+  storage/**, dataloader/**, retirement/engine/**, transfers/**, accounts/accounts.go,
+  mcpsvc/confirm/** — importer/ and handlers/explorer/ are in none of them), so the
+  Tier-2 assignment holds and no escalation trigger fires from the manifest.
+  My only write to a real tree is this verdict file.
+
+OBSERVATIONS (not findings; no criterion implicated)
+  O1. accounts.accountMatches has a substring fallback, so a pattern like "acct3"
+      WOULD claim acct3_..._2.csv. The suffix guard therefore bites only for
+      patterns that exclude the suffix (exact names, anchored globs). The new test
+      deliberately uses the exact-name case; this is design, not a defect.
+  O2. The brief says filepath.Match; the implementation uses path.Match. Equivalent
+      for a basename with no separator.

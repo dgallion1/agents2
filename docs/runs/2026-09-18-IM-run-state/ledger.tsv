@@ -1,0 +1,5 @@
+# task_id	tier	checks	status	attempt	worker	reason
+IM1	3	tests,second	accepted	1	worker-coder	gate-ok-tier3-attempt-1: oracle 37/37 + tests PASS + second PASS; primary caught SPEC AC8 wording defect (lead artifact) + AC5 test gap -> IM1T
+IM2	2	tests,a11y,second	accepted	1	worker-coder	gate-ok-tier2-attempt-1: tests PASS (F1 rows-vs-keys wording, F2/F4 probe promotions, F3 TOCTOU pre-existing, F5 lead 4.2 error), a11y PASS, second PASS
+IM1T	1	tests	accepted	1	lead	gate-ok-tier1-attempt-1; cross-account case is the only package test killing the same-account mutation
+IM2F	2	tests	accepted	1	lead	gate-ok-tier2-attempt-1; three mutations each killed only by the new test; real-data check unchanged

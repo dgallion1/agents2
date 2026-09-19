@@ -1,0 +1,329 @@
+VERDICT: PASS
+CHECKER: checker-tests
+FAMILY: anthropic
+TASK: IM2
+ATTEMPT: 1
+---
+All work verified in a `cp -a` scratch copy at
+/tmp/claude-1000/-home-darrell-work-agents2--claude-worktrees-budget2-expense-matching-5ad85f/0b88ddc7-7213-49b1-bbfb-ac76af88c0ab/scratchpad/im2
+(the 7 manifest files verified byte-identical to the worktree with `cmp -s`
+after all mutation work; the worktree's own `git status --porcelain` at the
+end is still exactly the manifest). The real tree's only write from me is
+this verdict file.
+
+NOTE ON A FALSE START: my first `cp -a` produced a stale pre-IM2 tree; the
+green build/vet/test/make-check from that copy were discarded and every
+result below was re-run against the verified-identical copy.
+
+========================= AC1 — Detection unit tests =========================
+PASS.
+  cmd: go test -count=1 -v ./internal/services/importer/  -> 16 --- PASS, ok 0.003s
+Read internal/services/importer/importer_test.go line by line; the five AC1
+cases are each asserted, not merely named:
+  - unique match          TestDetect_UniqueMatch (exactly 3 shared keys, one account;
+                          asserts AccountID=="checking", AccountName=="USAA Checking",
+                          Reason=="")
+  - ambiguous             TestDetect_Ambiguous_ListsBothNamesSorted
+                          (asserts Reason=="ambiguous: USAA Checking, USAA Savings")
+  - 0-2 shared keys       TestDetect_TwoSharedKeys_NoMatch / _ZeroSharedKeys_NoMatch
+  - credit-kind sign flip TestDetect_CreditKindSignFlip_StillMatchesOnAbsoluteCents
+                          (every sign inverted; still detects "checking")
+  - empty ledger          TestDetect_EmptyLedger_NoMatch
+plus TestDetect_UnassignedLedgerRows_NeverCount and
+TestDetect_FirstEverExportForNewAccount_NoMatch.
+
+MUTATION KILLS (each applied to the scratch copy, then reverted):
+  MUT-1 `const minSharedKeys = 3` -> `= 1`
+        -> --- FAIL: TestDetect_TwoSharedKeys_NoMatch
+  MUT-2 `const minSharedKeys = 3` -> `= 4`
+        -> --- FAIL: TestDetect_UniqueMatch, _Ambiguous_ListsBothNamesSorted,
+           _CreditKindSignFlip_StillMatchesOnAbsoluteCents,
+           _ReasonNeverMentionsUnknownAccount  AND 4 handler tests
+           (TestHandleImportScan_WithRenderer_AccountSelectAndDetectionText,
+            _JSONFallback_CarriesDetectionFields,
+            TestHandleFileUpload_UniqueDetectionRenamesWithReason,
+            TestHandleImport_DetectedImportResultsInZeroUnassigned)
+  MUT-3 `absCents`: `math.Round(math.Abs(amount)*100)` -> `math.Round(amount*100)`
+        -> --- FAIL: TestDetect_CreditKindSignFlip_StillMatchesOnAbsoluteCents,
+           TestAbsCents_SignIndependent
+The >= 3 threshold and the sign-independence are both genuinely guarded.
+
+FINDING F1 (AC1, spec-wording deviation, behaviour more permissive than
+SPEC §2.2): §2.2 says "count shared KEYS per account"; Detect counts matching
+ROWS (importer.go:110-118 increments `shared[id]` once per candidate ROW that
+hits the account's key SET). A single distinct coincidentally-shared key
+repeated 3x in the import file therefore reaches the threshold. Probe
+(scratch, since removed):
+  ledger  = {2026-01-01 Amazon -9.99 [checking], 2026-01-20 Utterly Unrelated -123.45 [checking]}
+  candidate = the Amazon row 3x + 2 unrelated rows
+  Detect(...) -> {AccountID:checking AccountName:USAA Checking Reason:}
+Under the spec's literal reading that should be "no match" (one shared key).
+No AC1 case enumerates this, and the real-data check detects correctly, so I
+do not read it as a FAIL — it is a lead ruling on wording vs implementation.
+
+========================= AC2 — Naming / MatchFile / suffix =========================
+PASS.
+  cmd: go test -count=1 -v ./internal/services/importer/ ./internal/handlers/explorer/
+  - Exact spec string: TestName_DateRange asserts
+    Name("usaa-credit-card", rows) == "usaa-credit-card_2026-07-01_to_2026-09-18.csv"
+  - MatchFile refusal with an `other*.csv`-only account:
+    TestName_MismatchedPatternDoesNotSelfMatch (unit) and
+    TestHandleImport_AccountChosen_PatternMismatchRejected (handler), the latter
+    asserting the exact reason
+    "account Acct Two has no file pattern matching acct2_2026-02-01_to_2026-02-10.csv; add the pattern on the Accounts page"
+  - `_2` suffix on same-name-different-content:
+    TestHandleImport_AccountChosen_SuffixesOnNameCollisionWithDifferentContent
+    asserts the destination `acct1_2026-01-01_to_2026-01-05_2.csv` holds the
+    source bytes AND that the colliding file was not modified.
+
+MUTATION KILLS:
+  MUT-4 delete the first `accounts.MatchFile(accts, newName) != acct.ID` guard
+        in saveUnderDetectedName
+        -> --- FAIL: TestHandleImport_AccountChosen_PatternMismatchRejected
+  MUT-5 suffix loop assigns `finalName = newName` instead of `= candidate`
+        -> --- FAIL: TestHandleImport_AccountChosen_SuffixesOnNameCollisionWithDifferentContent
+
+FINDING F2 (AC2, test weaker than its own comment — IM1T/ruling-2026-09-18b
+shape). AC2's third clause, "re-verifies the suffixed name", is IMPLEMENTED
+(handlers.go, the second `accounts.MatchFile(accts, finalName) != acct.ID`
+inside the collision branch) but is NOT guarded by any test:
+  MUT-4b delete that second guard -> `go test -count=1 ./internal/handlers/explorer/`
+         -> `ok  budget2/internal/handlers/explorer  0.603s`  (SURVIVES)
+The delivered suffix test's own comment claims "the suffixed name is
+re-verified against the account's own file pattern", but its fixture pattern
+`acct1*.csv` matches base and `_2` alike, so the re-verification is a no-op
+there. I proved the behaviour correct with a mutation-killed probe: an account
+whose ONLY pattern is the exact base name `acct1_2026-01-01_to_2026-01-05.csv`
+(path.Match fails on the `_2` name and the substring fallback fails because
+".csv" precedes "_2"):
+  delivered code -> rejected, reason
+    "account Acct One has no file pattern matching acct1_2026-01-01_to_2026-01-05_2.csv; add the pattern on the Accounts page",
+    and `acct1_..._05_2.csv` is NOT written
+  under MUT-4b  -> "imported as acct1_2026-01-01_to_2026-01-05_2.csv (Acct One)"
+                   and the unverifiable name IS written  => probe FAILS
+Behaviour correct, evidence missing. Per ruling 2026-09-18b this is a
+promote-the-probe follow-up, not a FAIL; lead adjudicates.
+
+========================= AC3 — Identical skip =========================
+PASS.
+  - Import (unassigned): TestHandleImport_UnassignedIdenticalContentSkipsAcrossNames
+    asserts skipped / "identical to existing.csv", SourceDeleted==false even with
+    delete_source=true, source still present, nothing written.
+  - Upload: TestHandleFileUpload_IdenticalContentSkips, same reason string,
+    nothing written.
+MUTATION KILLS:
+  MUT-6 replace all 3 handler call sites `importer.ContentIdentical(data, existingDataCSVs())`
+        with `""`
+        -> --- FAIL: TestHandleImport_UnassignedIdenticalContentSkipsAcrossNames,
+                     TestHandleFileUpload_IdenticalContentSkips
+  MUT-7c scan-path `entry.IdenticalTo = importer.ContentIdentical(data, existingCSVs)` -> `""`
+        -> --- FAIL: TestHandleImportScan_WithRenderer_AccountSelectAndDetectionText
+PROBES (behaviour confirmed, no test in the suite covers them):
+  - account-CHOSEN import path identical skip (§2.2 "either choice"): observed
+    `{Status:skipped Reason:identical to acctI_2026-01-01_to_2026-01-02.csv SourceDeleted:false}`,
+    source survives.
+  - one batch, two differently-named identical files: first `imported`, second
+    `skipped / identical to a-export.csv`, `b-export.csv` not written.
+  - two sequential uploads of identical bytes under different names: second
+    `skipped / identical to a-export.csv`.
+
+FINDING F3 (AC3, TOCTOU — probed at the lead's request, NOT a regression).
+The identical-content scan runs outside the exclusive write. Two CONCURRENT
+uploads of byte-identical content under DIFFERENT names both scan before
+either writes, so both land:
+  probe result: "both identical-content files landed in 20/20 concurrent rounds"
+Master has no identical check at all, so master writes both too — IM2 is no
+worse concurrently and strictly better sequentially, and §2.2 claims no
+atomicity. Backlog item, not a defect against AC3.
+
+========================= AC4 — Scan partial =========================
+PASS.
+  cmd: go test -count=1 -v -run TestHandleImportScan_ ./internal/handlers/explorer/
+       -> 8 --- PASS, 0 FAIL  (the 6 pre-existing scan tests are byte-unchanged:
+       `git diff 2b3bafd -- internal/handlers/explorer/handlers_test.go` touches
+       only the good.csv fixture in TestHandleImport_MixedBatchDeletesOnlyImported)
+TestHandleImportScan_WithRenderer_AccountSelectAndDetectionText asserts, on the
+rendered partial split into per-entry <li> blocks:
+  - `<label for="import-account-N">Account for detected.csv</label>` and that the
+    `<select id=...>` carries that exact id (regex-captured, so the binding is
+    checked, not just presence)
+  - `name="account:detected.csv"`
+  - `<option value="acctA" ... selected` for the detection
+  - identical entry: `disabled`, exact text "(identical to acctA_2026-04-01_to_2026-04-03.csv, will be skipped)",
+    and the name-only text ABSENT
+  - no-match entry: "(could not detect the account — choose one)" and
+    `<option value="unassigned" ... selected`
+  - name-only collision entry: pre-existing "(already present, will be skipped)"
+    still renders and "identical to" does not.
+JSON fallback (renderer == nil): TestHandleImportScan_JSONFallback_CarriesDetectionFields
+asserts Detected=="acctJ", DetectedName=="acctJ_2026-06-01_to_2026-06-04.csv",
+IdenticalTo=="".
+MALFORMED-CSV PROBE (requested): import folder holding `bad.csv` (Alpha,Beta,Gamma
+header — no Date column), `empty.csv` (0 bytes), `binary.csv` (NUL bytes) and one
+good file. `handleImportScan` -> status 200, 4 entries listed, the good one
+detects `acctJ`, the three malformed ones report Detected="" / DetectReason="no match".
+Through the real renderer the partial also renders 200 with both <li> blocks.
+No 500, no lost entries.
+
+========================= AC5 — Import outcomes =========================
+PASS.
+  - Generated name + reason: TestHandleImport_AccountChosen_ImportsUnderGeneratedNameWithReason
+    asserts the exact reason
+    "imported as usaa-credit-card_2026-07-01_to_2026-09-18.csv (USAA Credit Card), source file deleted",
+    SourceDeleted==true, and that the generated file exists.
+  - Parse failure under a chosen account: rejected, source kept.
+  - `go test -count=1 -v -run TestHandleImport_ ./internal/handlers/explorer/` -> 21 --- PASS, 0 FAIL
+  - `go test -count=1 -v -run TestImportOneFile_ ...` -> 6 --- PASS; `TestImportResult_` -> 1 --- PASS
+
+MODIFIED PRE-EXISTING TEST #1 — TestHandleImport_MixedBatchDeletesOnlyImported.
+Scrutinised as instructed. The diff is confined to ONE line plus a comment:
+`good := seedImportFile(t, importDir, "good.csv", importCSV)` became a distinct
+`goodCSV` constant. No assertion changed: the 4-outcome length check, the
+status map {good.csv:imported, dupe.csv:skipped, notes.txt:rejected,
+../escape.csv:rejected} and all four source/destination existence checks are
+byte-identical. I proved the change is FORCED by intended behaviour, not
+masking a bug: reverting the fixture to `importCSV` in the scratch copy yields
+  handlers_test.go:3076: good.csv: Status="skipped" want "imported" (reason "identical to dupe.csv")
+i.e. exactly §2.2's cross-name identical-skip, the same behaviour
+TestHandleImport_UnassignedIdenticalContentSkipsAcrossNames pins deliberately.
+
+MODIFIED PRE-EXISTING TEST #2 — TestImportOneFile_ProductionWriteBindingIsExclusive.
+Only the skipped-reason whitelist was widened. The invariant is intact and still
+asserted verbatim: `imported != 1` -> t.Fatalf, `skipped != goroutines-1` ->
+t.Fatalf, `other != 0` -> t.Fatalf, source survives, destination content equals
+the untouched source, over 10 rounds x 16 goroutines.
+  - baseline: `go test -race -count=20 -run TestImportOneFile_ProductionWriteBindingIsExclusive ./internal/handlers/explorer/`
+    -> `ok  budget2/internal/handlers/explorer  1.846s` (no race reports)
+  - the widening is NECESSARY, not cosmetic: narrowing it back to master's single
+    reason and running `-count=20` gives
+      `import_binding_race_test.go:90: round 9: skipped outcome had unexpected reason "identical to race.csv"` (x5)
+      --- FAIL
+  - the widening did NOT weaken the guard: MUT-8 rebinding
+    `defaultImportDeps().write` from `store.CreateExclusive` to `store.WriteFile`
+    still gives
+      `round 0: 16 of 16 goroutines reported imported (want exactly 1) — defaultImportDeps().write is no longer exclusive`
+      --- FAIL
+RULING ON THE STRAGGLER: "identical to race.csv" is correct behaviour here, not a
+hidden race. All 16 goroutines import the SAME name with the SAME bytes, so a
+straggler that observes the winner's file during its own content scan is telling
+the truth (the destination already holds exactly what it would write) and still
+writes nothing. The genuine TOCTOU that the arrangement exposes is F3 above
+(different names, identical bytes, concurrent) — present on master too.
+
+========================= AC6 — Upload outcomes =========================
+PASS.
+  - TestHandleFileUpload_UniqueDetectionRenamesWithReason asserts the exact reason
+    "saved as acctU_2026-05-01_to_2026-05-10.csv (Upload Acct)", that the detected
+    name exists and that `browser-export.csv` does NOT.
+  - TestHandleFileUpload_NoMatchKeepsOriginalNameWithReason asserts the exact
+    spelled-out reason "saved unassigned: could not detect the account (use the
+    import folder to choose one, or rename to an account pattern)".
+  - `go test -count=1 -v -run TestHandleFileUpload_ ./internal/handlers/explorer/`
+    -> 14 --- PASS, 0 FAIL (no pre-existing upload test was edited).
+MUTATION KILL:
+  MUT-7a revert the no-match outcome to master's `{Status:"saved"}` (no Reason)
+        -> --- FAIL: TestHandleFileUpload_NoMatchKeepsOriginalNameWithReason
+MULTI-FILE BATCH PROBE (requested): one multipart request with a detecting file
+and a non-detecting file ->
+  export-a.csv: saved, "saved as acctU_2026-05-01_to_2026-05-10.csv (Upload Acct)"
+  export-b.csv: saved, "saved unassigned: could not detect the account (...)"
+both landing under the right names. Correct.
+
+FINDING F4 (AC6, test weaker than the criterion — same IM1T shape as F2).
+The delivered no-match test seeds ZERO accounts, so the no-match branch is only
+exercised in a configuration where detection is structurally impossible. A
+mutation that IGNORES detection entirely and attributes every upload to the
+first configured account survives the whole suite:
+  MUT-7b `if acct := accounts.Find(accts, det.AccountID); acct != nil` ->
+         `forced = &accts[0]; if acct := forced; acct != nil`
+         -> `go test -count=1 ./internal/handlers/explorer/` -> `ok ... 0.666s` (SURVIVES)
+Production is correct (accounts.Find returns nil for an empty id —
+accounts.go:274-277 — so the fall-through is right). I proved it with a
+mutation-killed probe: two accounts configured + a loaded ledger + an upload
+sharing nothing ->
+  delivered code -> saved, "saved unassigned: could not detect the account (...)",
+                    mystery.csv on disk under its original name
+  under MUT-7b   -> "saved as acctU_2026-08-01_to_2026-08-03.csv (Upload Acct)",
+                    mystery.csv absent => probe FAILS
+Behaviour correct, evidence missing. Promote-the-probe follow-up, not a FAIL.
+
+========================= AC7 — Unassigned surfaces =========================
+PASS, on both surfaces.
+  - TestHandleImport_DetectedImportResultsInZeroUnassigned drives a real scan
+    (Detected=="acctX"), posts the import, then asserts
+    `loader.UnassignedCount() == 0` after a fresh `loader.LoadData()`.
+  - SURFACE ENUMERATION (split-classification check, not diff-trust). Two
+    independent "unassigned" renderers exist:
+      (a) transaction count: dataloader.UnassignedCount -> dashboard/handlers.go:197
+          and explorer/handlers.go:265 -> components/unassigned_banner.html
+      (b) FILE list: handlers/accounts/handlers.go:599-603, `unassigned` =
+          every basename with `matchByID[name] == ""`, where
+          `matchByID[name] = accounts.MatchFile(accts, name)` (line 579)
+    Both are downstream of ONE classifier, `accounts.MatchFile`, and IM2 refuses
+    to write any detected file unless `accounts.MatchFile(accts, finalName) ==
+    acct.ID` (MUT-4 proves that guard is live). Surface (b) therefore cannot list
+    an IM2-written file. No third classifier exists.
+  - LEAD'S REAL-DATA CHECK re-run by me against my scratch copy (cited as
+    corroboration, not as my primary evidence):
+      `python3 .swarm/tier3/IM2-fixture/check.py <scratch>/im2 preupload` -> exit 0, "== ALL PASS",
+      including `PASS accounts page: no unassigned files`, the four generated
+      names `usaa-credit-card_2026-07-01_to_2026-08-27.csv`,
+      `usaa-credit-card_2026-07-01_to_2026-09-18.csv`,
+      `usaa-checking_2026-07-06_to_2026-09-14.csv`,
+      `usaa-credit-card_2024-08-02_to_2025-11-18.csv`,
+      `PASS list_data_files count 17`, `PASS no browser-named file in data dir`.
+      `... check.py <scratch>/im2 full` -> exit 0, "== ALL PASS".
+
+FINDING F5 (lead artifact, NOT a worker defect). SPEC.md §4.2 says that against
+the FULL fixture "all seven files must be flagged identical". The full run shows
+SIX flagged identical; `bk_download (3).csv` is correctly NOT identical (it has
+no byte-twin in the full fixture — its would-be twin
+`usaa-credit-card_2026-07-01_to_2026-08-27.csv` is created only by the preupload
+import). check.py itself encodes six, which is why it passes. SPEC §4.2 text
+overstates; the worker's behaviour is right.
+
+========================= AC8 — a11y =========================
+NOT MY LANE (checker-a11y). Not assessed.
+
+========================= AC9 — Suite =========================
+PASS. All in the scratch copy, all with the cache defeated:
+  go build ./...                                        -> Success
+  go vet ./...                                          -> No issues found
+  go test -count=1 ./...                                -> exit 0, no FAIL lines
+  gofmt -l <all 6 touched .go files>                    -> empty
+  make check  (= vet static vuln css-verify test)       -> "✓ all checks passed", exit 0
+`make check` includes `css-verify`, which rebuilds tailwind into tmp/ and `cmp`s
+it against web/static/css/tailwind.css (Makefile:330-334) — so the template's new
+utility classes report NO CSS drift and no `make css` is outstanding.
+
+========================= SCOPE =========================
+CLEAN. `git diff 2b3bafd --name-only` in the worktree:
+  internal/handlers/explorer/handlers.go
+  internal/handlers/explorer/handlers_test.go
+  internal/handlers/explorer/import_binding_race_test.go
+  web/templates/pages/filemanager.html
+`git status --porcelain` adds `?? internal/handlers/explorer/im2_test.go` and
+`?? internal/services/importer/` (exactly importer.go + importer_test.go).
+That is the manifest, nothing more.
+  - `git diff 2b3bafd --name-only | grep -E 'internal/services/dataloader/|internal/services/accounts/accounts.go'` -> NONE
+  - No path in .swarm/critical.globs (storage/**, dataloader/**, retirement/engine/**,
+    transfers/**, accounts/accounts.go, mcpsvc/confirm/**) is touched, so no
+    Tier-3 escalation trigger from the manifest.
+  - Foreign territories (/home/darrell/bin/ai/budget2 main checkout,
+    .worktrees/apply-names, .claude/worktrees/*) untouched and not inspected as
+    this task's work.
+  - Signature note, not a defect: the delivered `Detect(rows, ledger
+    []models.Transaction, accts)` and `ContentIdentical(data []byte, existing
+    map[string][]byte)` differ from §2.2's sketched `ledger
+    *models.TransactionSet` / `dataDir` arguments. The delivered forms are MORE
+    faithful to §2.2's stated constraint ("handler-free ... three pure
+    functions"): neither touches a filesystem. The filesystem read lives in the
+    handler (`existingDataCSVs`).
+
+========================= SUMMARY =========================
+AC1 PASS (+F1 wording deviation) · AC2 PASS (+F2 untested clause) ·
+AC3 PASS (+F3 concurrency observation) · AC4 PASS · AC5 PASS ·
+AC6 PASS (+F4 untested configuration) · AC7 PASS (+F5 lead-artifact
+correction) · AC8 not my lane · AC9 PASS. Scope clean.
+Both modified pre-existing tests were scrutinised: neither weakens what it
+guards, and both edits were proven necessary by reverting them.
