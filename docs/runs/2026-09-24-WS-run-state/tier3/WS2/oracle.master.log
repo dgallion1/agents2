@@ -1,0 +1,93 @@
+== build /home/darrell/bin/ai/budget2/.worktrees/ws2
+PASS [A-later] harness precondition: Rate Assumptions form valid before the action (got True)
+PASS [A-later] POST /whatif/settings status 200 (got 200; body ' <div id="whatif-async-loader" data-busy-quiet hx-get="/whatif/results-full?hash=bfe3dbe78fd119af" hx-trigger="load" hx-')
+PASS [A-later] start date moved (2026-09 -> 2027-01, delta 4)
+FAIL [A-later] saved income offsets follow the rollover rule: expected {'4ea60a77-b08f-417e-be54-c83d38768a35': [0, None], 'ws2-i1': [5, 104], 'ws2-i2': [0, 0]} got {'4ea60a77-b08f-417e-be54-c83d38768a35': [0, None], 'ws2-i1': [9, 108], 'ws2-i2': [0, 2]}
+FAIL [A-later] saved expense offsets follow the rollover rule: expected {'ws2-e1': [0, 32], 'ws2-e2': [3, None]} got {'ws2-e1': [0, 36], 'ws2-e2': [7, None]}
+FAIL [A-later] saved removed_expense offsets follow the rollover rule: expected {'2c53333a-db9d-4dcf-8374-cb182edb070a': [0, 32], 'ws2-r1': [1, 16]} got {'2c53333a-db9d-4dcf-8374-cb182edb070a': [0, 36], 'ws2-r1': [5, 20]}
+FAIL [A-later] saved removed_income offsets follow the rollover rule: expected {'ab0a74d9-0ada-4edc-82f6-550122f360af': [0, 44], '023d2597-757b-40c5-943a-a781b6af758f': [0, 476], '43707341-9418-44da-8a35-38dd1e676bef': [0, None], 'insights-rebuild-payroll': [0, None]} got {'ab0a74d9-0ada-4edc-82f6-550122f360af': [0, 48], '023d2597-757b-40c5-943a-a781b6af758f': [0, 480], '43707341-9418-44da-8a35-38dd1e676bef': [0, None], 'insights-rebuild-payroll': [0, None]}
+FAIL [A-later] saved onetime months shifted by -4: expected {'ws2-o1': 27, 'ws2-o2': -2} got {'ws2-o1': 31, 'ws2-o2': 2}
+FAIL [A-later] saved bigticket months shifted by -4: expected {'ws2-b1': 41} got {'ws2-b1': 45}
+FAIL [A-later] income_start ws2-i1: same calendar month (2027-06 -> 2027-10)
+PASS [A-later] income_end 4ea60a77-b08f-417e-be54-c83d38768a35: blank stays blank ('' -> '')
+FAIL [A-later] income_end ws2-i1: same calendar month (2035-08 -> 2035-12)
+FAIL [A-later] expense_start ws2-e2: same calendar month (2027-04 -> 2027-08)
+FAIL [A-later] expense_end ws2-e1: same calendar month (2029-08 -> 2029-12)
+PASS [A-later] expense_end ws2-e2: blank stays blank ('' -> '')
+FAIL [A-later] onetime 'Roof': same calendar month (Apr 2029 -> Aug 2029)
+PASS [A-later] onetime 'Roof': '(past)' shown iff before the new start (month 27, label 'Aug 2029')
+FAIL [A-later] onetime 'Deck': same calendar month (Nov 2026 -> Mar 2027)
+FAIL [A-later] onetime 'Deck': '(past)' shown iff before the new start (month -2, label 'Mar 2027')
+FAIL [A-later] bigticket 'Home sale': same calendar month (Jun 2030 -> Oct 2030)
+PASS [A-later] bigticket 'Home sale': '(past)' shown iff before the new start (month 41, label 'Oct 2030')
+== [A-later] 14 check(s) failed
+PASS [B-earlier] harness precondition: Rate Assumptions form valid before the action (got True)
+PASS [B-earlier] POST /whatif/settings status 200 (got 200; body ' <div id="whatif-async-loader" data-busy-quiet hx-get="/whatif/results-full?hash=745a4200a2de6cf6" hx-trigger="load" hx-')
+PASS [B-earlier] start date moved (2026-09 -> 2026-05, delta -4)
+FAIL [B-earlier] saved income offsets follow the rollover rule: expected {'4ea60a77-b08f-417e-be54-c83d38768a35': [4, None], 'ws2-i1': [13, 112], 'ws2-i2': [4, 6]} got {'4ea60a77-b08f-417e-be54-c83d38768a35': [0, None], 'ws2-i1': [9, 108], 'ws2-i2': [0, 2]}
+FAIL [B-earlier] saved expense offsets follow the rollover rule: expected {'ws2-e1': [4, 40], 'ws2-e2': [11, None]} got {'ws2-e1': [0, 36], 'ws2-e2': [7, None]}
+FAIL [B-earlier] saved removed_expense offsets follow the rollover rule: expected {'2c53333a-db9d-4dcf-8374-cb182edb070a': [4, 40], 'ws2-r1': [9, 24]} got {'2c53333a-db9d-4dcf-8374-cb182edb070a': [0, 36], 'ws2-r1': [5, 20]}
+FAIL [B-earlier] saved removed_income offsets follow the rollover rule: expected {'ab0a74d9-0ada-4edc-82f6-550122f360af': [4, 52], '023d2597-757b-40c5-943a-a781b6af758f': [4, 484], '43707341-9418-44da-8a35-38dd1e676bef': [4, None], 'insights-rebuild-payroll': [4, None]} got {'ab0a74d9-0ada-4edc-82f6-550122f360af': [0, 48], '023d2597-757b-40c5-943a-a781b6af758f': [0, 480], '43707341-9418-44da-8a35-38dd1e676bef': [0, None], 'insights-rebuild-payroll': [0, None]}
+FAIL [B-earlier] saved onetime months shifted by --4: expected {'ws2-o1': 35, 'ws2-o2': 6} got {'ws2-o1': 31, 'ws2-o2': 2}
+FAIL [B-earlier] saved bigticket months shifted by --4: expected {'ws2-b1': 49} got {'ws2-b1': 45}
+FAIL [B-earlier] income_start 4ea60a77-b08f-417e-be54-c83d38768a35: same calendar month (2026-09 -> 2026-05)
+FAIL [B-earlier] income_start ws2-i1: same calendar month (2027-06 -> 2027-02)
+FAIL [B-earlier] income_start ws2-i2: same calendar month (2026-09 -> 2026-05)
+PASS [B-earlier] income_end 4ea60a77-b08f-417e-be54-c83d38768a35: blank stays blank ('' -> '')
+FAIL [B-earlier] income_end ws2-i1: same calendar month (2035-08 -> 2035-04)
+FAIL [B-earlier] income_end ws2-i2: same calendar month (2026-10 -> 2026-06)
+FAIL [B-earlier] expense_start ws2-e1: same calendar month (2026-09 -> 2026-05)
+FAIL [B-earlier] expense_start ws2-e2: same calendar month (2027-04 -> 2026-12)
+FAIL [B-earlier] expense_end ws2-e1: same calendar month (2029-08 -> 2029-04)
+PASS [B-earlier] expense_end ws2-e2: blank stays blank ('' -> '')
+FAIL [B-earlier] onetime 'Roof': same calendar month (Apr 2029 -> Dec 2028)
+PASS [B-earlier] onetime 'Roof': '(past)' shown iff before the new start (month 35, label 'Dec 2028')
+FAIL [B-earlier] onetime 'Deck': same calendar month (Nov 2026 -> Jul 2026)
+PASS [B-earlier] onetime 'Deck': '(past)' shown iff before the new start (month 6, label 'Jul 2026')
+FAIL [B-earlier] bigticket 'Home sale': same calendar month (Jun 2030 -> Feb 2030)
+PASS [B-earlier] bigticket 'Home sale': '(past)' shown iff before the new start (month 49, label 'Feb 2030')
+== [B-earlier] 17 check(s) failed
+PASS [C-unrelated] harness precondition: Rate Assumptions form valid before the action (got True)
+PASS [C-unrelated] POST /whatif/settings status 200 (got 200; body ' <div id="whatif-async-loader" data-busy-quiet hx-get="/whatif/results-full?hash=2546566fc9b7ed85" hx-trigger="load" hx-')
+PASS [C-unrelated] start date unchanged (2026-09 -> 2026-09)
+PASS [C-unrelated] saved income offsets unchanged
+PASS [C-unrelated] saved expense offsets unchanged
+PASS [C-unrelated] saved removed_expense offsets unchanged
+PASS [C-unrelated] saved removed_income offsets unchanged
+PASS [C-unrelated] saved onetime offsets unchanged
+PASS [C-unrelated] saved bigticket offsets unchanged
+== [C-unrelated] all checks passed
+PASS [D-currentplan] harness precondition: Rate Assumptions form valid before the action (got True)
+PASS [D-currentplan] POST /whatif/settings status 200 (got 200; body ' <div id="whatif-async-loader" data-busy-quiet hx-get="/whatif/results-full?hash=d8da9ebab9b8a7fa" hx-trigger="load" hx-')
+PASS [D-currentplan] start date unchanged (2026-09 -> 2026-09)
+PASS [D-currentplan] saved income offsets unchanged
+PASS [D-currentplan] saved expense offsets unchanged
+PASS [D-currentplan] saved removed_expense offsets unchanged
+PASS [D-currentplan] saved removed_income offsets unchanged
+PASS [D-currentplan] saved onetime offsets unchanged
+PASS [D-currentplan] saved bigticket offsets unchanged
+== [D-currentplan] all checks passed
+PASS [E-tick-current] harness precondition: Rate Assumptions form valid before the action (got True)
+PASS [E-tick-current] POST /whatif/settings status 200 (got 200; body ' <div id="whatif-async-loader" data-busy-quiet hx-get="/whatif/results-full?hash=91df4f0dd8310eb1" hx-trigger="load" hx-')
+PASS [E-tick-current] start date moved (2026-05 -> 2026-09, delta 4)
+FAIL [E-tick-current] saved income offsets follow the rollover rule: expected {'4ea60a77-b08f-417e-be54-c83d38768a35': [0, None], 'ws2-i1': [5, 104], 'ws2-i2': [0, 0]} got {'4ea60a77-b08f-417e-be54-c83d38768a35': [0, None], 'ws2-i1': [9, 108], 'ws2-i2': [0, 2]}
+FAIL [E-tick-current] saved expense offsets follow the rollover rule: expected {'ws2-e1': [0, 32], 'ws2-e2': [3, None]} got {'ws2-e1': [0, 36], 'ws2-e2': [7, None]}
+FAIL [E-tick-current] saved removed_expense offsets follow the rollover rule: expected {'2c53333a-db9d-4dcf-8374-cb182edb070a': [0, 32], 'ws2-r1': [1, 16]} got {'2c53333a-db9d-4dcf-8374-cb182edb070a': [0, 36], 'ws2-r1': [5, 20]}
+FAIL [E-tick-current] saved removed_income offsets follow the rollover rule: expected {'ab0a74d9-0ada-4edc-82f6-550122f360af': [0, 44], '023d2597-757b-40c5-943a-a781b6af758f': [0, 476], '43707341-9418-44da-8a35-38dd1e676bef': [0, None], 'insights-rebuild-payroll': [0, None]} got {'ab0a74d9-0ada-4edc-82f6-550122f360af': [0, 48], '023d2597-757b-40c5-943a-a781b6af758f': [0, 480], '43707341-9418-44da-8a35-38dd1e676bef': [0, None], 'insights-rebuild-payroll': [0, None]}
+FAIL [E-tick-current] saved onetime months shifted by -4: expected {'ws2-o1': 27, 'ws2-o2': -2} got {'ws2-o1': 31, 'ws2-o2': 2}
+FAIL [E-tick-current] saved bigticket months shifted by -4: expected {'ws2-b1': 41} got {'ws2-b1': 45}
+FAIL [E-tick-current] income_start ws2-i1: same calendar month (2027-02 -> 2027-06)
+PASS [E-tick-current] income_end 4ea60a77-b08f-417e-be54-c83d38768a35: blank stays blank ('' -> '')
+FAIL [E-tick-current] income_end ws2-i1: same calendar month (2035-04 -> 2035-08)
+FAIL [E-tick-current] expense_start ws2-e2: same calendar month (2026-12 -> 2027-04)
+FAIL [E-tick-current] expense_end ws2-e1: same calendar month (2029-04 -> 2029-08)
+PASS [E-tick-current] expense_end ws2-e2: blank stays blank ('' -> '')
+FAIL [E-tick-current] onetime 'Roof': same calendar month (Dec 2028 -> Apr 2029)
+PASS [E-tick-current] onetime 'Roof': '(past)' shown iff before the new start (month 27, label 'Apr 2029')
+FAIL [E-tick-current] onetime 'Deck': same calendar month (Jul 2026 -> Nov 2026)
+FAIL [E-tick-current] onetime 'Deck': '(past)' shown iff before the new start (month -2, label 'Nov 2026')
+FAIL [E-tick-current] bigticket 'Home sale': same calendar month (Feb 2030 -> Jun 2030)
+PASS [E-tick-current] bigticket 'Home sale': '(past)' shown iff before the new start (month 41, label 'Jun 2030')
+== [E-tick-current] 14 check(s) failed
+== 3 scenario(s) failed
+ORACLE FAIL

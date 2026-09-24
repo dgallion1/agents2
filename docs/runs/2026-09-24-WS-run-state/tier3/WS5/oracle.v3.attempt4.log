@@ -1,0 +1,23 @@
+== build /home/darrell/bin/ai/budget2/.worktrees/ws5
+PASS G1 D6: ticking the glide box sends no request (posts [])
+PASS G1 D6: the leftover glide config is untouched ({"enabled":false,"start_stock_pct":0,"end_stock_pct":0,"transition_years":1})
+PASS G1 a11y: the revealed fields are visible and required ([true,true,true])
+PASS G1 a11y: a visible instruction says the fields are required
+PASS G2 D6: enable with only start missing → 400, nothing saved (status 400, glide {"enabled":false,"start_stock_pct":0,"end_stock_pct":0,"transition_years":1})
+PASS G2 D6: enable with only end missing → 400, nothing saved (status 400, glide {"enabled":false,"start_stock_pct":0,"end_stock_pct":0,"transition_years":1})
+PASS G2 D6: enable with only years missing → 400, nothing saved (status 400, glide {"enabled":false,"start_stock_pct":0,"end_stock_pct":0,"transition_years":1})
+PASS G3 D6: Apply with all three saves ({"enabled":true,"start_stock_pct":60,"end_stock_pct":40,"transition_years":10})
+PASS G4 D6: unticking saves enabled=false (posts ["/whatif/glide-path"], glide {"enabled":false,"start_stock_pct":60,"end_stock_pct":40,"transition_years":10})
+PASS P1 D7: removing an unlinked person saves (status 200, persons Alex Primary,Sam Spouse)
+PASS P1 D7: the removed person is gone after reload
+PASS P2 D7: a linked removal is refused with 400, never 500 (status 400)
+PASS P2 D7: the refusal names the entry, the row stays, nothing saved (alert "Error Remove Sam Spouse's healthcare entry first", row true)
+PASS P3 D7: a name-only new row sends no request (posts [])
+PASS P3 D7: a birth-month-less row posted directly → 400 naming the birth month (status 400, "Error New Kid needs a birth month")
+PASS P3 D7: a birth month after the start date → 400 with an accurate message (status 400, "Error Future Kid&#39;s birth month (2030-01) is after the plan&#39;s start date (2026-09)")
+PASS P3 D7: a present-but-unparseable birth month → 400 naming the person, not "needs a birth month" (status 400, "Error Typo Kid&#39;s birth month &#34;19711-08&#34; isn&#39;t a valid month (use YYYY-MM)")
+PASS P3 D7: an invalid start date → 400 described as a start-date problem (status 400, "Error Invalid projection start date: invalid month &#34;2026-13&#34;")
+FAIL P3f D7: a quoted name with no birth month → "<Name> needs a birth month", name verbatim (status 400, "Error Invalid person data: persons: invalid birth_month for \"Robert \\\"Bob\\\" Smith\": month is required")
+FAIL P3f D7: Pat\X "19711-08" beside Pat\\X "1990-01" → the message names Pat\X and 19711-08, never the valid row (status 400, "Error Pat\\\\X's birth month \"1990-01\" isn't a valid month (use YYYY-MM)")
+FAIL P3f D7: two rows named "Pat Twin", the second unparseable → the message quotes the failing row's value 19711-08 (status 400, "Error Pat Twin's birth month isn't valid (use YYYY-MM)")
+ORACLE FAIL

@@ -1,0 +1,87 @@
+VERDICT: UPHOLD
+CHECKER: judge-claude
+FAMILY: anthropic
+TASK: WS5
+ATTEMPT: 4
+---
+Lens: correctness. Contract: SPEC.md D7, §2 WS5, ruling 2026-09-24g (the
+attempt-4 contract). Work: snapshot scratchpad/snap/WS5.4-tests (copied to
+scratchpad/judges/WS5.4-claude/tree), .swarm/diffs/WS5.4.diff. Throttled
+(nice -n 19, GOMAXPROCS=4, GOFLAGS="-count=1 -p=2"). No server started, no
+:8080, no budget2 binary, no MCP, no git changes. Probe logs:
+scratchpad/judges/WS5.4-claude/probe.log, probe2.log, probe-remedy.log.
+
+1. PREMISE CHECK: CONFIRMED EXACTLY
+Probe: a temp test in my copy only (zz_judge_claude_test.go, since deleted)
+POSTs the real form through handleWhatIfSettings -> UpdateSettingsWithPersons
+-> prepare.ValidatePersons -> personsSaveErrorMessage -> renderError. I
+report the <p> text, HTML-unescaped, which is what the user sees.
+  Q1 `Robert "Bob" Smith`, month ""        -> 400 "Invalid person data: persons:
+     invalid birth_month for "Robert \"Bob\" Smith": month is required"
+     (matches checker-second's body byte for byte)
+  Q2 same name, "19711-08" (reachable from the browser) -> 400 "Invalid person data:
+     persons: invalid birth_month for "Robert \"Bob\" Smith": invalid month "19711-08""
+  U1/U2 control "Robert Bob Smith" -> "Robert Bob Smith needs a birth month" /
+     "...'s birth month "19711-08" isn't a valid month (use YYYY-MM)"
+Cause: rePersonsInvalidBirthMonth captures `([^"]*)` from a %q-formatted
+name. %q turns `"` into `\"`, so the capture stops and the regex misses.
+Every match that does succeed returns the ESCAPED form, and the code then
+compares that with `p.Name == name` against the RAW submitted names.
+Q1 and Q2 are true in themselves and show the name, though with visible
+backslashes. checker-second says the same thing. For quote names alone, the
+harm is the wording, not a false message.
+
+2. AGAINST RULING g AS WRITTEN
+(a) Empty month -> "<Name> needs a birth month". The "(or equivalent — must
+name the person and must not say it is missing)" note belongs to the
+unparseable clause. "Must not say it is missing" only makes sense there, so
+the empty clause gets no such latitude. Oracle P3c and the worker's own tests
+both check for the phrase "needs a birth month". Q1 does not produce it. The
+lead's point that this case is "reachable only by a direct POST" does not
+separate Q1 from anything else: the UI field is `required`, so EVERY
+empty-month case is direct-POST-only. The clause was written for exactly that
+path, and the contract makes no exception for names that %q escapes.
+(b) The headline rule is "Word every persons/start-date 400 from the SUBMITTED
+value". For any name %q escapes (`"`, `\`, tab, NBSP and other characters Go
+does not treat as printable), the classifier cannot find the submitted row:
+  B1 `Pat\X` ""       -> "Pat\\X's birth month isn't valid (use YYYY-MM)"
+  N1 "Ann<NBSP>Lee" "" -> "Ann Lee's birth month isn't valid (use YYYY-MM)"
+  T1 "Ann<TAB>Lee" ""  -> "Ann\tLee's birth month isn't valid (use YYYY-MM)"
+  T2 `Sam": X` ""     -> "Sam\'s birth month isn't valid (use YYYY-MM)"
+In each of these the month is empty but the message does not say so, and the
+name shown is not the person's name (T2 shows only a truncated fragment).
+None of this is worded from the submitted value.
+(c) "Other persons errors stay truthful" is the hard-stop's core requirement
+and the ground the lead would overrule on. The same round-trip produces
+FALSE messages:
+  C3 A=`Pat\X` "19711-08" (the five-digit-year typo from attempt 3, reachable
+     in the browser), B=`Pat\\X` "1990-01" -> 400 "Pat\\X's birth month
+     "1990-01" isn't a valid month". 1990-01 IS valid, it is the other
+     person's value, and the real bad value 19711-08 is never mentioned.
+  C1 (A empty, direct POST) -> the same false message.
+  T3 `Sam": X` "19711-08" + `Sam\` "1990-01" -> "Sam\'s birth month "1990-01"
+     isn't a valid month". Again false, and about the wrong person.
+These names are contrived, so they count as corroboration, not as the main
+ground. They do refute the idea that the defect is only polish. The quote-name
+fallback and the false messages come from one bug: the person is identified
+by comparing an escaped string with raw names. That regex is new in this
+attempt and was written to implement ruling g, so it is squarely in scope.
+
+3. REMEDY CHECK: THE FAIL'S REMEDY WORKS
+Throwaway prototype in my copy: regex `("(?:[^"\\]|\\.)*")` plus
+strconv.Unquote(m[1]), 3 lines changed. All 16 probes then give the
+contract's wording with the right name. Q1 -> "Robert "Bob" Smith needs a
+birth month". Q2 -> "...'s birth month "19711-08" isn't a valid month". C3 ->
+"Pat\X's birth month "19711-08" isn't a valid month", now the correct person
+and value. B1/N1/T1/T2 -> "<real name> needs a birth month".
+`go test ./internal/handlers/whatif/ -run 'Glide|Person|PersonsSaveErrorMessage|PersonsValidation'`
+-> ok. Prototype discarded. `cmp` shows handlers_rates.go restored identical
+to the snapshot.
+
+RULING: UPHOLD. The factual premise is exact. For names the unrestricted name
+field accepts, the empty-month clause of ruling g and its headline rule
+("word from the SUBMITTED value") are not met. The mechanism the FAIL names
+also breaks the truthfulness requirement the lead relies on (C3, reachable in
+the browser). The fix is small, stays in scope, and has been verified to
+work. Out-of-contract note for the backlog, not part of this ruling:
+checker-tests F1 (duplicate-name hedge) is separate and truthful.

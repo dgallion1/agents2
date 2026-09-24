@@ -1,0 +1,142 @@
+VERDICT: FAIL
+CHECKER: checker-tests
+FAMILY: anthropic
+TASK: WS1
+ATTEMPT: 4
+---
+Scratch: /tmp/claude-1000/-home-darrell-work-agents2--claude-worktrees-budget2-what-if-review-24ec2e/28920e62-8027-4a38-9437-8967166cd576/scratchpad/checkers/WS1.4-tests (called S below)
+- work = cp -a of snapshot WS1.4-tests. base = git archive 643fa54. mut0-3 and mutB = mutation copies. probe = a copy that holds my zz_* probe tests.
+- After the run: work == snapshot (diff -rq, excluding tmp/). All mutation copies are reverted and clean.
+- Every scratch server was killed (ps shows none). I never contacted :8080 and used no MCP tools. No git state changes.
+
+SUMMARY
+- FAIL on R-TEST'.
+- Product behaviour meets every behavioural criterion: identity EXACT, forms valid, touched path, aria == display, the QA behaviours, ids, R-EXACT' and R-FMT'.
+- The permanent Go/node suite does not kill four mutation classes that R-TEST' names. Each survivor below was re-run against the FULL `go test ./...` plus node (S/mutfull.log: 35/35 survived). Where marked, it was also shown to be observable in Chromium or in Go.
+
+== Suites: PASS
+- `GOFLAGS=-count=1 go test ./internal/handlers/whatif/... ./internal/templates/...`
+  -> "ok budget2/internal/handlers/whatif 10.047s", "ok budget2/internal/templates 2.032s" (S/suites.log)
+- `node --test web/static/js/*.test.cjs` -> "tests 40 / pass 40 / fail 0"
+- `GOFLAGS=-count=1 rtk proxy make check` -> 52 "ok" packages; "tailwind.css is up to date"; "No vulnerabilities found."; "✓ all checks passed"; rc=0 (S/make_check.log)
+
+== Oracle v5: PASS
+- `TMPDIR=S/tmp accept.sh S/work` -> rc=0, 276 PASS, 0 FAIL, last line "ORACLE PASS" (S/oracle.work.log). This matches the lead's oracle.4.log.
+- Includes: "PASS coverage: 18 stored-value forms"; "PASS criterion 1: saved plan identical ... (0 change(s))" in both variants; E7 served == live (48 displays).
+
+== C1 Identity, EXACT: PASS
+- Chromium, prev-js/untouched.js, bit-exact JSON compare (S/an_untouched.py):
+  - Fixture exact17 has 16-17-digit values on ~40 fields, including MLE hidden 12923.603942198184, cost basis 12923.603942198184 and tax_deferred 83.03712345678912. It also has 0.00005 and 0.00001 values, and COLA 0.0123456789012345.
+    - branch: "forms=17 valid=14/14 sent200=17", "bit-exact changes: 0".
+    - base: 23 changes and 2 forms blocked.
+  - Fixture ties (.50 ties on every whole-dollar surface):
+    - branch: 1 change, `.social_security.cola_rate_set: added True`. That is F-026 bookkeeping; the fixture lacked the flag.
+    - base: 19 changes.
+- Go level, real templates + handlers (probe zz_checker_exact_test.go): every family on 16-17-digit, tiny (1e-7, 0.00001, 0.00005) and huge (1e15) values reports no "saved plan changed".
+  - One exception, from my own invalid fixture: taxable stock+cash > 100. The pre-existing clampPerAccountAllocations invariant (form_spec.go:390) caused it. It is not a WS1 defect.
+
+== C2 No stored value makes a form invalid: PASS
+- 14/14 forms valid on exact17 and on ties. Oracle: 14 × "form valid".
+- min_monthly_spending_real 6000.555000000001 is valid. On base the guardrails form is "NOT SENT".
+
+== C3 Touched path, direct + Quick Adjust: PASS
+- Oracle criterion 3 ×3.
+- S/js/liveinput.js reads the server-rendered hidden value after each save. Examples:
+  - "H:current_monthly_cost=1850" after the in-card drag.
+  - 2950 via the QA mirror.
+  - portfolio 2500000 in-card and 3100000 via QA.
+  - phase 0.5 in-card and via QA.
+  - MLE 3700 in-card and 4100 via QA.
+
+== C4 aria == own display, every converted slider and QA mirror: PASS
+- prev-js/ariaeq.js on fixtures ties / exact17 / decline / phase, pre-JS and post-JS: 35/35/24/25 ranges with aria, "aria!=display=0" in all 8 runs.
+- The only ranges without aria are the unconverted integer sliders: projection years, delay years, coverage years.
+
+== QA behaviours E3-E5 and ids kept: PASS
+- Oracle: E3 step 0/1/2, E4 and E5 all PASS.
+- `curl /whatif` base vs branch on 3 fixtures: removed=[], count-changed=[], new-dups=[]. Every added id ends in -exact.
+
+== R-EXACT': PASS
+- Every stored field renders 'f',-1, with no exponent. Rendered values include "12923.603942198184", "0.00005", "0.0000001", "1000000000000000" and "999999999.9999999".
+- COLA sweep (probe TestZZColaSweep): real template, then parse, then the handler's roundToSignificantDigits(p/100,15).
+  - k/1e4, k/1e5, k/1e6 (111,000 values) and random 10/12/13/14/15-significant-digit values (100,000): "mismatches=0 exponent=0" in every set.
+  - 17-sig (out of contract): 1826/2000 mismatch, as the contract allows.
+- COLA end to end through handleWhatIfSocialSecurity: "COLA E2E mismatches=0/14". This includes 0.0145, 0.010004, 0.0123456789012345 and 5e-05.
+
+== R-FMT': PASS on behaviour
+- S/js/servedlive.js compares the fetched served HTML with the live DOM for every [data-quick-adjust-display] and every [aria-valuetext]. It checks after load, after QA open on each of the 4 tabs, and after an htmx swap from each of 13-14 untouched form submits.
+  - branch, 4 fixtures (ties, exact17, decline, phase): "load diffs=0 | QA-open diffs=0 | swaps with-diffs=0".
+  - base: 22/20/4/2 load diffs, so the probe is sensitive.
+- Live input vs server re-render (liveinput.js), 37 interactions, all EQUAL. Examples:
+  - decline 0.25/0.75/1.25/2.25/3.75 -> "0.2%"/"0.8%"/"1.2%"/"2.2%"/"3.8%", display and aria, in-card and QA.
+  - inflation 0.3 and 7.3.
+  - phase 0.5 × MLE 3601 -> "$1,800/mo" (in-card + QA).
+  - healthcare / MLE / portfolio currency.
+  - The one exception is investment return dragged to 0. See finding O1.
+- The investment-return display is not recomputed at load: the decline fixture has investment_return 0 and shows load diffs=0.
+
+== R-TEST': FAIL
+Harness: S/mutate4.py applies each mutation alone, runs go test (whatif + templates) and node, then reverts. S/mut4.log: 308 mutations, 195 killed, 113 survived, every revert "OK".
+
+KILLED:
+- All 14 attempt-2 mutations (a, b, c, a2, a3, c2, c3, U1-U7).
+- The attempt-3 additions (N3/N3b, FE3 = math.Round(v*1e10)/1e10, L1 %.2f MLE hidden, J1 Math.round).
+- 'g',15 in formatExact (FE1): "formatExact(232777.48988888797) = "232777.489888888"".
+- Exponent in formatExact (FE2) and formatExactScaled (FE7). COLA ÷100 unrounded (FE9). formatExactScaled -> formatExact (FE6).
+- Every step="0.01", step="0.25" and dropped step on all 30 step="any" fields: 90/90.
+- Half-up on each WS1-template whole-dollar surface: 29/29. That covers every Coverage Timeline branch, the in-card and QA phase-dollar labels, and every display and aria.
+- JS formatWholeDollars call sites J3 (currency), J4 (phase-dollar) and J5 (MLE aria).
+- toFixed / x*10 in percent1 and roundHalfEvenDecimalString (P1, P2, P3, P6, P7).
+- Load sync -> full sync (R1), and mirror-only sync writing aria or displays (R2, R3).
+
+SURVIVED. Each is named by R-TEST' and was confirmed against full `go test ./...` + node:
+1. "%.1f on any stored field" — 19 of 42 formatExact sites survive.
+   - guardrails.html:27/47/54/67/73: floor_drop_pct, ceiling_rise_pct, ceiling_raise_pct, min_spending_pct, max_spending_pct.
+   - healthcare-person.html:84: hidden current_monthly_cost. This is the same F8 survivor as attempt 3.
+   - healthcare-person.html:135 (hidden aca_cost_after_employer) and :211 (hidden post_medicare_inflation, Medicare branch).
+   - rate-assumptions.html:117 roth_percent, :209 qualified %, :289/:320/:329/:374/:383 per-account allocations, :411 glide start, :487 hidden spending_decline_rate.
+   - roth-conversion.html:51 annual_amount; social-security.html:17 fra_benefit.
+   - Cause: the generic fixtures hold at most 1 decimal on those fields (5.5, 1655.30, 70.5, 4114.9, 50000.5, ...).
+   - Proven real (probe, mutant applied, then reverted): ".guardrails.floor_drop_pct: 5.55 -> 5.5" and ".healthcare_persons[0].current_monthly_cost: 1655.35 -> 1655.3" on an untouched save.
+2. "a load-time display/aria rewrite" survives when it lives outside whatif-quick-adjust.js.
+   - R6: syncAllQuickAdjustControls re-calls updateInvestmentReturnDisplay(hidden.value).
+   - R5: a DOMContentLoaded recompute in whatif-rate-assumptions.js.
+   - The node harness never loads whatif-rate-assumptions.js, so the typeof guard skips the call.
+   - Chromium, mutant R6 build, decline fixture: "load diffs 4 ... "(~6.2% expected)" -> "(~6.1% expected)"" on the display and the aria. This is exactly the attempt-3 R1 regression.
+3. "each JS call site", fresh same-class mutations:
+   - P5: toFixed(1) at whatif-rate-assumptions.js:250 (expected return).
+     - Chromium mutant, fixture td/roth 50/50 at 75% stock (exact 6.25), after typing into the allocation: "(~6.3% expected)". The correct branch and the server show "(~6.2% expected)".
+   - J6: half-up in syncQuickAdjustAriaValueTexts (currency aria path).
+     - Chromium mutant, portfolio 1234568.5, after the range-select change: aria "$1,234,569" but display "$1,234,568", still wrong 3 s later.
+   - No test pins either one.
+4. Attempt-2 class on an unrendered branch.
+   - Restoring name= on the Medicare-branch post_medicare_inflation range survives (U12), as does %.1f on its hidden input (#1, :211).
+   - No generic fixture renders a Medicare-coverage person.
+
+Missing: fixtures with at least 2 decimals (or 16-17 digits) on EVERY formatExact field; a Medicare-coverage person in the generic HealthcarePerson test; node coverage for whatif-rate-assumptions.js (load-time invret, expected-return tie); an aria-path currency tie test.
+
+Fresh mutations the worker never saw:
+- Survived: J6, P5, R6 (each shown observable above).
+- Killed: FN1 (Go formatNumber half-up), J2 (roundHalfEven tie -> up), FE14 (-0 belt), FE10 (÷100 at 17 sig), N3c/N3d (max/min narrowed), U8-U11 (name= on decline, invret, aca and post-inflation ranges).
+
+== Tests assert what they claim: yes, for what they cover
+- Rewritten pre-existing tests are exactly the R-FMT flips ($7,387->$7,386, $9,233->$9,232 plus a must-not), and nothing was weakened. The phase-note test is strengthened (7386.345).
+- The node self-check patch is real: R1 is killed.
+
+== SCOPE: PASS
+- Snapshot vs 643fa54: 18 changed + 4 added = the 22-path manifest. In diff not manifest: []. In manifest not diff: [].
+- Critical globs: none touched.
+- Snapshot == .worktrees/ws1 for every manifest path.
+
+== FINDINGS (backlog / lead; not the FAIL basis)
+- O1 (pre-existing, identical on base): on input, dragging investment return to 0 shows JS "(~6.1% expected)" while the server shows "(~6.2%)".
+  - Cause: calculateExpectedReturnFromAllocation uses `|| 10` / `|| 60` fallbacks.
+  - The base run shows the same DIFF. R-FMT' scoped expected return to "at load"; the lead should rule whether the on-input case is in scope.
+- O2: per-site 'g',15 (42/42) and per-site %v exponent (40/42) survive.
+  - This includes the cost-basis site, the attempt-3 repro field. The function-level mutations are killed.
+  - Same for 'g',15 and %.3f on the MLE hidden input (L2, L3).
+  - The oracle catches some of these; the Go/node suite does not.
+- O3: formatExactScaled at 14 significant digits (FE8) survives. It is only observable for a 15-significant-digit COLA.
+- O4: healthcare-card.html:96 Total Monthly Healthcare half-up survives. That file is outside the manifest and derived.
+- O5: numericArtifact in assertStructuralInvariants false-positives on legitimately stored 17-digit values (e.g. "60.00000000000001"). This is test-heuristic brittleness only.
+- R4 (initializePortfolioRange full sync) and J7 are equivalent or injected mutants, not gaps.

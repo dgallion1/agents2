@@ -1,0 +1,109 @@
+VERDICT: PASS
+CHECKER: checker-second
+FAMILY: adversarial
+TASK: WS2
+ATTEMPT: 1
+---
+Scope: internal/services/retirement/settings.go (UpdateSettingsWithPersons),
+internal/services/retirement/settings_schedule_shift_test.go,
+internal/handlers/whatif/current_month_test.go (per manifest). No other
+files touched (`git -C base show` diff matches manifest paths exactly).
+
+1. Oracle both-ends, independently re-run (not trusting the lead's log):
+   `bash .swarm/tier3/WS2/accept.sh <my-snapshot>` -> final line `ORACLE
+   PASS`, all 5 scenarios (A-later, B-earlier, C-unrelated, D-currentplan,
+   E-tick-current) PASS, including rendered-DOM assertions (income/expense
+   start/end inputs, one-time/big-ticket calendar-month labels + "(past)"
+   flag) not just saved JSON. Cross-checked oracle.master.log (pre-existing,
+   read-only): master FAILS 3/5 scenarios with the exact "silent drift"
+   bug D2 describes (E-tick-current shows 14 failed checks, e.g. income
+   start '2027-02 -> 2027-06' instead of staying 2027-02). Confirms the
+   oracle actually discriminates broken-from-fixed and this attempt is on
+   the fixed side.
+
+2. `go build ./...`, `go vet ./...`, `staticcheck ./...` all clean. `make
+   check` (vet+static+vuln+css-verify+test, full repo) -> "all checks
+   passed", zero failures across every package including
+   internal/services/retirement and internal/handlers/whatif.
+
+3. Mutation-kill re-verified independently (criterion 4), applied by hand
+   to 3 separate copies, not just trusting the worker's own test comments:
+   (a) delete the whole `if elapsed, ok := ...; shiftScheduleOffsets(...)`
+       block -> 4 tests FAIL (3 in retirement pkg, 1 in whatif handler pkg).
+   (b) `shiftScheduleOffsets(settings, elapsed)` -> `(settings, -elapsed)`
+       -> same 4 tests FAIL.
+   (c) force elapsed=1 even when computed elapsed==0 (unchanged-date case)
+       -> TestUpdateSettingsWithPersonsUnchangedStartDateIsNoOp FAILs (the
+       one test that specifically targets this mutation class); other
+       tests pass since they all change the date anyway.
+   All three specified mutation classes are killed by the permanent Go
+   tests, independent of the oracle.
+
+4. Attack surface: every OTHER writer of StartDate.
+   - `grep -rn "\.StartDate = " internal --include=*.go` (non-test) finds
+     exactly two persisted-plan writers: settings_current_month.go:105
+     (resolveCurrentMonth, pre-existing, shifts via the same
+     shiftScheduleOffsets) and settings.go:1461 (this task's new manual
+     path, now also shifting). No third writer.
+   - `applySettingsUpdates`'s `updates` map (used by both
+     UpdateSettingsWithPersons and the persons-less UpdateSettings) has no
+     "start_date" key handled anywhere -> UpdateSettings (the non-Persons
+     path) structurally cannot move StartDate.
+   - MCP `apply_changes` -> `ApplyOverrides` -> `overrides.Apply`: the
+     `overrides.Overrides` struct (internal/services/retirement/overrides)
+     has no StartDate field at all -> cannot move StartDate, no
+     double-writer risk from the MCP surface.
+   - chain.go's `prepareChainedSettings` sets `prepared.StartDate =
+     primary.StartDate` directly with no shift, but this builds an
+     EPHEMERAL engine-input struct for a scenario-chain transition (never
+     goes through SettingsManager.saveInternal, never persisted) and is
+     untouched by this diff. Pre-existing, out of scope for WS2 (this
+     worker could not have "fixed" it inside this task's file list without
+     exceeding scope) -> reported as an observation, not a FAIL.
+   - Scenario create/switch code paths copy the whole settings struct
+     (StartDate included) without independently re-deriving it -> no
+     drift introduced.
+
+5. Concurrency / cache: UpdateSettingsWithPersons takes sm.mu.Lock() around
+   load+shift+save (pre-existing lock, unchanged by diff).
+   `loadInternal`/`loadInternalContext` always reads fresh from the file
+   store (no `sm.cache` read) so the elapsed computation is always against
+   the truthful on-disk StartDate, not a page-rendered/cached one. Walked
+   through the "clock crosses a month boundary while a current-month plan's
+   page is open" race by hand: posted (page-rendered, already-advanced)
+   start_date vs loaded (stale, on-disk) start_date produces exactly the
+   elapsed the clock would have produced anyway; resolveCurrentMonth then
+   sees elapsed==0 against the just-set StartDate and does not double-shift.
+   This mechanism (lock + saveInternal->resolveCurrentMonth ordering) is
+   pre-existing and shared by every other settings mutation, not
+   introduced or altered by this diff.
+
+6. Round-trip (move later then back earlier): shiftRange is a plain
+   subtraction with only a `max(0, ...)` floor; for a non-clamped item
+   forward-then-backward is an exact algebraic inverse. Only items that
+   got clamped to 0 lose data on the round trip, which D2 explicitly
+   accepts ("kept, never charged" / "already running" — the clamp loss is
+   by design, not a defect).
+
+7. Field coverage: shiftScheduleOffsets shifts IncomeSources +
+   RemovedIncomeSources, ExpenseSources + RemovedExpenseSources,
+   OneTimeExpenses (no Removed variant exists in the model), BigTicketItems
+   + RemovedBigTicketItems. `grep StartMonth\|EndMonth` across
+   internal/models turns up no other persisted schedule-offset field left
+   unshifted. Roth conversion (`StartYear`/`EndYear`, year-granular), ages,
+   and SS are untouched by shiftScheduleOffsets, matching D2's explicit
+   exclusion list. onetime-card.html / bigticket-card.html render the
+   calendar-month label and "(past)" flag unconditionally (no
+   distance-based hiding), so a far shift cannot silently drop an item
+   from the rendered surface the oracle checks.
+
+8. Rendering surfaces: the oracle's probe.js reads the actual DOM (input
+   values for income/expense start/end, button-adjacent text labels for
+   one-time/big-ticket), not just the saved JSON — this covers the
+   split-classification concern (enumerate every surface, not just the
+   diff) for this task's figures.
+
+No in-scope defect found under adversarial attempts to break criteria 1-5.
+Findings 4 (chain.go) and 5 (pre-existing cache/lock mechanics) are
+observations for the backlog, not FAILs: neither is touched by this diff,
+neither regressed, and fixing either would exceed WS2's file scope.

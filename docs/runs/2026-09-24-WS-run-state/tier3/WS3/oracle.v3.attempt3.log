@@ -1,0 +1,26 @@
+== build /home/darrell/bin/ai/budget2/.worktrees/ws3
+PASS [a-alone] control renders with guardrail cuts (status 200, rows 39, cuts [10, 11, 12, 13, 14]…)
+PASS [a-to-b] GET /whatif and results-full 200 (200, 200; errors [])
+PASS [a-to-b] D3': the viewed scenario's guardrails govern the whole chain — per-year multipliers equal the unchained control (diff at years [])
+PASS [a-to-b] chart trigger lines present and never $0 after the transition (status 200, cut points 40, min 844030.6663285779)
+PASS [a-to-b] no '$0.00' guardrail trigger text on the results page
+PASS [a-to-b] Guardrail Events list and chart caption identical to the unchained control (events equal True, caption equal True)
+PASS [a-to-y] GET /whatif and results-full 200 (200, 200; errors [])
+PASS [a-to-y] D3': the viewed scenario's guardrails govern the whole chain — per-year multipliers equal the unchained control (diff at years [])
+PASS [a-to-y] chart trigger lines present and never $0 after the transition (status 200, cut points 40, min 844030.6663285779)
+PASS [a-to-y] no '$0.00' guardrail trigger text on the results page
+PASS [a-to-y] Guardrail Events list and chart caption identical to the unchained control (events equal True, caption equal True)
+PASS [a2-alone] control with a binding primary floor renders with events (cuts [10, 11, 12, 13, 14]…)
+PASS [a2-to-y] per-year multipliers equal the binding-floor control (diff years [])
+PASS [a2-to-y] every guardrail event after the transition uses the PRIMARY's floor — events list identical to the control
+PASS [a2-to-y] chart caption identical to the control ('1 cut (year 10: -7%, $14,118.28/mo → $13,194.65/mo). Next cut if the balance falls below $' vs '1 cut (year 10: -7%, $14,118.28/mo → $13,194.65/mo). Next cut if the balance falls below $')
+PASS [b-to-a] renders (status 200, rows 32)
+PASS [b-to-a] D3': the viewed scenario has no guardrails → no multiplier in any year, even after the chained step with guardrails (cuts [], raises [])
+PASS [b-to-a] chart draws no trigger lines (cut False, raise False)
+PASS [missing] D4: failed analysis still renders the inputs column + chain card + results area (status 500)
+PASS [missing] D4: failure reason shown (['Analysis failed', 'failed to load chained scenario'])
+PASS [missing] D4: no projection figures for a plan that failed to analyse (0 rows)
+PASS [missing] the chain step's Remove works from the failed page (/whatif/chain/0 -> 200)
+PASS [missing] after removing the step the plan analyses normally (status 200, links 0, rows 39)
+== all checks passed
+ORACLE PASS

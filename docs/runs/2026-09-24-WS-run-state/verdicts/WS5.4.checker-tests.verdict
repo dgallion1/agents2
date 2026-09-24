@@ -1,0 +1,126 @@
+VERDICT: PASS
+CHECKER: checker-tests
+FAMILY: anthropic
+TASK: WS5
+ATTEMPT: 4
+---
+Scratch: /tmp/claude-1000/-home-darrell-work-agents2--claude-worktrees-budget2-what-if-review-24ec2e/28920e62-8027-4a38-9437-8967166cd576/scratchpad/checkers/WS5.4-tests/
+(logs: gotest-whatif.log, node.log, makecheck.log, ws5-oracle.log, ws1-oracle.log, ws2-oracle.log, e2e-glide.log, e2e-persons.log,
+twin-errors.log, twin-nonpersons.log, twin-success.log, mut-batch1..5.log + mutlogs/; scripts e2e.js, twin.py, capture.js, mutate.py,
+runmut.sh, srv.sh). Throttled: nice -n 19, GOMAXPROCS=4, GOFLAGS="-count=1 -p=2", one go test at a time, mutations sequential,
+no background runs; every server stopped (final ps: none). No :8080, no budget2 MCP, no repo-root binary (bin-snap/bin-base built
+into scratch). Live-data runs on `cp -rL /home/darrell/bin/ai/budget2/data` copies.
+
+SNAPSHOT IDENTITY: `git archive fix/whatif-save-path-2` (a12477f) + `patch -p1 < .swarm/diffs/WS5.4.diff` -> `diff -rq` vs the
+snapshot shows only untracked artifacts (internal/config/data, testdata/uploads, tmp), at start and at end. The 6 manifest files
+`cmp` SAME vs .worktrees/ws5.
+
+CRITERION 1 -- D6 glide path: PASS
+  Oracle: `nice -n 19 .swarm/tier3/WS5/accept.sh <snapshot>` -> EXIT=0, 18 PASS, last line "ORACLE PASS" (ws5-oracle.log).
+  Chromium on a live-data copy (`node e2e.js glide`, bin-snap; disk before {"enabled":false,"start_stock_pct":0,"end_stock_pct":0,"transition_years":1}) -> "ALL PASS (glide)":
+  - "PASS G1 tick sends NO request (non-GET: [])"; "PASS G1 disk unchanged after tick ({...false,0,0,1}, sha ef0df1f51e323891 vs ef0df1f51e323891)"
+  - "PASS G1 revealed fields visible, required, enabled, empty" x3; "PASS G1 visible instruction: All three fields are required to apply a glide path."
+  - "PASS G2 [start|end|years missing] Apply sends nothing; browser message on that field {"vm":true,"msg":"Please fill out this field.","focused":true}"
+  - "PASS G2F [start|end|years] forced -> 400 ... Start %, End %, and Years are all required to apply a glide path; disk unchanged true"
+  - "PASS G2D direct start|end|years|bare-tick|start-space -> 400 ...; disk unchanged true"
+  - "PASS G3 Apply 70/40/10 -> 200; disk {"enabled":true,"start_stock_pct":70,"end_stock_pct":40,"transition_years":10}"
+  - "PASS G4 untick with EMPTY fields -> status 200; disk {"enabled":false,...}"; "PASS G5 tick (sent 0) then untick -> 200"; "PASS G* no 5xx ([])"
+
+CRITERION 2 -- D7 persons (removal / refusal / new rows): PASS
+  Oracle P1/P2/P3 lines PASS (ws5-oracle.log). `node e2e.js persons` (bin-snap, live copy; both persons linked to healthcare) -> "ALL PASS (persons)":
+  - "PASS P1 linked removal -> status 400"; "PASS P1 visible refusal text: Error Remove Christine's healthcare entry first (nearSettings)";
+    "PASS P1 row restored in place"; "PASS P1 focus back on Christine's Remove button"; "PASS P1 disk byte-identical"
+  - "PASS P2 add Sam -> [200]"; "PASS P2 unlinked removal -> 200; disk ["Darrell Gallion","Christine"]"; "PASS P2 Sam gone after reload"
+  - "PASS P3 name-only row sends no settings POST ([])"; "PASS P3 browser required message on birth month {"req":true,"vm":true,...}"
+  - "PASS P3d direct POST of name-only row -> 400 "Error Pat needs a birth month"; disk unchanged true"
+  - "PASS P4 UI birth month after start -> [400]; visible "Error Future Kid's birth month (2030-01) is after the plan's start date (2026-09)""
+
+CRITERION 3 -- attempt 4 (ruling 2026-09-24g): every persons/start-date 400 worded from the submitted value: PASS
+  Attempt-3 repro in real Chromium (e2e.js P5: focus Christine's birth month, ArrowRight, type 19711, Tab):
+    "PASS P5 typed {"value":"19711-08","valid":true} sent [["person_birth_month[]=1958-11","person_birth_month[]=19711-08"]] -> [400];
+     visible [{"txt":"Error Christine's birth month \"19711-08\" isn't a valid month (use YYYY-MM)","nearSettings":true}]; disk unchanged true"
+    "PASS P5 after reload Christine still 1971-08"
+  Start-date typo in Chromium (P7, use-current-month off, type 20261 into the start date):
+    "PASS P7 ... -> [400]; visible "Error Invalid projection start date: invalid month \"20261-09\""; disk unchanged true"
+  Clearing an existing birth month (P6): "settings POSTs 0; {"req":true,"vm":true,"msg":"Please fill out this field."}; disk unchanged true".
+  Every prepare/validate.go + models.ParseYearMonth class posted directly to bin-base and bin-snap on fresh live copies
+  (`python3 twin.py V` -> twin-errors.log; saved_changed=False on EVERY row, both builds):
+  - empty: V01 new Pat -> snap 400 "Pat needs a birth month"; V01b Christine "" -> "Christine needs a birth month"; V01c "   " -> same.
+  - unparseable: V02 "1990-13" -> "Pat's birth month "1990-13" isn't a valid month (use YYYY-MM)"; V03 "19711-08" -> "Christine's birth month
+    "19711-08" isn't a valid month (use YYYY-MM)"; V03b "abc", V03c "1971-8", V03d "<b>x</b>" (rendered as text, escaped), V03e O'Brien,
+    V03h "José Zoë" "2026-00" -> all name the person + value, none says missing. (base: 500 "Failed to save settings: ...")
+  - after start: V04 "Future Kid's birth month (2030-01) is after the plan's start date (2026-09)"; V05 Christine 2027-01; V06 start 1970-01
+    -> "Christine's birth month (1971-08) ..."; V06b start 1950-01 -> "Darrell Gallion's birth month (1958-11) ..." (the first failing row).
+  - start_date: V12 garbage / V13 2026-13 / V14 20261-09 / V14b 2026-9 -> 400 "Invalid projection start date: invalid month "..."";
+    V14d garbage start + unparseable Christine -> start-date message (ValidatePersons checks start first). No "person data" label.
+  - other persons classes truthful: V07 duplicate id, V08 name required (V08b also with empty month), V09 no primary, V10 two primaries,
+    V11 two spouses -> 400 "Invalid person data: persons: <validator text>".
+  - pre-empted classes: V15 zero rows, V16 invalid role, V19 empty start date -> IDENTICAL to base (400); V17/V18 healthcare_persons
+    -> 400 "Remove Darrell Gallion's / Christine's healthcare entry first".
+  Edge inputs the contract did not enumerate: see F1/F2 (messages true, 400, nothing saved; only reachable by direct POST for the empty case).
+
+CRITERION 4 -- non-persons errors unchanged vs base: PASS
+  `python3 twin.py N` (twin-nonpersons.log): N1 misaligned 400, N2/N8 invalid number 400, N3 out of range 400, N4/N5 chain validation 400
+  "Failed to save settings: chain link 0: scenario file not found: whatif_gone.json", N6/N7 storage write failure 500 "Failed to save
+  settings: open <PATH> permission denied" -> every row "IDENTICAL" (status, message, saved sha; N6/N7 bodies differ only by tmp path).
+  Success paths `python3 twin.py S` (twin-success.log): S1-S5 base and snap both status=200 HX-Trigger={"whatif:revision":1} with identical
+  saved_sha (98670389cb60 / ef0df1f51e32 / b0bd37aa48c5 / ef0df1f51e32 / 98670389cb60); body diff = the 5 template hunks only
+  (difflib: "hunks 5 removed 4 added 36" for every S case: birth-month `required` x2, glide onchange, always-rendered #glide-path-fields).
+  capture.js on both builds: "FORM BODIES IDENTICAL".
+
+CRITERION 5 -- mutations, one at a time (runmut.sh: go test ./internal/handlers/whatif/ + node --test web/static/js/*.test.cjs; restore +
+  cmp "restored=yes" after each): all named mutations KILLED
+  Attempt-4 named:
+  - collapse empty/unparseable into one message: n1 (always "needs") -> ws5_glide_persons_test.go:392 + .../unparseable_birth_month_(named,_not_missing) :565/:570;
+    n2 (always "isn't valid") -> :382 + .../missing_birth_month :565; n3 (attempt-3 single message) -> :382/:392/:397. KILLED x3.
+  - drop the start_date branch: n4 -> :418 "expected a start-date-labelled message, not 'person data', got ("Invalid person data: start_date: ...")" + .../invalid_projection_start_date :565/:570;
+    n5 (label "Invalid person data") -> same. KILLED x2.
+  - drop the name from the unparseable message: n6 -> :392 "got ("Birth month \"19711-08\" isn't a valid month ...")" + :565 'expected the message to contain "Pat"'. KILLED.
+  - also: n7 value dropped -> :392/:565; n8 name dropped from empty -> :382; n9 invalid-birth-month branch dropped -> :363/:382/:392;
+    n10 ambiguous branch guesses missing -> :397. KILLED x4.
+  Earlier WS5 named:
+  - requestSubmit on tick: a1/a2 template -> TestGlidePathCheckboxNeverAutoSubmitsOnChange :39; a3 JS -> node "a tick must NEVER submit the form". KILLED x3.
+  - each single glide server check: b1 start / b2 end / b3 years -> .../EnableRejectsEachFieldMissingIndividually/{start,end,years}_missing :177
+    "status = 200, want 400"; b4 whole guard -> :124 + all 3 subtests. KILLED x4.
+  - removePersonRow without save: c1 no dispatch -> node "exactly one event was dispatched on the form (the save)"; c2 'input' ->
+    "removal saves via the form's own change trigger"; c3 no restore -> "the row is restored after a refusal". KILLED x3.
+  - linked removal -> 500: d1 refusal disabled / d2 refusal 500 -> RemovePersonLinkedToHealthcare_Refused :314 "must never 500, got 500";
+    d3 unnamed -> :263 + :320. KILLED x3.
+  - birth-month required dropped: e1 template -> TestPersonBirthMonthInputIsRequired :247; e2 JS -> node "the new row's birth month input must be required". KILLED x2.
+  - glide required/disabled toggle removed: g1-g4, g9 JS -> node "revealed fields must not be disabled" / "must be required" / "hidden fields must be
+    disabled" / "unticking still saves immediately"; g5-g8 template -> TestGlidePathFieldsRequiredWhenRevealedDisabledWhenHidden :83/:96/:80. KILLED x9.
+  - after-start collapsed into missing: k1 -> :406/:411 + .../birth_month_after_start_date_(named) :565. KILLED. (k2 attempt-2 matcher, k3
+    branch dropped, k4 persons->500, k5 classifier bypassed, k6 unnamed, k7 fallback says missing: all KILLED.)
+  Tests read: TestPersonsSaveErrorMessage asserts per-shape wording from the SUBMITTED slice (Alex "" vs "19711-08" vs nil);
+  TestHandleWhatIfSettings_PersonsValidationErrorClasses posts end-to-end through the real ValidatePersons/ParseYearMonth and asserts
+  400 + mustContain/mustNotHave per class. Node tests use a hand-built fake DOM (no jsdom, no real htmx/constraint validation); real-browser
+  behaviour is evidenced by the Chromium runs above (headless: bubble not painted, so validationMessage + focus asserted).
+
+CRITERION 6 -- regression oracles: PASS
+  `nice -n 19 .swarm/tier3/WS1/accept.sh <snapshot>` -> EXIT=0, 278 PASS, "== all checks passed", last line "ORACLE PASS" (ws1-oracle.log).
+  `nice -n 19 .swarm/tier3/WS2/accept.sh <snapshot>` -> EXIT=0, 85 PASS, "== all 5 scenarios passed", last line "ORACLE PASS" (ws2-oracle.log).
+
+CRITERION 7 -- suites: PASS
+  `nice -n 19 go test -v ./internal/handlers/whatif/...` -> EXIT=0 "ok budget2/internal/handlers/whatif 16.364s", 0 "--- FAIL"; all 12 WS5 tests
+  + subtests "--- PASS" (incl. PersonsValidationErrorClasses/unparseable_birth_month_(named,_not_missing) and /invalid_projection_start_date).
+  `nice -n 19 node --test web/static/js/*.test.cjs` -> EXIT=0 "tests 74 / pass 74 / fail 0".
+  `nice -n 19 make check` -> EXIT=0, "tailwind.css is up to date", "✓ all checks passed".
+
+SCOPE: PASS
+  Diff files = the 6 manifest paths (.swarm/manifests/WS5.4.files); vs attempt 3 only handlers_rates.go (classifier) and
+  ws5_glide_persons_test.go changed. No .swarm/critical.globs path touched (engine/**, settings.go, settings_current_month.go, storage/**: none).
+
+FINDINGS (not counted; for the lead's backlog -- all direct-POST-only for the empty case, every message still true, 400, nothing saved)
+  F1 (duplicate names, deliberate hedge): two rows named "Pat", the FIRST (the one ValidatePersons rejects) with an EMPTY month:
+     V03i "Pat" "" + "Pat" "1990-01" -> 400 "Pat's birth month isn't valid (use YYYY-MM)" -- not the ruling's "<Name> needs a birth month"
+     wording (the classifier declines to guess when names collide, though ValidatePersons' row order would identify the culprit).
+     V03k both empty -> "Pat needs a birth month"; V03j/V03l (one unparseable) -> "Pat's birth month isn't valid" (true, no "missing").
+  F2 (names Go's %q escapes): the regex captures the %q-ESCAPED name and compares it to the raw submitted name.
+     V03m 'Pat "PJ" Jones' + "" -> 400 "Invalid person data: persons: invalid birth_month for "Pat \"PJ\" Jones": month is required"
+     (the regex's [^"]* cannot span \" -> attempt-3 fallback); V03n same name + "1990-13" -> "... invalid month "1990-13"" (browser-
+     reachable via a five-digit year; names the person, escaped, no "missing"). V03o 'Pat\X' + "" -> "Pat\\X's birth month isn't valid
+     (use YYYY-MM)" (name shown with a doubled backslash; empty month not worded as missing). Quoted nicknames are plausible names.
+  F3 (test gap): n11 -- unparseable message reworded to `"%s's birth month %q is missing"` SURVIVES go + node (mut-batch2.log
+     "GO_EXIT=0 NODE_EXIT=0"); the tests and the oracle's P3d both pin the phrase "needs a birth month", not the concept "missing".
+  F4 (carried from attempt 3 F1): r1 (persons success renders revisionUnreported) and r2 (unclassified persons-path error hard-coded
+     400) SURVIVE go + node (mut-batch5.log); behaviour proven identical to base by S1-S5 HX-Trigger and N6 500 twins.

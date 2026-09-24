@@ -1,0 +1,115 @@
+VERDICT: FAIL
+CHECKER: checker-second
+FAMILY: adversarial
+TASK: WS1
+ATTEMPT: 4
+---
+METHOD
+Built ./cmd/server from the given snapshot (`go build ./cmd/server` -> success,
+no .git in the snapshot). Extracted the JS rounding helpers into a standalone
+file and ran them under real Node (v24.12.0), and built a standalone Go
+binary that reproduces the template's exact `fmt.Sprintf("%.1f", v)` call
+(what `{{printf "%.1f" .Value}}` does). Also stood up the real built server
+on a scratch data dir (own `cp`, `BUDGET_LISTEN_ADDR=127.0.0.1:39871`,
+`BUDGET_DEBUG=false`) and drove it with real Chromium (Playwright,
+NODE_PATH as given). Server killed and port confirmed free afterward
+(`ss -ltnp` empty, no lingering scratch `server` processes). Never touched
+:8080, never ran a repo-root `budget2` binary, no MCP tools, no git state
+changes; only wrote inside my own checker scratch dir.
+
+FINDING (in scope, FAIL basis): R-FMT' percent1 path diverges from Go on
+negative near-zero values — a domain the server itself accepts with no
+validation.
+- Swept 32,465 values (x.x5 ties across ±2000, ±0.001 band, random floats in
+  [-1000,1000] and [-0.001,0.001], plus the contract's own worked examples
+  7.25/4.35/3.85) through (a) the real Go binary's `%.1f` and (b) the
+  extracted `roundHalfEvenDecimalString(v,1)`. Exactly 1014 mismatches, and
+  every one is the SAME pair: Go says `"-0.0"`, JS says `"0.0"` — for any
+  genuine negative v in the open interval (-0.05, 0). Every tie (x.x5) and
+  every other value agrees exactly — the half-even tie-break logic itself is
+  correct; only this one sign case is wrong.
+- Root cause: `roundHalfEvenDecimalString`'s last line is
+  `if (negative && Number(result) !== 0) result = '-' + result;` — it drops
+  the sign whenever the ROUNDED result is zero, not just for true bit-pattern
+  -0. Go's bare `%.1f` (used directly by the template, no zero-belt) has no
+  such suppression and prints `-0.0` for any v in (-0.05,0). Verified
+  directly: `fmt.Sprintf("%.1f", -0.03)` = `"-0.0"` (go run); JS
+  `roundHalfEvenDecimalString(-0.03,1)` = `"0.0"`.
+- Reachability is real, not contrived: `inflation_rate` and
+  `spending_decline_rate` have `HasBounds: false` in form_spec.go (no
+  server-side range check at all), and `handlers_healthcare.go`'s update path
+  for `pre_medicare_inflation`/`post_medicare_inflation` checks only
+  `monthlyCost < 0` and `age` — never the inflation fields. All four fields
+  that use `data-quick-adjust-display-format="percent1"` can legitimately
+  hold a negative value with zero validation rejection.
+- Demonstrated live on the real server: built a fixture (via the oracle's own
+  `base_plan()`/`write_fixture()` lib, reading only the LIVE JSON file
+  on disk — no :8080 contact) with `inflation_rate=-0.03`,
+  `spending_decline_rate=-0.02`, one person's `pre_medicare_inflation=-0.01`.
+  `curl` of the real served `/whatif` page shows `-0.0%` nine times: the
+  in-card display span + its range's `aria-valuetext`, the Quick Adjust
+  mirror's display + `aria-valuetext`, for both `inflation_rate` and the
+  healthcare person's `pre_medicare_inflation` (both in-card and QA copies).
+  Loaded the same fixture in real Chromium after JS ran: confirmed attempt
+  4's mirror-only load sync correctly leaves these at `-0.0%` (matches
+  R-FMT's "authoritative at load", no regression there).
+- The divergence is NEW, not pre-existing: `git show
+  643fa54:web/static/js/whatif-quick-adjust.js` shows master's percent1 case
+  was `numericValue.toFixed(1) + '%'`; `(-0.03).toFixed(1)` = `"-0.0"` in
+  real Node — i.e. master's old formatter AGREED with Go (both showed the
+  same, if odd-looking, `-0.0%`). This attempt's new
+  `roundHalfEvenDecimalString`, introduced by this attempt (file is in the
+  WS1.4 manifest), is what breaks the agreement.
+- The worker's own test file documents the false premise that let this
+  through: `whatif-quick-adjust.test.cjs:158` — "no WS1 field is ever
+  negative, so only the rounding RULE is this test's concern, not the sign
+  convention" — and the `percentHalfEvenTies` table used by both the
+  half-even test and the "kills toFixed/x*10" test (lines 177-196) contains
+  zero negative rows. That premise is factually false for exactly the
+  reasons above, and the negative branch of `roundHalfEvenDecimalString` was
+  never exercised against real Go output.
+- Confirmed the diagnosis is precise and repairable (not misdiagnosed, per
+  the "does the remedy fix it" check): changing that one line to
+  `if (negative) result = '-' + result;` (matching Go's unconditional sign
+  preservation) reduces the mismatch count on the same 32,465-value sweep
+  from 1014 to 0.
+- Live-drag reachability caveat, reported for precision: every control
+  bound to `percent1` (main range AND its Quick Adjust mirror, for all four
+  fields) has `min="0"`, so no mouse/keyboard drag on the CURRENT UI can
+  itself produce a negative value in the live formatter — the browser
+  clamps a range's `.value` to `min` the instant it's touched or
+  programmatically set, and `proxyQuickAdjustMirrorToCanonical` overwrites
+  the (unclamped) hidden canonical field with the mirror's already-clamped
+  value before any resync reads it. The bug is real and reachable through
+  the field's own accepted (unbounded) stored-value domain — demonstrated
+  above on the served page with no JS involved — but I could not construct
+  a live in-browser drag that shows the LIVE JS text disagree with a
+  freshly-reloaded server text within a single session; the disagreement is
+  between "what a future recompute of this exact stored figure would show"
+  and "what the server just rendered." This is the same class and the same
+  order of narrowness as prior accepted WS1 FAILs (the .50-tie, the 1-ulp
+  COLA drift, the 16-17-sig-fig cost basis) — none of those were reachable
+  by drag either; all were off-grid/unusual STORED values, exactly this
+  field's own accepted domain.
+
+SCOPE
+- FAIL basis: `web/static/js/whatif-quick-adjust.js`'s `roundHalfEvenDecimalString`
+  (introduced by this attempt, in the WS1.4 manifest) vs. Go's `%.1f`
+  (`internal/templates` / the bare `{{printf "%.1f" ...}}` template calls
+  this attempt's contract governs under R-FMT'), on `inflation_rate`,
+  `spending_decline_rate`, `pre_medicare_inflation`, `post_medicare_inflation`.
+- Positive evidence found and not disputed: the half-even TIE-BREAKING logic
+  itself is correct and byte-identical to Go across the entire sweep (0
+  non-sign mismatches out of 32,465); `formatWholeDollars`/`formatNumber`
+  agree at every .50 tie tried; `formatWholeDollars` is no longer used by
+  any WS1 template (0 hits); `formatExact` is a single, uniform
+  `FormatFloat(v,'f',-1)` with no scaled-site confusion (`formatExactScaled`
+  is the one COLA site, `sigFigsPlain` never emits exponent notation); the
+  mirror-only load/after-swap sync correctly leaves server-rendered
+  display/aria untouched (verified live in Chromium); oracle v5 (both
+  variants) is ORACLE PASS per `.swarm/tier3/WS1/oracle.4.log`.
+- Per CLAUDE.md's default-to-FAIL-on-ambiguity rule and the established
+  pattern for every prior WS1 hard stop (dual-formatter divergence on a
+  value class the oracle's own fixture never tried), this is a FAIL, not a
+  backlog observation — the field's own server-side validation accepts the
+  triggering value, and the served page already shows the artifact.

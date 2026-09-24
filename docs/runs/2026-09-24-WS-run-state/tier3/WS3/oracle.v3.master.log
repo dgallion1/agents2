@@ -1,0 +1,29 @@
+== build /tmp/claude-1000/-home-darrell-work-agents2--claude-worktrees-budget2-what-if-review-24ec2e/28920e62-8027-4a38-9437-8967166cd576/scratchpad/base-643fa54
+FAIL [a-to-b] server log contains a panic
+2026/09/23 14:38:37 whatif: fast analysis panicked: runtime error: invalid memory address or nil pointer dereference
+panic({0xc007a0?, 0x1919200?})
+PASS [a-alone] control renders with guardrail cuts (status 200, rows 39, cuts [10, 11, 12, 13, 14]…)
+FAIL [a-to-b] GET /whatif and results-full 200 (500, None; errors ['Analysis failed', 'analysis computation failed'])
+FAIL [a-to-b] D3': the viewed scenario's guardrails govern the whole chain — per-year multipliers equal the unchained control (diff at years ['12', '14', '26', '35', '38', '37', '17', '31'])
+FAIL [a-to-b] chart trigger lines present and never $0 after the transition (status 500, cut points 0, min None)
+PASS [a-to-b] no '$0.00' guardrail trigger text on the results page
+FAIL [a-to-b] Guardrail Events list and chart caption identical to the unchained control (events equal False, caption equal False)
+PASS [a-to-y] GET /whatif and results-full 200 (200, 200; errors [])
+FAIL [a-to-y] D3': the viewed scenario's guardrails govern the whole chain — per-year multipliers equal the unchained control (diff at years ['26', '35', '38', '37', '33', '32', '29', '20'])
+PASS [a-to-y] chart trigger lines present and never $0 after the transition (status 200, cut points 40, min 2156724.838159482)
+PASS [a-to-y] no '$0.00' guardrail trigger text on the results page
+FAIL [a-to-y] Guardrail Events list and chart caption identical to the unchained control (events equal False, caption equal False)
+PASS [a2-alone] control with a binding primary floor renders with events (cuts [10, 11, 12, 13, 14]…)
+FAIL [a2-to-y] per-year multipliers equal the binding-floor control (diff years ['14', '26', '35', '38', '37', '17', '31', '34'])
+FAIL [a2-to-y] every guardrail event after the transition uses the PRIMARY's floor — events list identical to the control
+FAIL [a2-to-y] chart caption identical to the control ('3 cuts (year 10: -7%, $14,118.28/mo → $13,194.65/mo; year 18: -30%, $15,338.97/mo → $10,73' vs '1 cut (year 10: -7%, $14,118.28/mo → $13,194.65/mo). Next cut if the balance falls below $')
+PASS [b-to-a] renders (status 200, rows 32)
+PASS [b-to-a] D3': the viewed scenario has no guardrails → no multiplier in any year, even after the chained step with guardrails (cuts [], raises [])
+PASS [b-to-a] chart draws no trigger lines (cut False, raise False)
+FAIL [missing] D4: failed analysis still renders the inputs column + chain card + results area (status 500)
+PASS [missing] D4: failure reason shown (['Analysis failed', 'failed to load chained scenario'])
+PASS [missing] D4: no projection figures for a plan that failed to analyse (0 rows)
+FAIL [missing] the chain step's Remove works from the failed page (None -> None)
+FAIL [missing] after removing the step the plan analyses normally (status None, links None, rows None)
+== 12 check(s) failed
+ORACLE FAIL

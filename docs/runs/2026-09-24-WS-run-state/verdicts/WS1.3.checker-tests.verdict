@@ -1,0 +1,175 @@
+VERDICT: FAIL
+CHECKER: checker-tests
+FAMILY: anthropic
+TASK: WS1
+ATTEMPT: 3
+---
+Scratch dir: /tmp/claude-1000/-home-darrell-work-agents2--claude-worktrees-budget2-what-if-review-24ec2e/28920e62-8027-4a38-9437-8967166cd576/scratchpad/checkers/WS1.3-tests (S below).
+- work = cp -a of the snapshot. base = `git archive 643fa54`. mut = a copy used for mutations.
+- Servers: temp builds S/bin/{br,base,mutF2F5}. Each ran on a cp -rL fixture copy at a random 127.0.0.1 port, and every one was killed afterwards (`ps` shows no scratch servers).
+- :8080 was never contacted. No MCP tools were used.
+- After all mutations, `diff -rq work mut` is clean, and the snapshot equals work, excluding tmp/.
+
+SUMMARY: FAIL on R-EXACT and R-TEST.
+- PASS: round trip at the written "float-equal" tolerance on the lead's fixture, form validity, touched path, aria == display, the three QA behaviours, ids kept, R-FMT behaviour, the rewritten tests, suites and scope.
+
+== Suites: PASS
+- `GOFLAGS=-count=1 rtk proxy make check` (work) -> exit 0, "✓ all checks passed".
+  - 52 "ok" packages; "tailwind.css is up to date"; "No vulnerabilities found."
+- `GOFLAGS=-count=1 go test ./internal/handlers/whatif/... ./internal/templates/...` -> "ok budget2/internal/handlers/whatif 11.400s", "ok budget2/internal/templates 2.118s".
+- `node --test web/static/js/*.test.cjs` -> "tests 33 / pass 33 / fail 0".
+- The new generic and convergence tests fail on base (copied onto 643fa54):
+  - All 7 TestWS1GenericRoundTrip_* fail.
+  - TestWS1WholeDollarConvergence_PortfolioAndQuickAdjust fails. That is master's living-expenses split.
+
+== Oracle v3 (the version briefed, oracle.3.log): PASS
+- `TMPDIR=S/tmp accept.sh S/work` -> exit 0, 90 PASS, last line "ORACLE PASS" (S/oracle.work.log).
+- NOTE: the lead changed make_fixture.py and check.py at 14:52, during this run (v4: cost basis 232777.48988888797, bit-exact criterion 1).
+  - Re-running `accept.sh S/work` with v4 -> exit 1 (S/oracle.v4.work.log). It fails only on:
+    - "FAIL criterion 1 ... changed .social_security.cola_rate: 0.0145 -> 0.014499999999999999"
+    - "changed .taxable_cost_basis: 232777.48988888797 -> 232777.489888888"
+  - This matches the lead's own oracle.v4.attempt3.log.
+
+== C1 Round-trip identity: PASS at the written 1e-9 "float-equal" tolerance on the oracle and tie fixtures. FAIL on one field the app writes itself.
+- Evidence: S/js/untouched.js in real Chromium submits every stored-value form untouched, then compares the saved JSON bit for bit.
+  - Tie fixture (S/fx/mk_ties.py): 15/15 forms valid and sent. The only change is `cola_rate_set None -> True` (F-026 bookkeeping).
+  - Oracle v3 fixture: 0 changes within 1e-9 (oracle "PASS criterion 1 ... (0 change(s))").
+- Monthly living expenses (MLE) loses up to $0.005 on an untouched save:
+  - The hidden input is still `printf "%.2f"` (portfolio-settings.html:83; that file is in the manifest).
+  - Sync from Dashboard writes MLE = totalExpenses/months (sync.go:249), a 17-significant-digit value.
+  - Fixture S/fx/mk_mle.py, MLE 12923.603942198184:
+    - Branch: hidden value="12923.60". An untouched save gives "MLE 12923.603942198184 -> 12923.6 |d|= 0.0039".
+    - Base: identical. The defect is pre-existing.
+  - This is beyond float-equal and against R-EXACT.
+  - SPEC §1 calls this "%.2f" pattern "the exact saved value". The lead must rule whether it is in scope. I report it; my FAIL does not rest on it.
+
+== C2 No stored value makes a form invalid: PASS
+- Oracle: 14 × "PASS FORM ... form valid on the off-grid plan (criterion 2) — invalid: []".
+- untouched.js on the exact, tie, oracle and MLE fixtures: every stored-value form checkValidity() true, and every one sent with 200.
+- Finding F-C2 (pre-existing, not in the §1 enumeration): guardrails.html:81 min_monthly_spending_real is still step="0.01".
+  - Fixture S/fx/mk_floor.py sets it to 6000.555. Result on branch AND base: "Please enter a valid value. The two nearest valid values are 6000.55 and 6000.56".
+  - The /whatif/guardrails form is invalid and NOT SENT.
+  - The guardrail optimizer and MCP both write this field.
+
+== C3 Touched path exact (direct + Quick Adjust): PASS
+- S/js/drag.js does real mouse drags on the branch:
+  - 19 drags on fixture A: every healthcare slider, portfolio (before and after the $0-1M select), inflation, investment return, phase 1, and 8 QA mirrors.
+  - 7 drags on fixture B: decline, employer ACA cost and inflation, employer cost, QA inflation, QA ACA cost.
+  - Every drag saved exactly the range value at release, with 1 request each and 0 page errors.
+  - Examples: "hc cost (Sam) in-card saved 1655.3 -> 1850 range 1850.0"; "QA portfolio mirror after QA select $0-1M ... -> 640000".
+- S/js/kbd.js, keyboard: hc 1655.3 -> 1750; portfolio -> 2550000; phase1 -> 1.05.
+- Oracle: "PASS criterion 3" × 3.
+
+== C4 aria-valuetext == its own display, every converted slider and QA mirror: PASS
+- S/js/ariaeq.js, before and after JS, on fixtures A / B / ties: 25 / 26 / 35 ranges with aria, "aria!=display 0" in all 6 runs.
+- Oracle E1: 32 PASS lines.
+
+== Three Quick Adjust behaviours: PASS
+- Oracle: "PASS E3 (C5 R1) step 0/1/2", "PASS E4 (C5 R2)", "PASS E5 (C5 R3)".
+- drag.js: after the in-card select, qa max=1000000 step=10000. The QA investment-return and portfolio drags update their displays.
+
+== Ids kept: PASS
+- `curl /whatif`, base vs branch, fixtures A, B and ties: removed=[], count-changed=[], new dups=[].
+- Added ids are only *-exact / portfolio-value-exact.
+
+== R-FMT: PASS (behaviour)
+- My own .50 ties on fields the oracle never ties (S/fx/mk_ties.py):
+  - portfolio 1234568.5; phase-dollar 7386×1.25 = 9232.5 (in-card and QA);
+  - ACA person current cost 1654.5 and Medicare cost 1200.5; medicare person current cost 1800.5;
+  - employer person current cost 2800.5, ACA-after-employer 1400.5, Medicare cost 900.5;
+  - care cost 2500.5.
+- S/js/surfaces.js compares the served DOM (JS off) with the live DOM (JS on, QA open).
+  - For all 8 ties: "served even=True up=False | live even=True up=False".
+  - Every $ display, aria value, QA mirror and Coverage Timeline entry reads the same half-even string served and live. Examples: "$9,232/mo" both places; "Employer $2,800 ACA $1,400 Medicare $900".
+- Base on the same fixture: in-card phase-dollar served "$9,233/mo" (half-up), and "$1,654" -> "$1,650" after load.
+- Care cost has no whole-dollar surface; its input renders value="2500.5".
+- JS: formatWholeDollars uses roundHalfEven, and the node table test pins it.
+
+== R-EXACT: FAIL
+Decision on formatExact = FormatFloat(v,'g',15,64) for all values: it does NOT meet R-EXACT.
+- R-EXACT requires stored values rendered 'f',-1 and "never re-rounded", and requires derived values "with no exponent".
+- (a) 16-17 significant-digit stored values are re-rounded, and an untouched save rewrites them. The app can hold them:
+  - S/js/typed.js: a user types 83.03712345678912 into Tax-Deferred % (step="any" accepts it).
+  - POST "tax_deferred_percent=83.03712345678912" saves exactly "83.03712345678912".
+  - After reload the input shows "83.0371234567891". An untouched settings save rewrites the stored value to "83.0371234567891".
+  - Fixture S/fx/mk_exact.py, untouched saves, bit-exact changes:
+    - taxable_cost_basis 12923.603942198184 -> 12923.6039421982
+    - tax_deferred_percent 83.03712345678912 -> 83.0371234567891
+    - portfolio_value 2437512.3400000003 -> 2437512.34
+    - monthly_property_tax 666.6666666666666 -> 666.666666666667
+    - fra_benefit 4114.912345678901 -> 4114.9123456789
+    - roth annual_amount 12345.678901234567 -> 12345.6789012346
+    - healthcare current_monthly_cost 612.3456789012345 -> 612.345678901234
+  - The live plan already holds 17-significant-digit computed floats (removed_income_sources amount 10339.581296296297), and sync.go:249 divides. The lead's v4 oracle fails on the same class.
+- (b) Exponent output in type=number inputs.
+  - Served attribute values: property_tax_inflation 0.00005 -> value="5e-05"; floor_cut_pct -> "5e-05"; care_monthly_cost 0.00001 -> "1e-05".
+  - The derived COLA ×100 path, cola_rate 1e-7 -> value="1e-05", is explicitly forbidden ("no exponent").
+  - Chromium keeps "5e-05" as the visible field text.
+- The worker's TestFormatExact claims "raw stored value renders with NO re-rounding" but has no case over 11 significant digits and no case below 0.001. So neither (a) nor (b) is pinned.
+- Missing: 'f',-1 for stored values; a 15-significant-digit render without exponent for derived values; tests pinning both, e.g. 12923.603942198184 and 5e-05.
+- Spec-level observation, not a worker defect: COLA ×100/÷100 cannot round-trip bit-exactly under either rule, because the handler divides by 100.
+  - Sweep 0-0.1 step 1e-4: 266/1001 values mismatch with g15, 139/1001 with shortest.
+  - Example 0.0145 -> 0.014499999999999999.
+  - v4's COLA failure therefore needs a lead ruling (handler change vs tolerance).
+
+== R-TEST: FAIL
+- Harness: S/mutate.py applies each mutation alone to S/mut, runs `GOFLAGS=-count=1 go test ./internal/handlers/whatif/ ./internal/templates/` and `node --test web/static/js/*.test.cjs`, then reverts. Every revert was "OK".
+- Logs: S/mut1.log, S/mut2.log, S/mut3.log.
+- KILLED, all 14 attempt-2 mutations:
+  - a, b, c, a2, a3, c2, c3, U1-U7.
+  - Example: b -> TestWS1GenericRoundTrip_RateAssumptions + ..._CostBasisStepIsAny.
+- KILLED, the contract's additions:
+  - N1: drop step=any on cost basis.
+  - N2: drop step=any on glide start_stock_pct (Generic_RateAssumptions).
+  - N3: max="10" on floor_cut (Generic_Guardrails). N3b: max="4000" on care cost (Generic_HealthcarePerson).
+  - N4: %.0f on property_tax_inflation (Generic_PortfolioSettings).
+  - N5: formatExact = math.Round(v*1e10)/1e10 (TestFormatExact, ..._NoArtifactsAcrossRange).
+  - N6: formatDollars on the timeline "ACA $" (Convergence_HealthcareCard). N6b: formatDollars on the MLE display span (MLE rounding test + Convergence_Portfolio).
+  - N7: Math.round in formatWholeDollars (node: 3 tests).
+- SURVIVED ("go rc=0 node rc=0"). The contract requires a kill for "a half-up JS or Go formatter on ANY one whole-dollar surface":
+  - F2, Go half-up: formatDollars on the QA phase-dollar label (quick-adjust.html:240).
+  - F5, Go half-up: formatDollars on the Coverage Timeline ACA->Medicare current cost (healthcare-person.html:305).
+  - F6, Go half-up: formatDollars on the Coverage Timeline Employer->Medicare employer cost (:259).
+  - F3, JS half-up: inline Math.round in the phase-dollar path (whatif-quick-adjust.js:103).
+  - F7, JS half-up: inline Math.round in the MLE aria path (whatif-quick-adjust.js:214).
+  - F2+F5 build on the tie fixture shows both are real:
+    - served QA "$9,233/mo" vs in-card "$9,232/mo";
+    - the timeline shows "$1,655" permanently while the display beside it shows "$1,654".
+  - Cause: the convergence tests render only the employer Employer->ACA->Medicare branch plus portfolio/MLE. No test renders a phase-dollar tie in QA, or the other two timeline branches at a tie. The node test covers only formatWholeDollars itself, not its call sites.
+- Also SURVIVED:
+  - F1: step="any" -> step="0.25" on floor_cut_pct (fixture 10.25 is on that grid).
+    - The test checks "on the effective grid", not the contract's "step="any"" invariant.
+  - F8: %.1f on the hidden healthcare current_monthly_cost.
+    - The fixture's 1655.30 / 612.40 are exact at 1 decimal, so a coarser formatter passes.
+- Also KILLED: F4, formatExact 'g',10 (TestFormatExact).
+- Missing:
+  - tie fixtures that reach every whole-dollar surface: QA phase-dollar, all three timeline branches, and the JS call sites;
+  - a literal step="any" assertion;
+  - fixture values that need at least 3 decimals, or 16-17 significant digits.
+
+== Rewritten pre-existing tests: PASS
+The flips are exactly what R-FMT asks; nothing was weakened. Diff against base:
+- monthly_living_expenses_rounding_test.go:
+  - Before: contains aria "$7,387"; must NOT contain aria "$7,386"; display "$7,387"; mirror aria "$7,387"; mirror display "$7,387".
+  - After: contains aria "$7,386"; must NOT contain aria "$7,387"; display "$7,386"; mirror aria "$7,386"; mirror display "$7,386".
+  - Same count and polarity.
+  - The phase subtest is unchanged ($8,125/mo). 8125.15 is not a tie, so this subtest never checked tie rounding before or after.
+- spending_phases_render_test.go:
+  - Before: contains "$9,233/mo".
+  - After: contains "$9,232/mo" AND must NOT contain "$9,233/mo". This is stronger.
+  - 7386×1.25 = 9232.5 exactly, so it is a real tie.
+
+== SCOPE: PASS
+- Snapshot vs 643fa54: 15 changed + 5 added files. That equals the 20-path manifest (in diff not manifest: [], in manifest not diff: []).
+- Also present: tmp/ (make check tailwind artifacts, gitignored).
+- No .swarm/critical.globs path touched.
+
+== Findings (lead to classify)
+- R1, a regression introduced by this diff (whatif-quick-adjust.js: syncQuickAdjustKey now calls updateInvestmentReturnDisplay on load):
+  - Live-plan shape (investment_return 0, roth_percent 0): served "Using asset allocation (~6.2% expected)"; after load, display AND both aria values read "~6.1%".
+  - Base keeps "~6.2%" after load.
+  - Cause: the JS calculateExpectedReturnFromAllocation (pre-existing) uses `|| 10` / `|| 60` fallbacks that override an explicit 0. In-page it returns 6.116; Go returns 6.236.
+  - The oracle fixture (roth_percent 0.5, investment_return 6.25) cannot see it.
+- F-C2 above (min_monthly_spending_real step=0.01). The MLE %.2f item under C1.
+- By inspection only, not run: the dashboard kpis.html:59 "Target … $X base" uses formatDollars (half-up) on the living-expense base. It is outside /whatif.
+- updatePhaseSliderLabel (whatif-spending-phases.js) is now dead code; no oninput calls it.

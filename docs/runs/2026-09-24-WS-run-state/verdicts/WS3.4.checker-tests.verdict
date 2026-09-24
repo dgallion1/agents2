@@ -1,0 +1,108 @@
+VERDICT: PASS
+CHECKER: checker-tests
+FAMILY: anthropic
+TASK: WS3
+ATTEMPT: 4
+---
+Scratch: /tmp/claude-1000/-home-darrell-work-agents2--claude-worktrees-budget2-what-if-review-24ec2e/28920e62-8027-4a38-9437-8967166cd576/scratchpad/checkers/WS3.4-tests/
+ tree = rsync of snap/WS3.4-tests; base = git archive 643fa54. Harnesses: mutate.py + runmut.sh (mut-all.log, mutlogs/), isol.sh + variant.py
+ (isol.log), twin_dump_checker_test.go (Go twin, MC seed 424242), httpprobe.py + seeded binaries bin/budget2-{base,tree} (runs/), probe/ (throwaway
+ t.Logf probes). Contract: SPEC.md "WS3 attempt 3 contract (D3 replaced by D3')" + ruling 2026-09-23l (attempt 4 = test-only).
+
+PROVENANCE / ATTEMPT-4 SCOPE
+ - base + patch -p1 < .swarm/diffs/WS3.4.diff -> "PATCH_OK"; diff -rq vs snapshot: only internal/config/data (gitignored data/), testdata/uploads
+   (empty dir), tmp/ (gitignored).
+ - base + WS3.3.diff vs base + WS3.4.diff: `diff -rq` lists ONLY internal/handlers/whatif/ws3_chain_guardrails_test.go and
+   internal/services/retirement/engine/ws3_chain_guardrails_test.go. Per-file hunk compare of the two diffs: SAME for handlers.go, monte_carlo.go,
+   guardrails.go, spending_floor.go, stepper.go, guardrails.html, whatif.html, floor_outcomes_test.go, ws3_chain_guardrails_montecarlo_test.go;
+   DIFF only for the two test files. Every non-test file is byte-identical to attempt 3.
+ - Attempt-4 delta (difflib): engine test +assertGuardrailEventsMatch +TestChainGuardrailEventsMatchUnchainedWhenPrimaryFloorBinds (append only);
+   handler test +regexp import +ws3GuardrailSummaryRe/ws3GuardrailEventRe
+   +TestHandleWhatIf_GuardrailEventsAndChartCaptionMatchUnchainedWhenPrimaryFloorBinds (append only). No existing test modified.
+
+C1 (A on -> B none: 200, YbY renders, multipliers == unchained A, non-$0 triggers) — PASS.
+  `TMPDIR=<scratch>/ortmp accept.sh <scratch>/ortree` -> oracle.checker.log, EXIT=0, last line "ORACLE PASS":
+   "PASS [a-to-b] GET /whatif and results-full 200 (200, 200; errors [])"; "PASS [a-to-b] D3': ... per-year multipliers equal the unchained control
+   (diff at years [])"; "PASS [a-to-b] chart trigger lines present and never $0 after the transition (status 200, cut points 40, min 844030.66...)";
+   "PASS [a-to-b] no '$0.00' guardrail trigger text on the results page"; "PASS [a-to-b] Guardrail Events list and chart caption identical to the
+   unchained control (events equal True, caption equal True)".
+C2 (A -> Y on, different config: == A unchained) — PASS.
+  oracle: "PASS [a-to-y] ... per-year multipliers equal the unchained control (diff at years [])", trigger lines never $0, no '$0.00',
+  "events equal True, caption equal True"; binding-floor variant: "PASS [a2-to-y] per-year multipliers equal the binding-floor control (diff years [])",
+  "PASS [a2-to-y] every guardrail event after the transition uses the PRIMARY's floor — events list identical to the control",
+  "PASS [a2-to-y] chart caption identical to the control ('1 cut (year 10: -7%, $14,118.28/mo → $13,194.65/mo) ...')".
+C3 (B none -> A: no multipliers, no triggers) — PASS.
+  oracle: "PASS [b-to-a] D3': the viewed scenario has no guardrails → no multiplier in any year ... (cuts [], raises [])";
+  "PASS [b-to-a] chart draws no trigger lines (cut False, raise False)".
+C4 (D4 incl. Remove) — PASS.
+  oracle: "PASS [missing] D4: failed analysis still renders the inputs column + chain card + results area (status 500)"; "failure reason shown
+  (['Analysis failed', 'failed to load chained scenario'])"; "no projection figures ... (0 rows)"; "the chain step's Remove works from the failed page
+  (/whatif/chain/0 -> 200)"; "after removing the step the plan analyses normally (status 200, links 0, rows 39)". Oracle servers: none left
+  (ps check "no checker servers running").
+C5 (unchained plans byte-identical to base) — PASS.
+  Go twin (real SettingsManager load, runFullWithSeed(..., 424242), full WhatIfAnalysis JSON, 13 sections), base vs tree, `cmp`:
+   "IDENTICAL u-on (678898 bytes)", "IDENTICAL u-nil (545678 bytes)", "IDENTICAL u-disabled (545915 bytes)", "IDENTICAL u-on-nofloor (679385 bytes)",
+   "IDENTICAL u-stress (674292 bytes)", "IDENTICAL b-alone (545678 bytes)", "IDENTICAL live (713554 bytes)" (cp -rL copy of live data; MC runs 1000,
+   success_rate 88.2), "IDENTICAL live-jobloss-unchained (141563 bytes)". Sensitivity anchor: predicate mutant dropping .Enabled ->
+   "X1 u-disabled DIFF from base" (events 0 -> 4).
+  Rendered (seeded binaries MonteCarloSeed=424242 in both, isolated ports/data): all 8 fixtures "YbY byte-identical=True" (u-on rows 39, x-mults 29;
+   live rows 39, x-mults 29), events block same, caption/summary same, "Next yearly check" anchors same, "chart JSON identical=True";
+   results-full "raw diff lines=3 nonblank=0" and /whatif page "identical ignoring blank lines=True raw diff lines=3" — the 3 lines are blank lines
+   emitted by the new {{/*...*/}}{{if .AnalysisError}}/{{else}}/{{end}} actions in whatif.html (shown by difflib on u-on).
+C6 (permanent tests kill the named mutations, one at a time) — PASS.
+  runmut.sh: fresh copy of tree, ONE mutation (anchor counts asserted), `go test -count=1 ./internal/services/retirement/... ./internal/handlers/whatif/...`,
+  copy discarded (= reverted). mut-all.log, 16/16 KILLED:
+   Evaluating with the active step's config:
+    M1a Evaluate(s.Guardrails) -> panic + "ws3_chain_guardrails_test.go:250: status = 500, want 200".
+    M1b active cfg w/ primary fallback -> "ws3_chain_guardrails_test.go:181: a-to-y: year 3 GuardrailMultiplier=0.567, want 0.729...".
+    M1c cut+raise triggers from active cfg -> ":181: a-to-y: year 3 GuardrailCutTrigger=248241.5..., want 250774.6..." and new handler test
+        ":417: GuardrailChartSummary caption =".
+    M1d governance predicate on active s -> ":138: a-to-b: year 3 GuardrailMultiplier=1, want 0.729...".
+   Spending floor from the active step:
+    M2a all three floorAdjustedLiving sites -> "floor_outcomes_test.go:334: chain month 12 got 9000 want 7500", ":258: month 36 ... want the PRIMARY's
+        floor 6000", + both new tests FAIL.
+    M2d event "before" site ALONE (stepper.go:338) -> "ws3_chain_guardrails_test.go:342: chained vs unchained-A: GuardrailEvents count=5, want 3" and
+        "ws3_chain_guardrails_test.go:409: chained rendered 5 guardrail events, want 3".   [attempt-3 survivor: now KILLED]
+    M2e event "after" site ALONE (stepper.go:339) -> same ":342 ... count=5, want 3" and ":409 ... 5 guardrail events, want 3". [attempt-3 survivor: now KILLED]
+    M2c both event sites -> ":342 count=5, want 3", ":409 ... want 3".
+    M2b applied site ALONE (stepper.go:373) -> "floor_outcomes_test.go:334: chain month 12 got 9000 want 7500" + ":258: month 36 ...".
+   MC adaptive spending from the active step:
+    M3a GuardrailsGovernStep(s), M3b GuardrailsGovernStep(st.Settings()) -> "ws3_chain_guardrails_montecarlo_test.go:111: expected the portfolio to
+        DEPLETE ... final balance 38523.61...".
+   Restoring the nil deref:
+    M4a base eval block (st.Guardrails!=nil gate + s.Guardrails), M4b base triggers (s.Guardrails.FloorDropPct) -> nil-deref panic +
+        ":250: status = 500, want 200"; M4c predicate w/o nil check, M4d floor unguarded -> panics, "coverage_gaps_test.go:179: status = 500".
+   Restoring the bare renderError page:
+    M5 -> "ws3_chain_guardrails_test.go:107: expected a full HTML document, got a fragment (len=649)".
+  Isolation (isol.sh; each new test run ALONE by -run ^name$ against one mutation; handler test also split into its two assertion halves via
+  variant.py). Control (no mutation): all exit=0. For M2d AND M2e separately:
+    engine TestChainGuardrailEventsMatchUnchainedWhenPrimaryFloorBinds exit=1 (":342 ... count=5, want 3");
+    handler full exit=1 (":409"); handler CAPTION-ONLY exit=1 (":410: GuardrailChartSummary caption ="); handler ROWS-ONLY exit=1 (":409").
+  So each new test, and each half of the handler test (events rows; caption), kills both event-site mutants on its own.
+  What the new tests assert (read + probed):
+   - Engine test compares chained vs unchained GuardrailEvents: count, Year, Type, Multiplier, PreviousMultiplier, MonthlySpendingBefore/After
+     (gv2Close 1e-6 rel). Probe (probe/zz_probe_checker_test.go) on its fixture: unchained A (floor 3000) = 3 events, "year 3 cut mult 0.750000 prev
+     0.810000 before 3240.00 after 3000.00", months 36/48/60 AdjustedLiving 3000.00; same plan with floor 0 = 5 events (year 3 after 2916.00, years 4-5
+     cuts) — the primary's floor binds from the transition year (3) onward; chained A->Z(floor 1000, other config) = the same 3 events.
+   - Handler test renders GET /whatif unchained then chained (primary floor 3000, step floor 1000 + very different config) and compares every rendered
+     "Year N: Cut/Raise by X% (Y% of plan) $B/mo → $A/mo" row and the <p id="projection-guardrail-summary"> caption. Probe on the tree: caption
+     "Guardrails: 3 cuts (year 1: -10% ...; year 2: -10% ...; year 3: -5%, $3,438.31/mo → $3,278.18/mo). Next cut if the balance falls below $95,945.70
+     ..." identical chained/unchained (year-3 cut is floor-clamped). Under M2d the chained caption becomes "Guardrails: 5 cuts (... year 4: --7%,
+     $3,156.37/mo → $3,376.53/mo; year 5: --20% ...)"; under M2e "5 cuts (... year 3: -10%, $3,438.31/mo → $3,094.48/mo; year 4: -16% ...; year 5: -25% ...)".
+  Both new tests also FAIL on unfixed base code (base + the two WS3.4 test files): ":342 ... count=4, want 3" and ":409 ... 4 guardrail events, want 3".
+C7 (uncached package tests + make check) — PASS.
+  `rtk proxy env GOFLAGS=-count=1 go test ./internal/services/retirement/... ./internal/handlers/whatif/...` -> 8 packages "ok" with real durations
+  (e.g. "ok budget2/internal/handlers/whatif 16.157s"), PIPESTATUS=0. The two new tests by name -v: "--- PASS" each.
+  `rtk proxy env GOFLAGS=-count=1 make check` (separate copy mk/) -> go vet, staticcheck, "Your code is affected by 0 vulnerabilities.",
+  "tailwind.css is up to date", 52 "ok" lines, 0 "(cached)", "✓ all checks passed", EXIT=0.
+  gofmt -l on the changed .go files: none (only pre-existing rmd_edges_test.go/tax_test.go, untouched and also flagged on base).
+
+SCOPE: /home/darrell/bin/ai/budget2/.worktrees/ws3 (HEAD 643fa54) `git status --porcelain --untracked-files=all` = exactly the 11 manifest paths
+ (8 M, 3 A); all 11 cmp-identical to my snapshot. Attempt 4 changed only the two test files (above). Critical glob internal/services/retirement/engine/**
+ touched (attempt-3 source + the new engine test) — Tier-3 task whose SPEC §3 row names engine/**, permitted.
+
+OBSERVATIONS (not criteria):
+ O1 Engine test doc comment says the primary's floor is "(3,500)"; the code sets 3000 (ws3_chain_guardrails_test.go:301 vs :313). Comment-only.
+ O2 Still stale from attempt 3 (non-test code unchanged): stepper.go:126-130 says triggers use "the ACTIVE settings' Guardrails config"; the code uses
+    st.primary (D3').
+ O3 Attempt-3 O1 still stands: role="alert" on #whatif-analysis-error is pinned page-wide by the test, placement proven by the oracle only.

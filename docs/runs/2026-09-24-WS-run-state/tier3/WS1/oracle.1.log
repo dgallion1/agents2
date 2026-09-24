@@ -1,0 +1,40 @@
+== build /home/darrell/bin/ai/budget2/.worktrees/ws1
+PASS coverage: 16 stored-value forms exercised (need >= 16, the 643fa54 inventory)
+PASS FORM POST /whatif/settings #0: form valid on the off-grid plan (criterion 2) — invalid: []
+PASS FORM POST /whatif/settings #0: untouched submission sent and accepted (sent True, status 200)
+PASS FORM PUT /whatif/income/4ea60a77-b08f-417e-be54-c83d38768a35 #0: form valid on the off-grid plan (criterion 2) — invalid: []
+PASS FORM PUT /whatif/income/4ea60a77-b08f-417e-be54-c83d38768a35 #0: untouched submission sent and accepted (sent True, status 200)
+PASS SELECT PUT /whatif/healthcare/9166cc49-2b4d-4edc-8507-b4587568b1d6 #0: untouched submission sent and accepted (sent True, status 200)
+PASS FORM PUT /whatif/healthcare/9166cc49-2b4d-4edc-8507-b4587568b1d6 #0: form valid on the off-grid plan (criterion 2) — invalid: []
+PASS FORM PUT /whatif/healthcare/9166cc49-2b4d-4edc-8507-b4587568b1d6 #0: untouched submission sent and accepted (sent True, status 200)
+PASS SELECT PUT /whatif/healthcare/72577487-b513-472d-993e-618453366c92 #0: untouched submission sent and accepted (sent True, status 200)
+PASS FORM PUT /whatif/healthcare/72577487-b513-472d-993e-618453366c92 #0: form valid on the off-grid plan (criterion 2) — invalid: []
+PASS FORM PUT /whatif/healthcare/72577487-b513-472d-993e-618453366c92 #0: untouched submission sent and accepted (sent True, status 200)
+PASS FORM PUT /whatif/expense/ws1-e1 #0: form valid on the off-grid plan (criterion 2) — invalid: []
+PASS FORM PUT /whatif/expense/ws1-e1 #0: untouched submission sent and accepted (sent True, status 200)
+PASS FORM POST /whatif/settings #1: form valid on the off-grid plan (criterion 2) — invalid: []
+PASS FORM POST /whatif/settings #1: untouched submission sent and accepted (sent True, status 200)
+PASS FORM POST /whatif/glide-path #0: form valid on the off-grid plan (criterion 2) — invalid: []
+PASS FORM POST /whatif/glide-path #0: untouched submission sent and accepted (sent True, status 200)
+PASS FORM POST /whatif/settings #2: form valid on the off-grid plan (criterion 2) — invalid: []
+PASS FORM POST /whatif/settings #2: untouched submission sent and accepted (sent True, status 200)
+PASS FORM POST /whatif/spending-phases #0: form valid on the off-grid plan (criterion 2) — invalid: []
+PASS FORM POST /whatif/spending-phases #0: untouched submission sent and accepted (sent True, status 200)
+PASS FORM POST /whatif/spending-phases #1: form valid on the off-grid plan (criterion 2) — invalid: []
+PASS FORM POST /whatif/spending-phases #1: untouched submission sent and accepted (sent True, status 200)
+PASS FORM POST /whatif/guardrails #0: form valid on the off-grid plan (criterion 2) — invalid: []
+PASS FORM POST /whatif/guardrails #0: untouched submission sent and accepted (sent True, status 200)
+PASS FORM POST /whatif/roth-conversion #0: form valid on the off-grid plan (criterion 2) — invalid: []
+PASS FORM POST /whatif/roth-conversion #0: untouched submission sent and accepted (sent True, status 200)
+PASS FORM POST /whatif/social-security #0: form valid on the off-grid plan (criterion 2) — invalid: []
+PASS FORM POST /whatif/social-security #0: untouched submission sent and accepted (sent True, status 200)
+PASS FORM POST /whatif/settings #3: form valid on the off-grid plan (criterion 2) — invalid: []
+PASS FORM POST /whatif/settings #3: untouched submission sent and accepted (sent True, status 200)
+PASS criterion 1: saved plan identical after every untouched submission (0 change(s))
+PASS criterion 3: dragging the healthcare cost slider to 1800 saves 1800 (status 200, saved 1800)
+PASS criterion 3: dragging the portfolio slider to 2,500,000 saves it (status 200, saved 2500000)
+PASS criterion 3: the Quick Adjust healthcare mirror to 1900 saves 1900 (status 200, saved 1900)
+PASS criterion 4: the healthcare cost display shows the saved $1,655.30 (display '$1,655')
+PASS criterion 4: the slider's aria-valuetext carries the displayed exact figure (aria-valuetext '$1,655', display '$1,655')
+== all checks passed
+ORACLE PASS

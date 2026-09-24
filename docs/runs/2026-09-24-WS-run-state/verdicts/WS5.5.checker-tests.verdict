@@ -1,0 +1,158 @@
+VERDICT: FAIL
+CHECKER: checker-tests
+FAMILY: anthropic
+TASK: WS5
+ATTEMPT: 5
+---
+Contract: SPEC.md ruling 2026-09-24i (I1-I5) plus D6/D7. Snapshot: scratchpad/snap/WS5.5-tests
+(diff -rq against /home/darrell/bin/ai/budget2/.worktrees/ws5 gives no output, before and after
+mutations). Base: git archive a12477f extracted to scratchpad/checkers/WS5.5-tests/base.
+Throttle: nice -n 19, GOMAXPROCS=4, GOFLAGS="-count=1 -p=2", one go process at a time.
+Evidence files are under scratchpad/checkers/WS5.5-tests/.
+
+SUMMARY: I1, I2, I3, I4, D6/D7-unchanged and the suites PASS. I5 FAILS on two points:
+(1) the named mutation "%q on the value" survives the full whatif and prepare packages;
+(2) the I5(a) name list requires `Ann<NBSP>Lee`, but the permanent test uses an ASCII space.
+
+1. I1 (typed errors that carry the ID) -- PASS
+   Command: probe zz_i4as_probe_test.go (package prepare_test) over 196 error inputs (6 start
+   dates, 10 names x 9 birth months x {row 1, row 2}, and every other shape), run through
+   ValidatePersons and prepare.From. Output is in i4.as.txt.
+   - Counts from `uniq -c`, per path (VP and FROM): 6 InvalidStartDateError,
+     140 PersonBirthMonthError, 41 PersonBirthMonthAfterStartError, and 9 untyped (the
+     remaining shapes only).
+   - `grep -c untyped` over the birth-month rows: 0.
+   - Every birth row, including row-2 failures, has PersonID="p1", which is the failing row.
+   - After-start rows carry StartDate, e.g. `PersonID="p1" StartDate="2019-07"
+     BirthMonth="2020-01"`.
+   - The empty and unparseable cases are both typed as PersonBirthMonthError. The handler
+     tells them apart from the submitted row it finds by ID.
+   - The invalid start date is typed: InvalidStartDateError with Err="invalid month \"2026-13\"".
+
+2. I2 (identify by ID only; regexes removed) -- PASS
+   - `grep -rn "rePersonsInvalidBirthMonth\|rePersonsBirthMonthAfterStart" --include=*.go`
+     finds nothing.
+   - handlers_rates.go has no `"regexp"` import.
+   - In personsSaveErrorMessage and findPersonByID, the only calls are errors.As x3, lookups
+     by `persons[i].ID == id`, and `strings.TrimSpace(p.BirthMonth)` on the SUBMITTED row.
+   - The only text inspection is `strings.HasPrefix(msg,"persons:"/"start_date:")` at
+     handlers_rates.go:190-192. It runs after all three typed branches, so it only routes the
+     remaining shapes to the "Invalid person data" fallback, which I2 permits.
+   - The typed branches keep an "Invalid person data" fallback for an ID not found in the
+     submitted slice. It is unreachable: UpdateSettingsWithPersons sets settings.Persons to
+     that same slice, and resolveCurrentMonth and NormalizePhaseAgeReference never touch
+     Persons (grep).
+
+3. I3 (exact wording, verbatim) -- PASS
+   (a) Real POST handler. Command: probe zz_i3_probe_test.go runs handleWhatIfSettings via
+       httptest and takes html.UnescapeString of renderError's <p>. Result: 63/63 MATCH,
+       status=400, 0 MISMATCH (i3.snap.txt). Coverage:
+       - names Alex, `Robert "Bob" Smith`, `Pat\X`, "Ann\tLee", "Ann Lee" (NBSP),
+         "Ann Lee" and `Sam": X`;
+       - each name x {"", "19711-08", "2030-01"} x {id given, id blank (UUID)}, plus the
+         failing row placed second;
+       - the `Pat\X`/`Pat\\X` pair in both orders;
+       - "Pat Twin" x2: valid then unparseable, empty, or after-start;
+       - start dates "2026-13" and "bad".
+       Sample output lines:
+         got="Robert \"Bob\" Smith needs a birth month"
+         raw="Robert &#34;Bob&#34; Smith&#39;s birth month &#34;19711-08&#34; isn&#39;t a valid month (use YYYY-MM)"  (HTML-escaped exactly once)
+         got="Ann Lee's birth month (2030-01) is after the plan's start date (2026-04)"
+         pair: got="Pat\\X's birth month \"19711-08\" isn't a valid month (use YYYY-MM)"
+         twins: got="Pat Twin's birth month \"19711-08\" isn't a valid month (use YYYY-MM)"
+         got="Invalid projection start date: invalid month \"2026-13\""
+   (b) Rendered page. Command: probes/render.sh builds the snapshot server on an isolated
+       127.0.0.1 port with the WS5 fixture (the oracle harness). It POSTs from a Chromium page
+       on /whatif, swaps the response into the DOM, and reads the textContent of
+       `[role=alert] p`. Result: 21/21 MATCH, exit 0, 0 panics, server stopped (render.log).
+       The tab name shows textContent "Ann\tLee..." and innerText "Ann Lee..." (normal HTML
+       whitespace collapse).
+   The start-date wording equals attempt 4's: oracle.v3.attempt4.log and oracle.5.log both
+   show "Invalid projection start date: invalid month &#34;2026-13&#34;".
+
+4. I4 (Error() text byte-identical to base; errors.As through prepare.From) -- PASS
+   - Command: the same probe zz_i4text_probe_test.go run in base a12477f and in the snapshot,
+     each writing strconv.Quote(Error()) for ValidatePersons and prepare.From over 196 error
+     inputs plus 1 valid input.
+   - `cmp i4.base.txt i4.snap.txt` printed "I4 CMP IDENTICAL" (197 lines each).
+   - The inputs cover every shape: start_date (month is required / invalid month with quotes),
+     none, id, duplicate id, name, invalid birth_month for 10 names, including quote,
+     backslash, tab, NBSP, NUL and HTML characters, after start_date, role, primary 0/2,
+     spouse 2, and healthcare_persons.
+   - errors.As through the "prepare.From: validate: %w" wrap works for all three types (FROM
+     rows in item 1). The permanent test is TestFrom_PersonBirthMonthError_ErrorsAsThroughWrap.
+
+5. I5 (permanent tests and mutations) -- FAIL
+   Command: probes/mutate.py <M>. Each mutation is applied alone, then
+   `go test ./internal/handlers/whatif/ ./internal/services/retirement/prepare/ -run 'Person|From_'`
+   runs. The file is then restored and cmp'd against the worktree: IDENTICAL every time.
+   - M1, identify by Name instead of ID (birth branch): KILLED by
+     TestHandleWhatIfSettings_PersonsBirthMonthMessage_SameNamePair.
+   - M2a, %q on the name (all 3 messages): KILLED by TestPersonsSaveErrorMessage,
+     ..._NamesXBirthMonths (18 subtests), ..._BackslashConfusionPair and ..._SameNamePair.
+   - M2b, %q on the VALUE, unparseable message (`"%s"` -> `%q` at handlers_rates.go:163):
+     SURVIVED. The targeted run and the full-package run (`-run .`) both gave
+     "ok budget2/internal/handlers/whatif 15.603s" and "ok .../prepare", exit=0.
+     It is not an equivalent mutant (zz_m2b_probe_test.go):
+       unmutated: value `1971\08` -> "Alex's birth month \"1971\\08\" isn't..."  verbatim=true
+       mutant:    value `1971\08` -> "Alex's birth month \"1971\\\\08\" isn't..." verbatim=false
+       (also `19"71-08` and "1971 08" give verbatim=false)
+     Cause: every permanent test value is "19711-08", "2030-01" or "". %q leaves all of these
+     unchanged apart from the surrounding quotes, which the format already supplies.
+     Missing: an unparseable birth-month VALUE containing a character %q escapes (backslash,
+     quote, tab or NBSP), with an exact-text assertion.
+   - M2c, %q on the value, after-start message: KILLED by ..._NamesXBirthMonths/*/after_start.
+   - M3a/M3b/M3c, changed Error() text (after-start, birth-month and start-date types): each
+     KILLED by TestValidatePersons_ErrorTextPinned/{birth_month_after_start_date |
+     empty_birth_month, unparseable_birth_month | invalid_start_date}.
+   - M4, swapped empty/unparseable branches: KILLED by TestPersonsSaveErrorMessage,
+     ..._PersonsValidationErrorClasses, ..._NamesXBirthMonths, ..._BackslashConfusionPair and
+     ..._SameNamePair.
+   - M5, after-start returned untyped: KILLED by
+     TestValidatePersons_TypedErrors_ErrorsAsAndPersonID/birth_month_after_start_date...,
+     ..._PersonsValidationErrorClasses/birth_month_after_start_date_(named) and
+     ..._NamesXBirthMonths.
+   - I5(a) list: ruling 2026-09-24i requires `Ann<NBSP>Lee`. ws5_glide_persons_test.go:660
+     uses "Ann Lee" with ASCII 0x20: `od -tx1` shows `41 6e 6e 20 4c 65 65`, and python finds
+     no b'\xc2\xa0' in the file. The go test subtests appear as "Ann_Lee" and "Ann_Lee#01".
+     The NBSP behavior itself is correct (item 3), but the named permanent case is missing.
+   - (b) and (c) are present and assert exact text: BackslashConfusionPair, SameNamePair,
+     ErrorTextPinned (12 shapes), TypedErrors, and ErrorsAsThroughWrap.
+   Sibling mutations (observations, outside the named list):
+   - S1, the after-start branch identifies by index persons[0] instead of by ID: SURVIVED the
+     full packages (`-run .`, exit 0). No permanent test has an after-start failure on a
+     non-first row. Oracle P3c checks only /(after|start)/, so it would pass as well.
+   - S2, Unwrap removed from PersonBirthMonthError: SURVIVED. The contract does not require
+     Unwrap.
+
+6. D6/D7 unchanged from attempt 4 -- PASS
+   - `diff -rq WS5.4-tests WS5.5-tests` lists only handlers_rates.go, ws5_glide_persons_test.go,
+     prepare_test.go, validate.go and validate_test.go.
+   - cmp shows these identical between a4 and a5: handlers.go, whatif-rate-assumptions.js,
+     whatif-rate-assumptions.test.cjs and rate-assumptions.html.
+   - Function-level compare of handlers_rates.go: only personsSaveErrorMessage and the new
+     findPersonByID differ. handleWhatIfSettings: True; handleWhatIfGlidePath: True.
+   - In the test file, only the persons-message tests differ.
+   - The oracle's G1-G4 and P1-P2 checks pass (item 7).
+
+7. Suites -- PASS
+   - `make check` in the snapshot: vet, staticcheck, govulncheck, css-verify ("tailwind.css is
+     up to date") and go test all ran. 52 "ok", no FAIL, no "(cached)". Final lines are
+     "✓ all checks passed" and "make check exit=0" (make_check.log).
+   - `node --test web/static/js/whatif-rate-assumptions.test.cjs`: tests 18, pass 18, fail 0.
+   - Oracle v3, re-run once (TMPDIR in my scratch): 21/21 PASS, last line "ORACLE PASS",
+     exit=0 (oracle.checker.log).
+
+SCOPE: the working-tree diff against a12477f names exactly the 9 files in WS5.5.files. The
+stored .swarm/diffs/WS5.5.diff cmp-matches `rtk proxy git diff a12477f`. No
+.swarm/critical.globs path is touched: validate.go is not critical, and settings.go and
+engine/** are untouched.
+
+OBSERVATIONS (not grounds for FAIL):
+- The comment at handlers_rates.go:88-91 is stale. It says ValidatePersons returns "a plain,
+  untyped error" and that "prepare/validate.go and settings.go are untouched". Both are false
+  in attempt 5.
+- The fallback prefix does not match "healthcare_persons:", so that shape still gives a 500
+  if it is reached (TOCTOU only; the D7 pre-check normally catches it). This matches attempt 4.
+- S1 above: the after-start identification by ID is correct in behavior (item 3 probes, row 4
+  of the fixture), but no permanent test pins it.

@@ -1,0 +1,195 @@
+VERDICT: PASS
+CHECKER: checker-a11y
+FAMILY: anthropic
+TASK: WS5
+ATTEMPT: 2
+---
+Method: built cmd/server from the given snapshot (/tmp/.../scratchpad/snap/WS5.2-a11y,
+go build, GOMAXPROCS=4, nice -n 19) to a scratch binary. Ran against a
+`cp -rL` copy of /home/darrell/bin/ai/budget2/data (confirmed fixture:
+glide_path {enabled:false,0,0,1} leftover, Christine spouse linked to a
+healthcare entry -- same fixture attempt 1 used) on 127.0.0.1:37771 with
+BUDGET_DATA_DIR/BUDGET2_BACKUP_DIR/BUDGET2_IMPORT_DIR pointed at scratch,
+BUDGET_LISTEN_ADDR=127.0.0.1:37771, BUDGET_DEBUG=false. Real render via the
+app's own built web/static/css/tailwind.css (no guessed CSS). Audited with
+`npx @axe-core/cli` (global @axe-core/cli 4.13.0) directly against the live
+URL, AND a Playwright driver (chromium 1.63.0, the same axe-core 4.13.0
+axe.min.js bundled with @axe-core/cli injected via addScriptTag) for
+DOM/behavior traces and theme-forced scans. Server killed after the run
+(confirmed via ps); no :8080/live data touched; no budget2 MCP tools used;
+no git-state changes (Read-only diff/file reads only).
+
+Diff re-confirmed (`.swarm/diffs/WS5.2.diff`, `git diff --stat` equivalent):
+touches internal/handlers/whatif/{handlers.go,handlers_rates.go,
+ws5_glide_persons_test.go}, web/static/js/whatif-rate-assumptions.{js,
+test.cjs}, web/templates/components/whatif/rate-assumptions.html. Never
+touches web/templates/pages/whatif.html.
+
+## ATTEMPT-1 FAIL -- RESOLVED
+
+Point 6 / WCAG 3.3.2: the three glide fields (start_stock_pct,
+end_stock_pct, transition_years) now carry `required` (confirmed true via
+DOM read) as soon as revealed, AND a persistent visible instruction "All
+three fields are required to apply a glide path." renders inside
+#glide-path-fields alongside them (rate-assumptions.html:436, revealed
+state) -- not only reactively after a failed submit. Verified present in
+BOTH themes via live DOM read after a keyboard tick. FIXED.
+
+## AUTOMATED (axe-core), both themes, card expanded (default, no
+   localStorage collapse key), glide fields revealed
+
+1. Page-load (fresh browser, Assumptions card expanded by default --
+   confirmed via web/static/js/whatif-tabs.js applyCollapse()):
+   LIGHT (Playwright colorScheme unset/light, matchMedia dark=false):
+     0 violations.
+   DARK (localStorage theme=dark + reload, matching the site's real
+   toggle mechanism): 1 violation -- color-contrast, serious, selector
+   `.mt-5 > summary` ("Adjust spending rules manually" disclosure), same
+   as attempt 1.
+   Note: a `npx @axe-core/cli` run directly against the URL (no theme
+   override available in the CLI) surfaced the SAME single violation on
+   this host, because this machine's `prefers-color-scheme` media default
+   is dark and the app's theme bootstrap (web/templates/layouts/base.html:24)
+   falls back to it when no localStorage key exists yet -- confirmed via a
+   matchMedia probe. Cross-tool agreement on the same one pre-existing
+   node; not a second issue.
+2. Glide fields revealed (keyboard-ticked the checkbox), both themes:
+   LIGHT: 0 violations. DARK: same single `.mt-5 > summary` violation,
+   nothing new.
+3. Interacted (glide fields revealed + Christine's Remove refusal both
+   live in the DOM at scan time), both themes: LIGHT: 0 violations, 1
+   `[role=alert]` node present. DARK: same single pre-existing violation,
+   1 alert node.
+   Raw results: axe_results.json, interacted_axe.json (checker scratch dir).
+
+Provenance of the one violation: WS5.2.diff never touches whatif.html
+(confirmed above); PRE-EXISTING -- OBSERVATION, not a FAIL, same as
+attempt 1's finding.
+
+## MANUAL -- walked per the dispatch, both themes
+
+**Contrast of the new instruction text, both themes.** Computed via
+proper alpha-compositing of the full ancestor background chain (the dark
+card background is semi-transparent `rgba(68,64,60,0.5)` over a
+`rgb(41,37,36)` panel -- compositing required, a naive "first non-
+transparent ancestor" read gives a false failing number; verified against
+axe's own 0-violation finding on this element as ground truth, and visually
+via a cropped screenshot):
+  LIGHT: fg rgb(87,83,78) on bg rgb(250,250,249) -- ratio 7.30:1. PASS.
+  DARK: fg rgb(168,162,158) on composited bg rgb(54.5,50.5,48) -- ratio
+  4.99:1. PASS (≥4.5:1, point 7).
+Screenshot: instr_dark.png -- legible amber-gray text, clearly visible.
+
+**Hidden-disabled fields not focusable/announced while hidden.** Before
+tick: #glide-path-fields has class `hidden`; the three inputs are
+`disabled=true`, `required=false`; `glide-start-stock-pct.offsetParent`
+is null (not merely visually hidden -- genuinely unreachable/non-
+rendered). Tab from the checkbox skips over the entire glide-fields
+region and lands on the next unrelated focusable control
+(#inflation-rate-slider) -- confirmed same result light and dark.
+Playwright `ariaSnapshot()` of `#glide-path-fields` while hidden is
+EMPTY (no nodes at all in the accessibility tree -- strongest evidence:
+not just excluded from tab order, excluded from the AT tree entirely).
+After tick: ariaSnapshot shows the paragraph text, three correctly-
+labelled spinbuttons ("Start %"/"End %"/"Years"), and the "Apply Glide
+Path" button -- properly exposed. PASS, point 9/16.
+
+**Tick/untick by keyboard.** Space on the focused checkbox (both
+themes): ticking sets `checked=true`, removes `hidden` from
+#glide-path-fields, flips the three inputs to `disabled=false,
+required=true`, and fires NO network request (D6's contract). Unticking
+(Space again) restores `hidden`, `disabled=true, required=false`, and
+DOES submit (confirmed: unticking with blank/disabled fields still saves
+enabled=false, matching the diff's documented design -- a disabled
+control is excluded from constraint validation AND submitted form data).
+Tab order after reveal: checkbox -> Start % -> End % -> Years, each with
+its own `<label for>`, in visual order. PASS.
+
+**Apply with an empty field -> browser validity, focus on field.**
+Ticked (fields revealed, blank), clicked "Apply Glide Path": no
+`/whatif/glide-path` request fires (native constraint validation stops
+it before submission); `document.activeElement` is
+`#glide-start-stock-pct` with `validationMessage: "Please fill out this
+field."`, `validity.valid: false`. Confirmed identical in both themes.
+Satisfies point 5's "focus moves to the first error on failed submit"
+branch via native HTML5 validity (same mechanism already accepted for
+the birth-month field in attempt 1). PASS.
+Consequence noted: because Start %/End %/Years are now `required`
+client-side, the server's own 400 message ("Start %, End %, and Years
+are all required to apply a glide path") is not reachable through normal
+keyboard/mouse UI -- it is a defense-in-depth backstop for a raw POST.
+No a11y concern (nothing to announce that a real user can trigger).
+
+**Refusal (D7) -- announced once, next to form, focus restored.**
+Keyboard-activated (Enter) Christine's Remove button (linked to a
+healthcare entry): optimistic removal (rows 2->1), debounced save
+(~500ms) comes back refused, row restored (rows back to 2, both persons'
+data intact), exactly 1 `[role=alert]` node reading "Remove Christine's
+healthcare entry first" as the FIRST CHILD of the settings `<form>`
+(next to the form), and focus returns to Christine's own restored Remove
+button (`activeElement` is the BUTTON with text "Remove", not lost to
+`<body>`). Repeating the identical failing action leaves alert count at
+1 (pre-existing base.js/renderError short-circuit, unchanged by this
+diff -- same behavior attempt 1 documented). PASS, matches dispatch ask
+exactly.
+
+**Everything attempt 1 found clean -- re-verified, still clean:**
+- Required birth month (server-rendered existing-person row): `required`
+  present (unchanged from attempt 1's pass).
+- Required birth month (JS-added new-person row): `required=true`,
+  `aria-label="Person birth month"` confirmed live via #add-person-row-btn
+  -> new row. PASS.
+- Glide checkbox has no `aria-expanded`/`aria-controls`: still absent
+  (unchanged); still judged an ACCEPTABLE equivalent per attempt 1's
+  reasoning (native checkbox state + adjacent-DOM reveal) -- OBSERVATION,
+  not a FAIL.
+- Remove buttons' accessible name is still bare "Remove" (confirmed live,
+  both the settings-form and newly-added rows) -- unchanged, PRE-EXISTING,
+  OBSERVATION (diff never touches this markup).
+- Successful (non-refused) person removal: re-traced correctly this time
+  (first attempt at this sub-check used a wrong button selector and
+  accidentally renamed Christine's own row instead of adding a new one --
+  caught via a mid-trace sanity check, the mis-submitted POST correctly
+  returned 400 and the D7 "refused save touches nothing on disk" guarantee
+  held, confirmed against the data file afterward, no corruption). Correct
+  re-run: added an unlinked "TestPerson", removed her -- save succeeds,
+  rows settle at the original 2 (Darrell + Christine), and focus falls to
+  `<body>` and stays there. This is the SAME root cause attempt 1
+  documented in master's prior `removePersonRow` (no refocus on the
+  success path) -- WS5 fixed refocus for the REFUSAL branch only (what the
+  dispatch asked to re-check), the success-branch gap is untouched by this
+  diff. PRE-EXISTING, OBSERVATION, not a FAIL.
+- No new motion/animation: `#glide-path-fields`'s reveal is a plain
+  `classList.add/remove('hidden')` (Tailwind `display:none`), no
+  transition/animate class on the div or its children. Point 15 not
+  applicable, confirmed via template read.
+
+## FAILURES
+
+None.
+
+## OBSERVATIONS (non-blocking, pre-existing or out of scope)
+
+- Dark-mode color-contrast on `.mt-5 > summary` ("Adjust spending rules
+  manually"), ratio ~1.38 -- byte-identical to master, unrelated section,
+  outside this task's touched files. More easily reachable than expected:
+  this host's OS-level `prefers-color-scheme` defaults to dark, so ANY
+  fresh visitor with no saved theme preference and a dark-preferring OS
+  lands here by default (base.html:24's own documented fallback, not
+  introduced by WS5). Worth flagging to the lead as a backlog item given
+  how reachable it is, but not this task's regression.
+- Remove buttons' accessible name is bare "Remove" (no person name) --
+  pre-existing, both server template and JS-generated row. D7 makes
+  Remove a real, persisting, sometimes-refused action, so recommend
+  `aria-label="Remove {{.Name}}"` server-side (and the JS equivalent) as
+  a fast follow, same recommendation as attempt 1.
+- Point 5's literal "linked via aria-describedby" is still not
+  implemented by any `/whatif` error (the sitewide `renderError`/base.js
+  role=alert mechanism from WS4, unchanged here) -- pre-existing, applies
+  uniformly to WS5's error messages same as every other error on the
+  page.
+- Successful (non-refused) person removal still loses focus to `<body>`
+  -- pre-existing, easy adjacent backlog fix now that the refocus pattern
+  is proven for the refusal branch.
+- Glide checkbox still has no `aria-expanded`/`aria-controls` -- accepted
+  equivalent, cheap enhancement not required.

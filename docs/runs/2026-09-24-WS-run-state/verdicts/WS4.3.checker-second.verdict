@@ -1,0 +1,102 @@
+VERDICT: PASS
+CHECKER: checker-second
+FAMILY: adversarial
+TASK: WS4
+ATTEMPT: 3
+---
+Scope confirmed test-only: diff(WS4.2.diff, WS4.3.diff) shows the ONLY
+delta is 54 new lines appended to web/static/js/base.test.cjs (two new
+tests). handlers.go, handlers_test.go, schedule_month_form_test.go,
+base.js itself, and all 5 templates are byte-identical to attempt 2.
+Snapshot verified == base 643fa54 + WS4.3.diff via patch+cmp on all 10
+manifest files ("SAME" x10).
+
+WHAT WAS BEING FIXED: WS4.2's checker-tests FAIL — two hand-crafted
+mutants (M1: errorHost() unconditionally falls back to parentNode; M2:
+isForbiddenHost() always returns false) survived the whole suite because
+existing tests placed form-less fixtures where BOTH guards agreed, so
+mutating either one alone changed nothing observable. Checker-tests also
+proved M1 live against the real server (e2e-loader.cjs): a load-triggered
+sentinel under an ORDINARY parent got a wrongly-inserted inline error
+under M1's mutated base.js.
+
+ADVERSARIAL VERIFICATION (own repro, not the worker's claims):
+1. Reconstructed M1 and M2 exactly as checker-tests specified (line-level
+   diff match) against my own snapshot copy. Ran `node --test
+   web/static/js/base.test.cjs`: unmutated = 12/12 pass; M1 mutant = 11
+   pass, 1 fail (exactly the new "load-triggered sentinel..." test); M2
+   mutant = 11 pass, 1 fail (exactly the new "eligible form-less
+   control..." test). Each new test kills precisely and only its target
+   mutant — no cross-contamination, no coincidental kill.
+2. Went further than the named mutants: (a) removed ONLY the
+   `data-wf-layout-grid` sub-check inside isForbiddenHost (leaving
+   HTML/BODY/MAIN intact) — killed by the new M2 test's grid-parent
+   sub-case. (b) removed the `hasOwnHxVerb(elt)` half of the
+   user-initiated guard, leaving `INTERACTIVE_TAGS[elt.tagName]` alone —
+   this ONE survives all 12 tests. Investigated whether it's a real gap:
+   grepped every /whatif htmx.ajax() call site (only
+   whatif-spending-phases.js:85, no explicit `source`, defaults to
+   document.body — already forbidden) and confirmed htmx sets
+   `evt.detail.elt` to the exact verb-bearing element for every
+   trigger-fired request in this codebase, so `hasOwnHxVerb(elt)` is
+   trivially true whenever code reaches that branch today — no live path
+   reaches this gap, unlike M1 which checker-tests proved live. Logging
+   this as a backlog OBSERVATION, not a FAIL (rule 6: a FAIL needs a real,
+   demonstrated defect, not a theoretical uncovered branch).
+3. Re-ran `GOFLAGS=-count=1 rtk proxy make check` on the snapshot: vet,
+   staticcheck, govulncheck, tailwind up to date, 52 packages ok, whatif
+   package "ok ... 15.xxxs" (varies), "✓ all checks passed", exit 0.
+4. Re-ran the lead's oracle myself (independent build, independent
+   servers, never :8080): `bash .swarm/tier3/WS4/accept.sh <snapshot>` ->
+   identical PASS lines to oracle.3.log, both scenarios (background,
+   forms), final line "ORACLE PASS".
+5. Re-confirmed AC5 mutation (d) still kills TestRenderError (dropped
+   role="alert" from renderError -> Go test FAILs), unaffected by this
+   attempt.
+6. Attack-surface probes named in the brief:
+   - XSS: server embeds raw form input into an error message (chain_age[]
+     = "<script>alert(1)</script>") -> live curl shows html.EscapeString
+     produces "&lt;script&gt;..." in the response body (pre-existing,
+     untouched by WS4). Fed an escaped payload through the client's
+     buildErrorNode(innerHTML) via a real form-less-but-eligible host in
+     Playwright: no dialog fired, no pageerror, node rendered as inert
+     text. No XSS.
+   - Roth/guardrail-optimizer isError=false paths: traced the vendored
+     htmx.min.js -- `htmx:responseError` only fires `if(a)` where `a` is
+     `m.isError` AFTER the beforeSwap listeners run, so when
+     roth-conversion.js/guardrail_optimizer.html set
+     `event.detail.isError=false` for their own target, WS4's inline
+     responseError listener never even sees the event (no double-display,
+     no swallow -- their own swap mechanism, unmodified by WS4, shows the
+     message as before).
+   - Stale-error race (error arriving after a fix+resubmit): attempted to
+     force out-of-order PUT resolution via route interception (slow-bad
+     request #1, fast-good request #2 from the same form). Observed htmx
+     serializes requests from the same triggering element by default (2nd
+     PUT does not fire on the wire until the 1st settles) -- no overlap
+     occurs in practice, so no stale error was left behind. Premise
+     falsified; not a defect.
+   - Non-/whatif pages: unaffected (base.test.cjs's "errors outside
+     /whatif are left alone" test, unchanged from attempt 2, still
+     passes).
+
+CONCLUSION: attempt 3 is a narrowly-scoped, verified-effective fix for
+WS4.2's sole named defect (AC5 mutation coverage for R2's two guards). No
+regressions in the 10 pre-existing base.test.cjs tests, the 40-test JS
+suite, or `make check`. The oracle passes on independent re-run. No new
+defect found that meets the FAIL bar (live, in-scope, demonstrated).
+
+SCOPE: manifest == 10 changed files == diff files. No critical-globs
+touched (only base.test.cjs changed vs attempt 2). :8080 never contacted;
+no `budget2` binary run from a repo root; all servers on isolated
+127.0.0.1 ports with cp -rL data copies, stopped after use.
+
+OBSERVATION (backlog, not a FAIL): `hasOwnHxVerb(elt)` inside errorHost's
+user-initiated guard has no test isolating it from
+`INTERACTIVE_TAGS[elt.tagName]`; removing it survives the whole suite.
+No live call site in this codebase currently reaches that gap (verified
+by enumerating every /whatif htmx.ajax() call site), so it is very likely
+an equivalent mutant today, but a future `htmx.ajax({source: someControl})`
+call without its own hx-verb would be uncaught. Worth a follow-up test if
+the lead wants full guard-axis isolation, not a reason to fail this
+test-only attempt.

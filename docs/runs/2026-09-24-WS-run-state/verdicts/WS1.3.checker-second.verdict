@@ -1,0 +1,116 @@
+VERDICT: FAIL
+CHECKER: checker-second
+FAMILY: adversarial
+TASK: WS1
+ATTEMPT: 3
+---
+METHOD
+Built ./cmd/server from the snapshot (succeeds). Read the full WS1.3 diff
+and manifest, re-derived R-FMT/R-EXACT/R-TEST from SPEC.md, ran the
+existing suite (`go test ./internal/handlers/whatif/... ./internal/templates/...`
+-> ok, ok) and the new JS test (`node --test whatif-quick-adjust.test.cjs`
+-> 5/5 pass). Then did mutation-kill spot checks (revert one healthcare
+display span to formatDollars -> TestWS1WholeDollarConvergence_HealthcareCard
+fails; revert JS roundHalfEven to Math.round -> the JS convergence test
+fails) confirming R-FMT's own tests are real, not tautological. All
+mutation work done in throwaway `cp -a` copies under my scratch dir; the
+given snapshot and .swarm/ files were never edited; no server was started
+(binary built only, never run); no :8080/MCP contact; no git state changed.
+
+R-FMT: PASS on everything I could construct. formatNumber (Go, half-even)
+and formatWholeDollars/roundHalfEven (JS) agree at every .50 tie I tried,
+including negative and cross-checked against a table matching Go's actual
+%.0f output (verified with a standalone `go run` probe: 613.5->614,
+612.5->612, 1234.5->1234, -0.5->-0, all half-even). grep confirms
+formatDollars (half-up) is gone from every WS1-scoped stored-value
+surface (healthcare card, Coverage Timeline, portfolio/living-expenses
+slider+QA+phase-dollar label) — the pre-existing living-expenses split
+named in the attempt-3 contract is fixed at all 4 sites. The OOB-swap
+surface (`#healthcare-persons-list`, `#whatif-portfolio-settings-card`
+etc. in whatif.html) reuses the SAME `whatif-healthcare-person` /
+`whatif-portfolio-settings` template blocks as the initial render, so
+served==live holds structurally, not just by test coincidence. Two
+formatDollars call sites found still using half-up (Math.round-equivalent
+formatAmount in whatif-rate-assumptions.js:159-160 for the per-account $
+breakdown, and updateLivingExpensesPhaseNote's cents-precision phase
+note) are BOTH byte-identical to base 643fa54 (`git show
+643fa54:web/static/js/whatif-rate-assumptions.js` / `whatif-portfolio-
+settings.js` diffed) and untouched by WS1.3's own diff — pre-existing,
+out of scope per CLAUDE.md, reported as backlog observations only, not a
+FAIL basis.
+
+R-EXACT: FAIL, reproduced end-to-end. formatExact is a single function
+(`strconv.FormatFloat(v, 'g', 15, 64)`) applied uniformly to every call
+site, but R-EXACT's text specifies TWO different rules: a raw stored
+value must use `strconv.FormatFloat(v,'f',-1,64)` ("never re-rounded"),
+and only a "derived or scaled value" gets the 15-significant-digit cap.
+The implementation's own doc comment admits the collapse ("Applies
+uniformly at every exact-render call site, scaled or not: one helper, one
+rule") and reasons only about MAGNITUDE ("up to $1e9"), never about
+PRECISION/DEPTH — the two are different axes. A raw stored value whose
+true shortest round-trip needs 16-17 significant digits (a $232,777
+TaxableCostBasis produced by summing four cost-basis lots, e.g.
+45123.17+98765.43+12345.678901234+76543.210987654 = 232777.48988888797,
+a completely ordinary aggregation for a field the model's own comment
+calls "the total cost basis" of a taxable brokerage, and a value a user
+could equally type/paste directly since the field has no format
+constraint beyond step="any") gets rendered by formatExact as
+"232777.489888888" (15 sig figs) instead of the true "232777.48988888797"
+(17 sig figs). I proved this is not merely a pure-function curiosity: I
+rendered the REAL "whatif-rate-assumptions" template with this value,
+extracted the actual `value=""` string the browser would see, submitted
+it through the REAL `handleWhatIfSettings` handler exactly as an untouched
+form would, and reloaded the saved settings:
+  rendered/submitted value: "232777.489888888"
+  loaded.TaxableCostBasis before: 232777.48988888797
+  loaded.TaxableCostBasis after:  232777.489888888  (changed, diff=2.9e-11)
+This is a real, reproducible violation of R-EXACT's literal text AND of
+WS1's foundational Acceptance Criterion 1 ("submitting any /whatif form
+... leaves every stored value unchanged (float-equal)") and D1's core
+rule ("an untouched input never changes the saved value") — the exact bug
+class the whole task exists to eliminate, via a different mechanism than
+the original step-grid snap trap. None of the worker's own tests (generic
+or hand-written) ever use a fixture value needing >15 significant digits
+— every fixture is a "nice" 2-3 decimal number (276146.86, 388354.59,
+etc.), so this gap is invisible to the existing suite and to the lead's
+oracle (whose own fixture is likewise all clean decimals) — my attack
+brief named this scenario almost verbatim ("does re-rounding a 16-17-
+significant-digit stored value break 'never re-rounded'... (R-EXACT)?"),
+so this is not a stretch reading of scope.
+
+Secondary, lower-severity R-EXACT finding: formatExact also emits
+scientific notation for |v| >= 1e15 or 0 < |v| < 1e-4 (e.g.
+formatExact(1e15) = "1e+15", formatExact(0.00005) = "5e-05"), which
+contradicts R-EXACT's unconditional "with no exponent". Verified in real
+Chromium that `<input type=number>` DOES accept and correctly
+round-trip such exponent-form values (`.value`/`.checkValidity()`/
+`.valueAsNumber` all correct), so this does NOT break criteria 1/2
+functionally, and it is not reachable from any of the ~30 WS1 fields'
+realistic domains (portfolio/cost-basis cap near $1e9; percentages 0-100)
+without an unusual hand-typed input. Reporting as a secondary observation
+under the same root cause (the 'g',15 uniform rule), not an independent
+FAIL basis on its own, but it reinforces that the raw-vs-scaled split
+R-EXACT specifies was never implemented.
+
+R-TEST: the required mutations are killed (spot-checked two: healthcare
+display-span half-up revert, JS Math.round revert — both caught). The
+suite does not, however, include any fixture exercising R-EXACT's
+16-17-sig-fig raw-value case, which is exactly how the above defect
+survived to this attempt.
+
+CONCLUSION: R-FMT is solid and closes the attempt-2 hard-stop class
+cleanly. R-EXACT is only half-implemented: the "raw value, never
+re-rounded" half is not what the code does, and I demonstrated a live
+save-corruption on an untouched submit as a direct consequence. This is
+in-scope (formatExact is the worker's own new function, introduced by
+this attempt, in a file already in the manifest) and squarely inside the
+attempt-3 contract's own words. Per CLAUDE.md, default to FAIL on this
+kind of demonstrated, in-scope, criterion-1-violating defect.
+
+SCOPE
+- FAIL basis: internal/templates/render.go's formatExact — in manifest,
+  introduced/rewritten by this attempt.
+- Backlog observations (NOT part of the FAIL): whatif-rate-assumptions.js
+  per-account $ breakdown (formatAmount) and updateLivingExpensesPhaseNote
+  cents display, both byte-identical to base and untouched by any WS1
+  attempt.

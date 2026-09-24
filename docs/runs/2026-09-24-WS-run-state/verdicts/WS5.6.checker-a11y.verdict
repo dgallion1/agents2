@@ -1,0 +1,89 @@
+VERDICT: PASS
+CHECKER: checker-a11y
+FAMILY: anthropic
+TASK: WS5
+ATTEMPT: 6
+---
+## Scope confirmed (step 1)
+Diffed scratchpad/snap/WS5.5-a11y against scratchpad/snap/WS5.6-a11y
+(whole tree, `diff -rq`): web/ and internal/templates/ are BYTE-IDENTICAL.
+Under internal/handlers/whatif/, only two files differ:
+- handlers_rates.go: one hunk, lines 84-91. Every changed line starts with
+  `//`. Proved comment-only by stripping all `^\s*//` lines from both
+  versions and diffing the result: 0 differences ("STRIPPED IDENTICAL").
+  The comment now correctly describes the typed-error/errors.As path
+  (matching what attempt 5 actually shipped) instead of the stale
+  untyped-error-parsing description — ruling 2026-09-24k point (3).
+- ws5_glide_persons_test.go: Go test file only (adds a `nbspName` const +
+  guard using a real U+00A0, and a new
+  TestHandleWhatIfSettings_PersonsBirthMonthMessage_UnparseableValueSpecialChars
+  test covering ruling 2026-09-24k points (1)/(2)). No production code,
+  no template, no JS, no CSS.
+This matches the ruling's stated scope exactly: test-only + a corrected
+comment. No a11y-relevant surface changed. Attempt 5's a11y evidence
+(.swarm/verdicts/WS5.5.checker-a11y.verdict, PASS) carries over unchanged.
+
+## Light confirmation (step 2)
+Built `.worktrees/ws5` (a12477f, working tree with the above diff) via
+`ws_build`/`ws_serve` from .swarm/tier3/lib/common.sh — nice -n 19,
+GOMAXPROCS=4, isolated 127.0.0.1 port (58261 then 50279), never 8080.
+Fixture via `.swarm/tier3/WS5/make_fixture.py` into scratchpad/ws56fx/
+(Alex Primary 1958-11 primary, Sam Spouse 1971-08 spouse linked to a
+healthcare entry, unlinked Pat Unlinked 1990-05, start_date 2026-09).
+
+Direct POST (all three persons submitted, primary renamed to
+`Robert "Bob" Smith` with an empty birth month, matching probe.js's own
+quoted-name case): HTTP 400. Response body has exactly one
+`role="alert"` node, same `bg-negative-soft`/`text-negative` markup
+WS5.4/5.5 already verified, containing:
+  `Robert &#34;Bob&#34; Smith needs a birth month`
+— identical wording and identical wire-encoding (one html.EscapeString
+pass, `&#34;` for the quotes) to what WS5.5's verdict recorded for this
+exact case. Confirms the comment-only handlers_rates.go change did not
+alter the rendered error, its single-alert announcement, or its escaping.
+
+(An earlier probe that submitted only the renamed person, without also
+resubmitting Sam Spouse/Pat Unlinked, instead triggered the pre-existing,
+unrelated D7 healthcare-linked-removal refusal — "Remove Alex Primary's
+healthcare entry first" — because dropping persons from the POST reads as
+removing them. That path also showed exactly one role="alert" node with
+correct entity-escaping, consistent with prior attempts; it was not the
+intended birth-month case, so the corrected full-roster POST above is the
+one this verdict relies on. Noted for completeness, not a finding — D7's
+behavior is unchanged and out of scope for a comment/test-only attempt.)
+
+Cleanup verified: `ws_stop` (EXIT trap) left no stray process
+(`pgrep -af ws-oracle` empty); `ss -ltnp | grep 8080` shows only the
+pre-existing, untouched live server (pid unrelated to this session);
+`git status --short` in both `/home/darrell/bin/ai/budget2` (root) and
+`.worktrees/ws5` shows no changes introduced by this check (ws5 worktree's
+tracked diff is the attempt's own pre-existing working-tree edit, not
+something this audit added); the agents2 worktree's git status is
+unchanged (no edits — checkers never edit files).
+
+## Judgment against ACCESSIBILITY.md
+No numbered point is implicated by a comment-only Go change and a new Go
+test file — neither renders anything a user or AT ever sees. Points 5
+(announced errors), 7 (contrast), 9 (focus) were already exercised for
+this exact message/markup in WS5.5's PASS and are re-confirmed unchanged
+by the live re-trace above.
+
+## FAILURES
+None.
+
+## OBSERVATIONS (carried from WS5.5, unregressed, still out of scope)
+- Dark-mode color-contrast on `.mt-5 > summary` (guardrails.html) —
+  pre-existing, file untouched by any WS5 attempt.
+- Page-wide axe "incomplete" color-contrast node set (nav sidebar links,
+  Portfolio Allocation badge, etc.) — pre-existing, outside files WS5
+  touches.
+- Point 5's literal "linked via aria-describedby" still not implemented
+  for /whatif error messages (sitewide pattern, unchanged by this diff).
+
+## Summary
+Attempt 6 is test-only plus a corrected code comment (ruling 2026-09-24k).
+Verified both claims mechanically (byte-identical web/templates trees;
+stripped-comment diff identical on handlers_rates.go) and did the
+requested light confirmation: a direct POST reproduces WS5.5's exact
+recorded wire text and single-alert markup. No new a11y surface exists to
+audit; WS5.5's PASS stands.

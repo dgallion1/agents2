@@ -1,0 +1,75 @@
+VERDICT: FAIL
+CHECKER: checker-tests
+FAMILY: anthropic
+TASK: WS3
+ATTEMPT: 2
+---
+Scratch: /tmp/claude-1000/-home-darrell-work-agents2--claude-worktrees-budget2-what-if-review-24ec2e/28920e62-8027-4a38-9437-8967166cd576/scratchpad/checkers/WS3.2-tests/
+(tree = cp -a of snap/WS3.2-tests; base = git archive 643fa54; mut = mutation copy, restored from tree before each mutation;
+ mutate.py / runmut.sh / fullmut.sh / runprobe.sh / twin_dump_checker_test.go / twinhttp.py / probe_d4.py / probe_summary.py are the harnesses.)
+
+ORACLE: `accept.sh <scratch>/tree` -> oracle.checker.log: all 3 variants passed, final line "ORACLE PASS", exit=0.
+
+C1 (A->B: 200, Year-by-Year, cuts before, no multiplier after) — PASS.
+  oracle: "PASS [a-to-b] GET /whatif 200", "Year-by-Year renders (results-full 200, 33 rows)", "cuts still act BEFORE the transition (cut years [10, 11, 12])",
+  "no guardrail multiplier after the transition ... offending years []". Engine test TestChainGuardrailsOnToOff passes; on base it panics (nil deref).
+C2 (B->A: none before/at, acts after, baseline = transition portfolio) — PASS.
+  oracle: "PASS [b-to-a] no guardrail multiplier before/at the transition — offending years []", "guardrails start acting after the transition ... cut years [10..38]".
+  Baseline: TestChainGuardrailsOffToOnBaselineIsTransitionPortfolio passes on tree; mutation f2 (lazy state from st.primary.PortfolioValue) ->
+  "ws3_chain_guardrails_test.go:200: GuardrailBaseline at transition year=500000, want the transition-month portfolio 609673.3...".
+C3 (D4) — PASS on behaviour. probe_d4.py (tree binary, chain -> missing file): "GET /whatif status: 500 ... full document: True";
+  "has #whatif-results: True | chain form: True | Rate Assumptions: True";
+  "role=alert id=whatif-analysis-error inside #whatif-results=True text='Error Analysis failed: failed to load chained scenario whatif_missing.json: ...'";
+  "dollar figures inside #whatif-results: []"; 'Funded through'/'Funds run out'/'Success rate' absent;
+  "DELETE /whatif/chain/0 -> 200"; "after delete: GET /whatif 200 | Analysis failed present: False | results-full 200 | Year rows: 39"; "server log panics: 0".
+  Note: the failed page is served with HTTP 500 (full body). Every in-app route to /whatif is a full navigation (HX-Redirect / location.reload), so it paints; recorded as observation O3, not a failure.
+C4 (existing tests unchanged) — PASS. `diff -rq base tree`: only 7 non-test files modified + 3 NEW *_test.go files; no pre-existing _test.go differs.
+C5 (permanent tests fail on unfixed code and kill a–e) — FAIL on (b).
+  Unfixed code: new tests copied into base (basetests/): TestChainGuardrailsOnToOff panic; OffToOn ":153 ... expected guardrails to act after the transition";
+  OffToOnBaseline ":197 GuardrailPeak at transition year=0"; ReenableKeepsEarlierState panic; MC test panic; BrokenChainRendersFullPageWithAlert
+  ":106 expected a full HTML document, got a fragment"; ChainGuardrailOnToOffDoesNotPanic ":249 status = 500". (DeleteChainLink_FromBrokenPage passes on base — it is not a D4 discriminator, fine.)
+  Mutations (runmut.sh; each applied in mut/, then restored):
+   (a) a1 predicate drops nil check -> KILLED (all 5 engine/MC tests panic; handler :162/:249 status 500).
+       a3 stepper guard restored to `st.Guardrails != nil` -> KILLED (OnToOff panic; OffToOn :153; Baseline :197).
+       a4 guard removed -> KILLED (panics).
+       a2 predicate drops `.Enabled` -> survives all 8 new tests; KILLED only by existing TestFloorRegressionDisabledAndLegacy
+          ("floor_outcomes_test.go:130: disabled floor got 7500 want 6000") via spending_floor.
+       a2b stepper site `activeGuardrailsOn := s.Guardrails != nil` -> SURVIVES the full suite (fullmut.sh: retirement/... whatif/... mcpsvc/... cmd/server: "pkgs ok: 17").
+   (b) b1 `Evaluate(st.primary.Guardrails, …)` -> killed ONLY by nil-deref panics in OffToOn/OffToOnBaseline (the primary in those fixtures has Guardrails == nil).
+       b5 same defect without the crash (`cfg := st.primary.Guardrails; if cfg == nil { cfg = s.Guardrails }; Evaluate(cfg, …)`) -> SURVIVES all 8 new tests AND the full suite ("pkgs ok: 17").
+       b6 cut/raise trigger figures from the primary config (nil fallback) -> SURVIVES the full suite ("pkgs ok: 17").
+       b2 predicate on st.primary -> KILLED. b4 base guard + primary cfg -> KILLED (":100 guardrail event recorded at/after the transition year").
+   (c) c1 multiplier block restored to `if st.Guardrails != nil` -> KILLED ":95: year 3 (post-transition, guardrails off on B): multiplier=0.81, want 1.0"; Reenable ":247".
+   (d) d1 restore renderError+return -> KILLED ":106: expected a full HTML document, got a fragment (len=649)".
+   (e) e1 monte_carlo `guardrailsActive := st.Guardrails != nil` -> KILLED "ws3_chain_guardrails_montecarlo_test.go:108: expected the portfolio to survive ... depleted at year 3.67".
+   extras: f1 no lazy create -> KILLED; f2 -> KILLED; g1 floor ungated -> killed by existing floor test only; h1 drop WriteHeader(500) -> survives (not required);
+           t1 template error branch disabled -> KILLED; t2 role="alert"->"status" on #whatif-analysis-error -> SURVIVES full suite (test asserts role="alert" anywhere; the page has 5 other role="alert" nodes).
+  WHAT IS MISSING for (b): no test chains two guardrail-ENABLED steps with DIFFERENT configs, so nothing pins that the ACTIVE step's config drives
+  Evaluate and the trigger figures; the only (b) kill is incidental to the nil guard (a). Demonstrated closable: throwaway probe
+  TestProbeChainActiveConfigDrivesCuts (A FloorCutPct 10 -> C FloorCutPct 30 / FloorDropPct 2, assert post-transition cut ratio 0.70 and
+  YearlySummaries[4].GuardrailCutTrigger == peak*0.98) PASSES on the worker's code and fails under b5 (":75 cut ratio=0.9 want 0.70") and b6
+  (":85 cut trigger=200011.7 want 197991.4"). Recommended alongside (not strictly required by the letter of (a) since a2 is killed): an
+  Enabled=false (D3 "off", not "missing") chain-step test — probe TestProbeChainOnToDisabled passes on the worker's code and kills a2b; the
+  twin harness shows a2b changes an UNCHAINED disabled-guardrail plan's figures (u-disabled.json differs) with no test noticing.
+C6 (package tests + make check, uncached) — PASS.
+  `go test -count=1 ./internal/services/retirement/... ./internal/handlers/whatif/...` -> all 8 packages "ok".
+  `rtk proxy env GOFLAGS=-count=1 make check` -> vet, staticcheck, govulncheck ("Your code is affected by 0 vulnerabilities"), css-verify
+  ("tailwind.css is up to date"), go test ./... (52 ok, durations uncached), "✓ all checks passed", exit=0. gofmt -l on changed files: empty.
+
+UNCHAINED REGRESSION PROBE — PASS (no change).
+  Go twin (twin_dump_checker_test.go in base and tree, real SettingsManager load, runFullWithSeed seed 424242, 1000 MC runs, full WhatIfAnalysis JSON):
+  cmp IDENTICAL for u-on (live-derived plan, guardrails on, floor 6000), u-disabled (Enabled=false), u-nil, u-on-nofloor, c-on-on (both on, same cfg), c-nil-nil.
+  Harness sensitivity anchored: with mutation a2b the same harness reports "DIFF u-disabled".
+  HTTP twin (base vs tree binaries, isolated ports/data): Year-by-Year table byte-identical for u-on (39 rows), u-disabled (32), u-nil (32), c-on-on (39);
+  /whatif page identical except 3 added blank lines (new template actions); results-full differs only in MC figures (server MC is clock-seeded; seeded Go twin covers MC).
+
+FINDINGS / OBSERVATIONS (beyond the written criteria; for the lead):
+  F-1 (split classification, newly reachable, money on screen): A->B chain renders on results-full
+      "Next cut if the balance falls below $0.00; next raise if it rises above $0.00 (future dollars; today: $0.00 / $0.00)." and the projection
+      chart's 'Cut trigger'/'Raise trigger' traces drop to 0 for 21 of 34 points after the transition (probe_summary.py). buildGuardrailChartSummary /
+      buildGuardrailAnchors / chart trigger lines (handlers.go:570, :650, :844) and verdict.go:85 classify from the PRIMARY settings, while the engine now
+      classifies per ACTIVE step. B->A shows no summary/trigger lines although guardrails act after the transition. Not in C1–C6; §7 lists
+      "guardrail 'next cut' wording" as run B, but the $0.00 figure only became reachable with this task (base crashed on A->B).
+  O2: D4 handler test's role="alert" assertion is page-wide (t2 survives); criterion 3's role=alert is proven by probe_d4.py, not by the test.
+  O3: failed GET /whatif returns status 500 with the full page (h1 unpinned). Browser navigations paint it; an htmx-swapped GET of /whatif would not swap (htmx 2 responseHandling [45].. swap:false) — no such caller found.
+SCOPE: changed files == manifest (10). engine/** (critical glob) touched: guardrails.go, spending_floor.go, stepper.go + new test — Tier 3 task naming engine/** in SPEC §3, permitted.

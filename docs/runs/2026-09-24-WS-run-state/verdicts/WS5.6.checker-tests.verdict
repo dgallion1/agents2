@@ -1,0 +1,132 @@
+VERDICT: FAIL
+CHECKER: checker-tests
+FAMILY: anthropic
+TASK: WS5
+ATTEMPT: 6
+---
+Contract: SPEC.md ruling 2026-09-24k (test-only scope), with 2026-09-24i (I1-I5) as the full
+contract. The lead's brief also asks for the NBSP name "as a real U+00A0 via a Go escape, with a
+guard assertion".
+Snapshot: scratchpad/snap/WS5.6-tests. `diff -rq` against /home/darrell/bin/ai/budget2/.worktrees/ws5
+gives rc=0 at the start and again after every mutation and suite.
+Throttle: nice -n 19, GOMAXPROCS=4, GOFLAGS="-count=1 -p=2", one go process at a time.
+Evidence files are in scratchpad/checkers/WS5.6-tests/.
+
+SUMMARY: Scope, item (1), the regression kills and all suites PASS.
+Item (2) FAILS:
+- The NBSP is a raw byte pair, not a Go escape.
+- The guard's own rune literal is also a raw NBSP, so the guard passes when the file is
+  normalized. That is the exact failure it says it guards against.
+- The file's comment claims a "\u escape" that is not there.
+Item (3) FAILS on one clause: the corrected comment says all three typed errors carry the
+failing row's ID, but InvalidStartDateError has no ID field.
+
+1. Scope -- PASS
+   - `diff -rq snap/WS5.5-tests snap/WS5.6-tests` lists only handlers_rates.go and
+     ws5_glide_persons_test.go.
+   - handlers_rates.go changes comments only. Command: tokcmp/main.go uses go/scanner with
+     mode 0, which skips comments, on the a5 and a6 files. Output: "tokens a=3749 b=3749 /
+     NON-COMMENT TOKEN STREAMS IDENTICAL". I calibrated the comparator by changing one
+     string literal; it reported "FIRST DIFF at token 660", exit 1.
+   - The difflib hunk (handlers_rates.a5a6.diff) is lines 84-95 of `//` text only.
+   - The manifest WS5.6.files cmp-equals WS5.5.files and the file list of the stored
+     WS5.6.diff (9 files). No .swarm/critical.globs path is touched.
+
+2. Item (1): %q on the VALUE is now killed -- PASS
+   - Command: `python3 mutate6.py M2b_q_on_value_unparseable`. It changes
+     `"%s"` to `%q` at handlers_rates.go:167, alone, then runs
+     `go test ./internal/handlers/whatif/ ./internal/services/retirement/prepare/ -run 'Person|From_'`.
+   - Result: exit=1, "FAIL budget2/internal/handlers/whatif". The failing test is
+     TestHandleWhatIfSettings_PersonsBirthMonthMessage_UnparseableValueSpecialChars, both
+     subtests (`1971\08` and `19"71-08`).
+   - Failure lines from mut.M2b_q_on_value_unparseable.log:
+       message = "Ann's birth month \"1971\\\\08\" ...", want "Ann's birth month \"1971\\08\" ..."
+       message = "Ann's birth month \"19\\\"71-08\" ...", want "Ann's birth month \"19\"71-08\" ..."
+   - The file was restored and cmp'd IDENTICAL with the worktree.
+   - The test uses the real POST handler. It calls handleWhatIfSettings, the function the
+     route mounts (handlers.go:1306 r.Post("/whatif/settings", ...)). It asserts 400 and a
+     full-string `got != tc.want` on html.UnescapeString of renderError's <p>, so the
+     assertion is on exact verbatim text.
+
+3. Item (2): NBSP name -- FAIL
+   Present and exercised:
+   - The throwaway probe zz_nbsp_probe_test.go (removed afterwards; diff -rq rc=0) printed:
+       "PROBE nbspName bytes: 41 6e 6e c2 a0 4c 65 65"
+       "PROBE contains U+00A0: true  contains ASCII space: false"
+   - The guard exists at ws5_glide_persons_test.go:665-667, and nbspName is in the names
+     list at :675.
+   - The expected message is built from the name, so it holds the NBSP verbatim. Probe
+     output: "41 6e 6e c2 a0 4c 65 65 20 6e 65 65 64 73 ...". Under M2a the log shows
+     want "Ann Lee needs a birth month".
+   - The case has teeth. N3 folds NBSP to a space in the handler's needs-a-birth-month
+     message. It is KILLED by NamesXBirthMonths/Ann_Lee/empty#01.
+   - N1 turns the NBSP into a space on the const line only. The guard fires:
+     "ws5_glide_persons_test.go:666: nbspName must contain an actual NBSP".
+   Missing:
+   (a) No Go escape. A python byte count over the test file found 3 raw c2 a0 pairs and 0
+       occurrences of ` `, ` `, `\xa0` or `\U000000a0`. The raw bytes are on:
+         line 651: const nbspName = "Ann<NBSP>Lee"
+         line 662: a comment
+         line 665: strings.ContainsRune(nbspName, '<NBSP>'), where the guard's rune literal
+                   is itself a raw NBSP
+   (b) The guard is self-referential, so it survives the mutation it exists to catch.
+       - N2 normalizes every NBSP in the test file to an ASCII space. That is the
+         "editor / copy-paste" case the test's own comment names at :647-648 and :661-662.
+         Result: exit=0, "ok budget2/internal/handlers/whatif", 0 failing lines. The guard
+         is silent.
+       - N2+N3: the normalized test file plus the NBSP-folding handler mutant. Run against
+         the full packages (`-run .`): exit=0, "ok ... whatif 16.549s", "ok ... prepare".
+       - So after one normalization pass the NBSP coverage is gone and nothing reports it.
+   (c) The comment at :647 says "written with a \u escape so an editor or a copy-paste can
+       never silently normalize it". That is false, and (b) shows the consequence.
+   Needed: write the const as "Ann Lee" and the guard rune as ' ' (ASCII
+   escapes). Then N2 has nothing to normalize, and a const-only edit trips the guard.
+
+4. Item (3): comment matches code -- FAIL (one clause)
+   - The stale claims are gone: "plain, untyped error" and "prepare/validate.go and
+     settings.go are untouched" (a5a6 diff).
+   - The new text correctly describes errors.As plus the PersonID lookup in the request's
+     own slice (handlers_rates.go:92-95). That matches personsSaveErrorMessage :155, :162-163
+     and :178-179. It is also true that statusForMutationError has no case for these types:
+     handlers.go:146-151 and :271-287 return 500 by default.
+   - The false clause is handlers_rates.go:88-90: "(prepare.PersonBirthMonthError /
+     PersonBirthMonthAfterStartError / InvalidStartDateError, each carrying the failing
+     row's ID)". validate.go:16-18 shows `type InvalidStartDateError struct { Err error }`,
+     which has no ID. The clause must exclude the start-date type.
+
+5. Attempt-5 kills still hold -- PASS
+   Each mutation was applied alone, run with -run 'Person|From_', restored, and cmp'd
+   IDENTICAL (run.regress.txt).
+   - M1, identify by Name: KILLED by ..._SameNamePair.
+   - M2 on the name: KILLED in all three messages.
+     - needs: TestPersonsSaveErrorMessage and NamesXBirthMonths */empty.
+     - unparseable: NamesXBirthMonths */unparseable, BackslashConfusionPair, SameNamePair
+       and UnparseableValueSpecialChars.
+     - after-start: NamesXBirthMonths */after_start.
+   - M2c, %q on the value in after-start: KILLED (NamesXBirthMonths */after_start).
+   - M3 on each Error() string: KILLED by TestValidatePersons_ErrorTextPinned.
+     - birth month: /empty_birth_month and /unparseable_birth_month.
+     - after-start: /birth_month_after_start_date.
+     - start date: /invalid_start_date.
+   - M4, swap empty/unparseable: KILLED (22 failing lines, including
+     PersonsValidationErrorClasses and the new test).
+   - M5, after-start untyped: KILLED by TypedErrors_ErrorsAsAndPersonID/birth_month_after_...,
+     PersonsValidationErrorClasses/birth_month_after_start_date_(named) and NamesXBirthMonths.
+
+6. Suites -- PASS
+   - `make check` in the snapshot: vet, staticcheck, govulncheck ("No vulnerabilities
+     found."), css-verify ("tailwind.css is up to date") and test all ran. Results: 52 "ok",
+     0 FAIL, 0 "(cached)"; "✓ all checks passed"; "make check exit=0" (make_check.log).
+   - `node --test web/static/js/whatif-rate-assumptions.test.cjs`: tests 18, pass 18,
+     fail 0 (node_test.log).
+   - Oracle: `TMPDIR=<scratch>/tmp nice -n 19 .swarm/tier3/WS5/accept.sh <snapshot>`. Exit 0,
+     21 PASS, 0 FAIL. The final line is "ORACLE PASS" (od -c). pgrep shows no leftover
+     server (oracle.checker.log). The lead's oracle.6.log also ends "ORACLE PASS".
+
+OBSERVATIONS (beyond this attempt's scope; not grounds for FAIL):
+- S1, after-start row found by persons[0] instead of by ID: SURVIVES the full packages
+  (`-run .`, exit 0), as in attempt 5.
+- S2, Unwrap removed from PersonBirthMonthError: SURVIVES the full packages (exit 0), as in
+  attempt 5. The contract does not require Unwrap.
+- Go subtest names rewrite both "Ann\tLee" and the NBSP name to "Ann_Lee" (the second is
+  "#01"). This is harmless but makes the NBSP case hard to spot in -v output.

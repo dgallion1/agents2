@@ -1,0 +1,90 @@
+VERDICT: FAIL
+CHECKER: checker-second
+FAMILY: adversarial
+TASK: WS5
+ATTEMPT: 2
+---
+Scope: SPEC.md D6/D7 (lines 28-30), WS5 acceptance (lines 200-205), rulings
+2026-09-24c/d. Manifest (.swarm/manifests/WS5.2.files): handlers.go,
+handlers_rates.go, ws5_glide_persons_test.go, whatif-rate-assumptions.{js,
+test.cjs}, rate-assumptions.html. Snapshot built clean (`go build ./...`
+exit 0, `go vet ./internal/handlers/whatif/...` clean).
+
+CONFIRMED FIXES FROM ATTEMPT 1 (reproduced independently):
+- a11y required-indication: `go test -run TestGlidePathFieldsRequiredWhenRevealedDisabledWhenHidden -v`
+  PASS; template shows persistent "All three fields are required to apply a
+  glide path" inside the SAME reveal container as the fields (co-appears,
+  not only reactive-after-submit) and `required`/`disabled` track reveal
+  state. Fixes the 2026-09-24d a11y FAIL.
+- tests 4(b) gap (individual missing-field cases): new
+  TestHandleWhatIfGlidePath_EnableRejectsEachFieldMissingIndividually
+  subtests start/end/years missing, all PASS. Closes the survivor mutants
+  attempt-1 checker-tests found.
+- 2026-09-24c (blocking an unrelated save via a sibling row's required
+  birth-month) correctly left alone per the ruling (pre-existing, D7 as
+  specified) -- not touched by this attempt, consistent with the ruling.
+
+NEW DEFECT INTRODUCED BY THIS ATTEMPT'S "never a 500" FIX (personsSaveErrorMessage,
+handlers_rates.go:111-127, new in attempt 2 -- absent from WS5.1.diff):
+`strings.Contains(msg, "birth_month")` is used to detect the MISSING-birth-
+month case, but prepare.ValidatePersons (prepare/validate.go:47) emits TWO
+distinct errors containing that substring:
+  - "persons: invalid birth_month for %q: %w"        (missing/malformed -- correct target)
+  - "persons: birth_month %q is after start_date %q"  (PRESENT, just later than start_date)
+personsSaveErrorMessage collapses both to "Each person needs a birth month",
+which is FALSE for the second case. No client-side `max` ties the birth-
+month `<input type="month">` to start_date (grepped
+whatif-rate-assumptions.js and rate-assumptions.html: no `.max` set on
+birth-month), so this is reachable by an ordinary user (start-date edit
+made earlier than an existing person's birth month, or a birth-year typo),
+not just a contrived direct POST.
+
+Reproduced against the real production handler (net/http, real form
+encoding, real renderError/template output -- not a mock):
+  POST /whatif/settings person_birth_month[]=2030-01 start_date=2026-04
+  -> status 400, body:
+  `<p class="mt-2 text-body-sm text-negative">Each person needs a birth month</p>`
+  (full test + run log below). Before this attempt (base and attempt 1),
+  this same input produced a 500 whose text was at least accurate
+  ("Failed to save settings: persons: birth_month \"2030-01\" is after
+  start_date \"2026-04\"") -- this attempt fixed the status code but broke
+  the message's truthfulness for this input.
+
+  $ go test ./internal/handlers/whatif/... -run TestZZCheckerProbe_BirthMonthAfterStartDate_EndToEnd -v
+  status=400 body=...<p ...>Each person needs a birth month</p>...
+  --- FAIL: TestZZCheckerProbe_BirthMonthAfterStartDate_EndToEnd (0.00s)
+  (probe test written to my own snapshot only, not committed; removed after use)
+
+TestPersonsSaveErrorMessage (the new unit test for this exact function) has
+no case for the "birth_month ... is after start_date ..." error shape --
+the gap that let this through. All existing/added WS5 tests still PASS
+(`go test ./internal/handlers/whatif/...` -> ok, 15.7s; `node --test
+web/static/js/whatif-rate-assumptions.test.cjs` -> 18/18 pass); this is a
+narrow, real gap in the new classifier, not a broad regression.
+
+IN-SCOPE: personsSaveErrorMessage is new code this attempt wrote
+specifically to satisfy the "never a 500 / clear message" requirement
+pulled into scope by ruling 2026-09-24d, and the dispatch's own named
+attack surface ("string-prefix error classification ... can a ... error be
+misclassified"). A misleading message is not a "clear, user-facing"
+message; the fix trades a correct-but-500 error for an incorrect-but-400
+one for this input.
+
+No other defect found under the enumerated attack surfaces: the hasPersons
+success path (renderRecalc(settings, revision)) and the generic
+fallback-error path are structurally identical to the pre-existing
+recalcAndRender tail (same failMsg prefix, same statusForMutationError
+call) -- confirmed by reading handlers.go's recalcAndRender/renderRecalc
+verbatim; no other surface reads glide-path fields (grepped
+web/static/js/*.js and web/templates for start_stock_pct/end_stock_pct/
+transition_years/GlidePath -- only rate-assumptions.{js,html}); keyboard
+activation of the checkbox and Remove buttons uses the same onchange/click
+handlers as mouse (no separate path); the TOCTOU race the handler's own
+comment documents (a concurrent healthcare link landing between the
+pre-check Load and the save reaches ValidatePersons's
+"healthcare_persons: person_id ... not found", which personsSaveErrorMessage
+does not match by prefix, so it falls to the pre-existing generic 500 --
+same as base/attempt 1 in that race, not a new regression).
+
+VERDICT: FAIL -- new, real, user-reachable defect in code this attempt
+added to satisfy D7's "never a 500" / clear-message requirement.

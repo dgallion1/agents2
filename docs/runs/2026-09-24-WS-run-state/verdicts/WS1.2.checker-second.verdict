@@ -1,0 +1,90 @@
+VERDICT: FAIL
+CHECKER: checker-second
+FAMILY: adversarial
+TASK: WS1
+ATTEMPT: 2
+---
+Method: read .swarm/diffs/WS1.1.diff and WS1.2.diff (attempt2-vs-base) to
+isolate what attempt 2 changed beyond attempt 1. Built the snapshot's
+./cmd/server (go build, no error), ran it on 127.0.0.1:<free port> with a
+temp BUDGET_DATA_DIR built by scrubbing/copying the LIVE settings file
+read-only via the lead's own base_plan.py helper (never wrote to it, never
+touched :8080), fixture forces healthcare_persons[0] into "employer"
+coverage with off-grid .50-tie values (current_monthly_cost=1800.50,
+medicare_monthly_cost=2150.50) so the Coverage Timeline branch the oracle's
+own fixture never renders (grep of check.py/probe.js/make_fixture.py for
+"Coverage Timeline"/"employer": zero hits) is exercised. Stopped the temp
+server before finishing (health check refused afterward).
+
+CRITERION 4 FAIL — dual-formatter split confirmed live, not just in the Go
+source. C4's own text: "shows the exact saved value ... per the existing
+display formatter — no new formatter". Attempt 2's diff
+(.swarm/diffs/WS1.2.diff:1677, 1718, 1755) changes the QA/slider display
+spans in web/templates/components/whatif/healthcare-person.html FROM
+`${{formatNumber .CurrentMonthlyCost}}` TO `{{formatDollars
+.CurrentMonthlyCost}}` (and the same for .MedicareMonthlyCost,
+.ACACostAfterEmployer) — literally the "new formatter" C4 prohibits — and
+wires aria-valuetext to the same new formatDollars call, so span==aria
+without depending on JS to settle. formatNumber is Go %.0f (round-half-to-
+even); formatDollars/formatWholeDollars is int64(v+0.5) (round-half-up) —
+they disagree on exact .50 ties.
+
+The SAME underlying fields are ALSO rendered a few lines further down in
+the SAME file's "whatif-healthcare-timeline" template block ("Coverage
+Timeline"), which attempt 2 left untouched: still
+`${{formatNumber .CurrentMonthlyCost}}` / `${{formatNumber
+.MedicareMonthlyCost}}` / `${{formatNumber .ACACostAfterEmployer}}`, plain
+text with no `data-quick-adjust-display` attribute — confirmed by grep of
+web/static/js/*.js that no JS selector (getQuickAdjustDisplays filters on
+`[data-quick-adjust-display]`; the Coverage Timeline spans have no such
+attribute) ever touches this block, on load or after any htmx swap. This
+is not a sub-100ms pre-hydration artifact (attempt 1's non-surviving
+finding) — it is the PERMANENT, final, server-rendered and never-corrected
+state.
+
+Rendered proof, same page, same load, same stored figures (GET /whatif on
+my temp server, raw HTML, no JS involved for either side):
+- current_monthly_cost=1800.50 (healthcare person 9166cc49...):
+  - Quick Adjust / in-card display span AND aria-valuetext (line ~638,
+    ~5511, ~645): "$1,801"
+  - Coverage Timeline, same person, ~90 lines later in the same document
+    (line ~772): "Employer $1,800"
+- medicare_monthly_cost=2150.50, same person:
+  - Quick Adjust / in-card display span AND aria-valuetext (line ~711,
+    ~5574): "$2,151"
+  - Coverage Timeline (line ~775): "Medicare $2,150"
+
+A user with the employer-coverage timeline visible (a normal, non-edge
+configuration: any employer-coverage person with EmployerCoverageYears>0)
+sees two different dollar amounts for the one stored monthly cost on the
+SAME screen, simultaneously, permanently — not a race, not a pre-hydration
+gap. A screen-reader user gets a third: aria-valuetext says "$1,801" while
+the adjacent plain-text timeline (not itself an ARIA construct, but the
+same rendered page) says "$1,800".
+
+This is the exact defect class the task brief names verbatim ("does any
+OTHER surface render the same value with the old formatter now ...
+Coverage Timeline ... test exact .50 values like 1654.50") and the
+constitution's "dual formatters" recurring-defect class (SPEC.md
+Recurring defect classes #3). It is not pre-existing: on base 643fa54 the
+QA/slider span ALSO used formatNumber, so base has NO divergence between
+the span and the Coverage Timeline (both formatNumber, consistent);
+attempt 2's own edit introduced the split, in the very file (manifest
+entry web/templates/components/whatif/healthcare-person.html) this attempt
+touched. Squarely in-scope and worker-fixable without exceeding the task
+(e.g. give the Coverage Timeline spans a `data-quick-adjust-display`
+hook, or keep formatNumber on the QA/slider span and only add
+aria-valuetext via a formatNumber-consistent computation, or add a
+permanent test asserting the Coverage Timeline text and the QA span render
+the identical string for the same stored value).
+
+Other criteria (not chased further given the C4 finding above stands):
+C1/C2/C3/C6/C7 not re-litigated here — attempt 1's checkers and the
+lead's oracle (oracle.2.log, 71/71 PASS, ORACLE PASS) already covered
+those and I found no reason to doubt that coverage; my mandate was the
+attack surfaces the lead flagged, and the dual-formatter probe was the one
+that broke.
+
+SCOPE: healthcare-person.html is in .swarm/manifests/WS1.2.files. The
+defect is inside the diff's own hunks, not a walk-back into untouched
+code.

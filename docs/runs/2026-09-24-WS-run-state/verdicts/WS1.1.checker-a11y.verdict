@@ -1,0 +1,134 @@
+VERDICT: PASS
+CHECKER: checker-a11y
+FAMILY: anthropic
+TASK: WS1
+ATTEMPT: 1
+---
+METHOD
+Built the real server from the snapshot (`go build ./cmd/server`), ran it on
+127.0.0.1:46321 against a fixture data dir (make_fixture.py — every stored
+value deliberately off its old step grid, e.g. portfolio 2437512.34,
+inflation 3.85, cost basis 276146.86) plus BUDGET2_BACKUP_DIR/IMPORT_DIR
+under scratch. Audited the REAL rendered /whatif page (not template source,
+not hand-built HTML) with axe-core 4.13.0 (found at
+~/.config/nvm/.../@axe-core/cli/node_modules/axe-core, since npx fetched no
+local axe-core package) injected via Playwright into the live page, which
+also loaded the project's real built /static/css/tailwind.css (200, 46928B)
+and styles.css (200, 14644B). Ran once with `localStorage.theme='light'` +
+`emulateMedia({colorScheme:'light'})` and once with `'dark'`/`'dark'`
+(explicit force, not relying on prefers-color-scheme), confirming
+`document.documentElement.className` was `light`/`dark` before scanning.
+All native `<details>` opened and the Quick Adjust panel toggled open before
+each axe run. Server killed at end; no writes outside scratch; no :8080
+contact; no budget2 MCP tools used.
+
+AUTOMATED (axe-core, wcag2a/wcag2aa/wcag21aa/wcag22aa tags)
+- Light theme: 0 violations, 30 pass rules.
+- Dark theme: 1 violation — color-contrast, `.mt-5 > summary` ("Adjust
+  spending rules manually", 1.38:1, #000 on #292524).
+  web/templates/components/whatif/guardrails.html:8. Diffed byte-for-byte
+  against `git show 643fa54:web/templates/components/whatif/guardrails.html`
+  (budget2 repo at /home/darrell/bin/ai/budget2) — IDENTICAL. WS1.1.diff
+  touches only the six `<input>` lines further down (step=any/formatExact);
+  this `<summary>` line is untouched. PRE-EXISTING, not introduced or
+  replicated by this task. OBSERVATION only (ACCESSIBILITY.md #7/#12).
+
+MANUAL — per the delegation's checklist, against ACCESSIBILITY.md #4/#9/#12
+1. Converted sliders (healthcare cost/inflation, portfolio, inflation rate,
+   spending-decline rate*, investment-return, spending-phase multipliers —
+   tested healthcare-monthly-cost, portfolio-slider, inflation-rate-slider,
+   phase-0/1-multiplier directly; *spending-decline-slider is template-
+   conditional on SpendingPhaseConfig.Enabled=false and didn't render on
+   this fixture — same JS/markup pattern verified on the other 5, so not a
+   gap):
+   - Accessible name resolves via `label[for=]` → visible range id in every
+     case (e.g. "Monthly Cost", confirmed live via
+     `document.querySelector('label[for="healthcare-monthly-cost-<id>"]')`).
+   - Visible range carries no `name=` (mirror-only); role is the native
+     range/slider; `aria-valuetext` present at load and EXACT (portfolio
+     "$2,437,512" for stored 2437512.34; healthcare "$1,655" for 1655.30;
+     phase multiplier "93%" for 0.93) — not the step-snapped display.
+   - Keyboard operation (ArrowRight, End tested) updates `aria-valuetext`
+     live via the generalized `syncQuickAdjustAriaValueTexts` path (not
+     only on mouse drag): healthcare $1,655→$1,700→$3,000 (End→max),
+     portfolio $2,437,512→$2,500,000, phases 100%→105%/93%→100%.
+   - Keyboard operation saves the exact arrowed-to value: after one
+     ArrowRight + Tab-blur, `/whatif/healthcare/<id>` PUT fired and the
+     saved `current_monthly_cost` became exactly 1700 (hidden field also
+     read 1700) — not silently re-snapped. A native `<input type=range>`
+     fires `change` on every arrow keystroke (browser behavior, not a WS1
+     mechanism), so the debounced `hx-trigger="change delay:500ms"` PUT
+     fired after the single keystroke too — this is unchanged native range
+     behavior, present identically on master's un-mirrored slider (the
+     control being fired is different, the per-keystroke-fires-change fact
+     is not), so NOT a WS1-introduced regression.
+   - Hidden canonical inputs: confirmed via a real Tab sequence starting
+     from the visible range — focus moves range→range→range→range→number→
+     number, the four interleaved `type=hidden` siblings are never focused
+     (DOM `.tabIndex` reads 0 but `type=hidden` is unconditionally excluded
+     from the focus order per browser behavior, confirmed empirically, not
+     just asserted).
+   - Duplicate id claim: `healthcare-pre-medicare-inflation-<id>` is
+     authored at two template sites (line ~109 `{{else if ne
+     .CurrentCoverage "medicare"}}` under the non-employer/non-medicare
+     branch, and line ~148 under `{{if eq .CurrentCoverage
+     "employer"}}{{if gt .EmployerCoverageYears 0}}`) — mutually exclusive
+     conditions (employer vs. not-employer-and-not-medicare). Live DOM scan
+     on the ACA fixture person confirms zero duplicate ids anywhere on the
+     page. Confirmed only one renders, per the delegation's ask.
+2. Number inputs with `step="any"`: spin/Arrow behavior tested on
+   state-income-tax-rate (was step 0.05), taxable-cost-basis (was step
+   1000), ss-cola-rate (was step 0.1), property-tax-inflation (was step
+   0.1) — ArrowUp on each steps by exactly 1.0 (HTML default step for
+   step="any"). USABILITY OBSERVATION (not a WCAG failure — the field
+   remains keyboard-operable, #9 is met; WCAG 2.2 AA and ACCESSIBILITY.md
+   are both silent on step granularity): state_income_tax_rate and
+   ss_cola_rate arrows are now ~10–20x coarser (0.05/0.1→1); several
+   dollar fields (care_monthly_cost step 50, aca_premium_credit step 100,
+   taxable_cost_basis step 1000) are now far FINER via arrows (step 1),
+   meaning reaching a six-figure cost-basis by arrow key alone takes many
+   more presses than before. Typing a value directly is unaffected either
+   way. Validity messages remain sane: an out-of-range entry (-5 on cost
+   basis) still reports `rangeUnderflow` with message "Value must be
+   greater than or equal to 0."; the exact off-grid fixture value
+   (276146.86) round-trips as valid.
+3. Quick Adjust drawer healthcare mirrors (`web/templates/components/
+   whatif/quick-adjust.html`, e.g. `#qa-healthcare-monthly-cost-<id>`):
+   labelled correctly (`label[for=]` resolves to "Monthly Cost"), BUT they
+   never carry `aria-valuetext` — not at load, and never synced, because
+   `syncQuickAdjustAriaValueTexts` only ever sets `aria-valuetext` on a
+   control that ALREADY has the attribute
+   (`if (!control.hasAttribute('aria-valuetext')) return;`), and this
+   template's mirror ranges were never authored with a starting one.
+   Confirmed live: after opening Quick Adjust and pressing ArrowRight on
+   the drawer's own healthcare-cost slider, the drawer control still has
+   `aria-valuetext: null` while the primary in-card slider's
+   `aria-valuetext` correctly updated to "$1,750" from the same keystroke.
+   `quick-adjust.html` is NOT in WS1.1.diff's file list (11 files touched:
+   the test file, render.go, two JS files, and 7 `web/templates/components/
+   whatif/*.html` files — quick-adjust.html is not among them) — this gap
+   is PRE-EXISTING and unchanged by this task in either direction (master's
+   drawer slider had the identical absence). OBSERVATION, not a FAIL, per
+   the git-diff-master attribution rule — but worth flagging for the
+   backlog: the WS1 code comment on `syncQuickAdjustAriaValueTexts` claims
+   the mechanism "covers the primary in-card slider AND its Quick Adjust
+   mirror alike", which is not true for the healthcare keys' QA-drawer
+   controls specifically (they were never opted in), so the comment
+   overclaims for this instance — a good V3/backlog candidate, not a WS1
+   scope failure since the file is untouched.
+   Also observed for completeness: `investment-return-slider` was never
+   given an `aria-valuetext` either (deliberate per its own code comment —
+   0 has non-numeric meaning "use allocation" with no single-string
+   format) — unchanged from master, not a regression.
+4. axe-core (both themes, all disclosures + Quick Adjust open) found no
+   NEW contrast, label, or structural issues on any of the touched inputs/
+   sliders — the only violation is the pre-existing `<summary>` above.
+
+ACCESSIBILITY.md POINTS EXERCISED: #4 (label association) PASS, #7/#12
+(contrast, both themes) PASS for all WS1-touched elements — 1 PRE-EXISTING
+dark-mode fail attributed above, #9 (keyboard operability, focus order,
+hidden-not-focusable) PASS.
+
+No git state changes made; snapshot and scratch only. Playwright scripts,
+axe results (axe-results.json), and screenshots live under
+.../scratchpad/checkers/WS1.1-a11y/ for re-inspection.

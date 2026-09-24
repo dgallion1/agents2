@@ -1,0 +1,117 @@
+VERDICT: UPHOLD
+CHECKER: judge-standards
+FAMILY: adversarial
+TASK: WS5
+ATTEMPT: 4
+---
+PREMISE CHECK (mechanical, independent of checker-second's own run)
+
+Reproduced twice against the WS5.4 snapshot
+(scratch/snap/WS5.4-second, `.swarm/diffs/WS5.4.diff` applied):
+
+1. Isolated regex probe (scratch/judges/WS5.4-standards/repro.go):
+   fmt.Errorf("persons: invalid birth_month for %q: %w", `Robert "Bob" Smith`, ...)
+   -> msg = `persons: invalid birth_month for "Robert \"Bob\" Smith": month is required`
+   rePersonsInvalidBirthMonth (`^persons: invalid birth_month for "([^"]*)": .+$`)
+   .FindStringSubmatch(msg) -> nil (NO MATCH).
+
+2. Direct call into the snapshot's own personsSaveErrorMessage (temp test
+   file, removed after use; nice -n 19, GOMAXPROCS=4, GOFLAGS="-count=1
+   -p=2"):
+   name=`Robert "Bob" Smith`, submitted BirthMonth="" (the EMPTY class) ->
+   `go test ./internal/handlers/whatif/ -run TestJudgeProbeQuotedNameEmptyMonth -v`
+   -> msg = `Invalid person data: persons: invalid birth_month for
+   "Robert \"Bob\" Smith": month is required` -- NOT
+   `Robert "Bob" Smith needs a birth month`.
+
+This confirms checker-second's factual premise exactly: for a person Name
+containing a literal `"`, Go's `%q` escapes it as `\"`, the regex's
+`[^"]*` capture cannot span the escape, FindStringSubmatch returns nil, and
+personsSaveErrorMessage falls through to the generic
+`"Invalid person data: " + msg` branch -- for BOTH the empty and the
+unparseable birth-month classes, since both share this same capture. The
+name field (`person_name[]`) carries no `pattern`/quote restriction in
+rate-assumptions.html or whatif-rate-assumptions.js (confirmed independently
+by both checker-second and checker-a11y's markup review), so this is an
+ordinary, reachable input, not a contrived one. checker-tests independently
+reproduced the identical bug as its own F2 finding (V03m/V03n/V03o) and
+chose not to fail on it -- a disagreement of JUDGMENT between two checkers
+about the SAME confirmed fact, which is exactly what the dispute process
+exists to settle. Premise: TRUE.
+
+CLAUSE-BY-CLAUSE, against ruling g's text as written
+
+Ruling g enumerates five classes with deliberately asymmetric drafting:
+  1. submitted birth month EMPTY -> "<Name> needs a birth month" -- NO
+     "or equivalent" hedge.
+  2. present but unparseable -> "<Name>'s birth month "<value>" isn't a
+     valid month" (or equivalent -- must name the person and must not say
+     it is missing).
+  3. birth month after start -> the attempt-3 message (unchanged, not at
+     issue here).
+  4. invalid projection start date -> a message about the START DATE
+     (never "Invalid person data").
+  5. other persons errors stay truthful (no specific wording).
+
+The governing clause for a given 400 is fixed by the SUBMITTED VALUE
+("Word every ... 400 from the SUBMITTED value"), not by which code branch
+happens to fire. A quoted name with an EMPTY submitted birth month is
+squarely class 1's fact pattern; it does not become class 5 ("other persons
+errors") merely because a regex bug misroutes it there. The inclusion of an
+explicit "(or equivalent ...)" parenthetical on class 2 and its deliberate
+absence from class 1 and 3 is textually meaningful (expressio unius) --
+class 1's wording is the strict one of the set.
+
+Applying clause 1 to the reproduced case: required text is exactly
+`Robert "Bob" Smith needs a birth month`. Actual text is `Invalid person
+data: persons: invalid birth_month for "Robert \"Bob\" Smith": month is
+required` -- the internal validator's field name ("invalid birth_month
+for"), Go's raw wrapped error text ("month is required"), and a
+backslash-mangled re-escaping of the name are all exposed verbatim to the
+end user. This is not a paraphrase of the required wording under any
+reading, strict or lenient; it also reproduces the literal phrase "Invalid
+person data" that ruling g singles out by name as the thing to avoid (for
+the start-date class explicitly, but substantively for exactly this
+species of raw-error leakage the whole attempt-4 contract exists to end --
+see 2026-09-24f, which flagged this exact fallback text as the defect that
+forced attempt 4). Clause 1, as written, is not met for this input.
+
+(For the present-but-unparseable class with the same quoted name,
+class 2's "or equivalent" hedge is arguably met -- the escaped name and
+value are technically present in the fallback text and it never says
+"missing" -- so that half of checker-second's F2 twin would be closer to
+the line. That is not what carries the FAIL: the EMPTY-birth-month +
+quoted-name case, governed by the unhedged clause 1, is clearly outside
+the written standard, and checker-second's own repro is exactly that
+case.)
+
+Reachability objection considered and rejected: checker-tests notes the
+EMPTY-birth-month class is only reachable via direct POST because the UI
+field is `required` -- true, but that is equally true of the ALREADY-
+ACCEPTED P3d oracle check for plain names, which the run treats as
+squarely in scope (2026-09-24e/g; oracle P3d exists for exactly this
+class). A direct-POST-only reachability does not place this input outside
+the standard; it places it exactly where the standard's own accepted test
+already probes.
+
+"Invalid person data" is explicitly forbidden ONLY for the start-date
+class -- correct as a matter of the literal negative instruction. But
+ruling g does not need a second explicit prohibition to fail here: clause
+1's own affirmative, unhedged wording requirement is sufficient on its own,
+and the observed text fails to satisfy it regardless of whether "Invalid
+person data" is separately banned for this class.
+
+RULING
+
+The contested FAIL's premise is verified true by independent reproduction
+at both the regex level and the handler-function level. Read against
+ruling g's actual asymmetric wording -- no hedge on the empty-birth-month
+clause, an explicit hedge only on the unparseable clause -- the quoted-name
+input governed by the unhedged clause fails the letter of the standard: a
+realistic, browser-reachable (given the accepted P3d precedent for
+reachability) name defeats the new regex and produces raw internal
+validator text instead of the required "<Name> needs a birth month"
+wording. The lead's "substance is truthfulness, only polish is missing"
+reading asks this lens to excuse a clause the ruling's own drafters chose
+not to hedge; that is not available under a standards/letter reading.
+UPHOLD.

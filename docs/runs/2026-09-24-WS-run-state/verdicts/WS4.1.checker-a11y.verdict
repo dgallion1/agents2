@@ -1,0 +1,204 @@
+VERDICT: FAIL
+CHECKER: checker-a11y
+FAMILY: anthropic
+TASK: WS4
+ATTEMPT: 1
+---
+Method: built the real snapshot (`go build ./cmd/server`), ran it against a
+cp-rL copy of /home/darrell/bin/ai/budget2/data on 127.0.0.1:44679 (never
+:8080, never a repo-root binary), drove it with real Playwright (Chromium,
+NODE_PATH=.../e41f203b7505f1fb/node_modules) exercising the actual live
+templates/JS/handlers, and corroborated with `axe` (@axe-core/cli 4.13.0,
+--chrome-options blink-settings=preferredColorScheme=1|2 to force each
+theme explicitly per the task's headless-defaults-dark warning). Verdicts
+below are annotated with the git-diff-vs-master provenance check.
+
+## 1. Nested role="alert" — FAIL (ACCESSIBILITY.md point 5 / WCAG 4.1.3)
+
+Reproduction: POST/PUT a server-side-only rejection (client constraints
+satisfied) to each of the four Add forms that already carried a
+`role="alert"` wrapper div before this diff (income/expense/bigticket/
+onetime — confirmed via `grep 'id="whatif-add-.*-error"' whatif.html`,
+none of which are touched by WS4.1.diff). Example: Add Income with
+start_month=2027-01, end_month=2026-12 → 400 "Through month cannot be
+before the start month", retargeted via `HX-Retarget: #whatif-add-income-
+error`.
+
+Result — Playwright's real Chromium accessibility tree
+(`locator('#whatif-add-income-error').ariaSnapshot()`):
+```
+- alert:
+  - alert:
+    - img
+    - text: Error
+    - paragraph: Through month cannot be before the start month
+```
+Two distinct `alert` nodes in the actual AX tree, both carrying the
+identical message text — confirmed for all four (income/expense/
+bigticket/onetime, `role="alert"` count = 1 *nested inside* the wrapper's
+own `role="alert"` in every case; screenshots of raw HTML in the
+scratchpad probe logs). Healthcare's slot (`#whatif-add-healthcare-error`,
+line 509 of the rendered page) has NO wrapper role, confirmed via a real
+400 (`curl -X POST /whatif/healthcare … current_monthly_cost=-5` →
+"Monthly cost cannot be negative") — single `role="alert"`, not nested;
+that one is fine (in fact newly, correctly announced where it wasn't
+before).
+
+Provenance: pre-change, `renderError`'s body had no `role="alert"`
+(confirmed against WS4.1.diff — that attribute is added by this task).
+The four wrapper divs' `role="alert"` is untouched, pre-existing markup.
+So pre-diff, swapping the fragment into these four slots produced ONE
+alert region with fresh content (correct); post-diff it produces a live
+region nested inside a live region carrying the same text twice. This is
+a regression THIS diff introduces, not a pre-existing condition.
+
+Why this is a real defect, not a nitpick: nested/duplicate live regions
+are a documented AT anti-pattern (both the outer wrapper's content-change
+notification and the freshly-inserted inner `role="alert"` node's own
+implicit-live-region insertion are independently observable events to a
+mutation-observing AT), and the task brief explicitly named "nested/
+duplicate alerts" as an in-scope check under WCAG 4.1.3. ACCESSIBILITY.md
+point 5 requires errors be "announced" — an error announced twice on
+every rejected Add-form submission (4 of 5 Add forms, i.e. the majority
+of the surfaces this task touches) is noise for AT users, the same harm
+class the checker brief calls out for hidden/injected text. FAIL.
+
+Fix would be a one-line pick (either drop `role="alert"` from `renderError`
+itself and rely on the pre-existing wrapper for the four Add forms while
+keeping it for the many bare-`renderError` non-retargeted callers, or
+drop `role="alert"` from the four wrapper divs and rely on the fragment's
+own) — not something I applied; that's the worker's job.
+
+## 2. Non-retargeted errors (edit-form / 5xx path) — PASS
+
+Reproduction: Christine's income row, PUT-triggered on `change` with
+start=2027-01/end=2026-12 → 400 "Through month cannot be before the start
+month" via bare `renderError` (no HX-Retarget; confirmed
+`handleWhatIfUpdateIncome` uses `renderError`, not
+`renderRetargetedError`). Result: exactly one `[data-wf-inline-error]`
+node with `role="alert"`, inserted as the form's first child — no
+nesting (that form had no pre-existing wrapper). Verified this generalizes
+to a synthetic 500 (route-intercepted `PUT` returning
+`renderError`-shaped 500 body): identical single-alert structure, same
+code path (base.js's `htmx:responseError` listener doesn't special-case
+status class beyond "was it retargeted"). Also verified the "no enclosing
+form" fallback (`errorHost()` → `elt.parentNode`) on a healthcare
+"Remove" button (route-intercepted 400): message lands as the immediate
+parent's first child, single `role="alert"`, no nesting, focus stays on
+the Remove button. Three consecutive rejections on the same field never
+stack more than one error node (`clearHost` works as designed).
+
+## 3. Error identification/association (3.3.1/3.3.3) — PASS with an
+observation
+
+The four Add forms' pre-existing `aria-describedby` wiring on the
+start/end month inputs already points at the (now correctly nested-alert,
+see #1) error slot — unchanged by this diff. For the NEW non-retargeted
+inline errors (edit rows, 5xx), the inserted node is not wired via
+`aria-describedby` to a specific input, but it IS inserted as the first
+child *inside the same `<form>`* as the offending field(s) — satisfying
+this task brief's own framing ("near/associated with the field **or
+form**"). Before this diff these errors were entirely invisible/silent
+(base.js's old code only `console.error`'d) — this is a net improvement,
+not a regression. OBSERVATION (non-blocking): a follow-up could wire
+`aria-describedby` on the specific field for tighter SC 3.3.1 compliance,
+but nothing in ACCESSIBILITY.md's point 5 "or an aria-live region
+announces" branch requires it, and the live-region announcement is
+present (module #1's nesting bug notwithstanding).
+
+## 4. Focus handling — PASS
+
+- Retargeted rejection (Add Income): `document.activeElement` after
+  submit stays on the submit `<button>` — not lost to `<body>`.
+- Non-retargeted rejection (edit-form `change`): focus stays on the
+  `end_month` input that was being edited.
+- No-enclosing-form rejection (Remove button, route-intercepted): focus
+  stays on the Remove button.
+- Add form state retained on rejection (AC1): confirmed live — name/
+  amount values survive a rejected Add Income submit
+  (`inputValue()` still "Test Income Nested" / "100" after the 400); the
+  OOB `<div id="whatif-add-income-error" role="alert" hx-swap-oob="true">`
+  in `pages/whatif.html:245` (pre-existing, untouched by this diff)
+  correctly clears the stale retargeted message on the NEXT successful
+  submit.
+
+## 5. Contrast — PASS, both themes (ACCESSIBILITY.md point 7/12)
+
+Computed against the live rendered page (real built Tailwind CSS, not a
+guess), error text/icon/border vs effective background:
+- Light: `rgb(190,18,60)` text/border on `rgb(255,241,242)` bg → 5.72:1
+  (≥4.5:1 text, ≥3:1 border — both pass).
+- Dark (`.dark` class forced explicitly, per the task's headless-defaults
+  -dark warning; also cross-checked axe with
+  `--chrome-options=blink-settings=preferredColorScheme=2`): text/border
+  `rgb(253,164,175)` on `rgb(41,23,42)` bg → 8.88:1.
+- Same ratios hold for the compact per-row edit-form error at 375px
+  width. Full-theme parity — no light/dark-only-visible defect.
+
+## 6. Reflow at 320/375px — PASS for the new content; one PRE-EXISTING
+    unrelated defect noted
+
+- 375px: no horizontal overflow (`document.documentElement.scrollWidth`
+  === 375), inserted error node not clipped
+  (`scrollWidth===clientWidth===280`).
+- 320px: `document.documentElement.scrollWidth` = 344px (overflow) —
+  but reproduced identically on a **freshly loaded page with no error
+  ever triggered** (baseline probe, same 344px), and the widest-right
+  element is an unrelated `<button class="px-3 py-1 bg-accent-strong...">`
+  elsewhere on the page, not the inserted error fragment (which itself
+  measures scrollWidth===clientWidth===225, no internal clipping).
+  OBSERVATION (pre-existing, out of scope — WCAG 1.4.10 Reflow gap
+  unrelated to WS4; the error insertion doesn't add to it).
+
+## 7. reportValidity (AC3, browser-invalid values) — PASS
+
+Property tax field (`min="0"`), typed `-50` + `input` event: zero
+requests fired to `/whatif/settings` (confirmed via request listener),
+`input.checkValidity()` false with native message "Value must be greater
+than or equal to 0.", focus stays on the same input. Matches
+`htmx.config.reportValidityOfForms = true` intercepting before dispatch;
+headless Chrome doesn't render the visual bubble but the underlying
+mechanism (block + retain focus on the invalid control) is exactly what
+that flag does.
+
+## 8. Page-load state — PASS
+
+All five Add-form error slots (`whatif-add-{income,expense,bigticket,
+onetime,healthcare}-error`) are empty on a fresh `/whatif` load — no
+stale/phantom content that would be wrongly announced.
+
+## 9. Automated audit (axe-core 4.13.0, both themes forced) — PASS,
+    one PRE-EXISTING finding
+
+`axe http://127.0.0.1:44679/whatif --tags wcag2a,wcag2aa,wcag21a,
+wcag21aa,wcag22aa` with `--chrome-options=blink-settings=
+preferredColorScheme=1` (light) and `=2` (dark): **0 violations** in
+both explicit runs. An earlier default-Chrome run (color scheme
+unforced/ambiguous) found one `color-contrast` violation on
+`.mt-5 > summary` ("Adjust spending rules manually") — traced to
+`web/templates/components/whatif/guardrails.html`, which is NOT in
+WS4.1.diff (only `internal/handlers/whatif/handlers.go`,
+`handlers_test.go`, `web/static/js/base.js`, `base.test.cjs` are
+touched). PRE-EXISTING, OBSERVATION only, not a WS4 FAIL. Axe cannot
+drive the dynamic error-injection scenarios (no form interaction) — those
+are covered by the Playwright checks above, which is where the real
+finding (#1) lives.
+
+## Summary of scope-checked items not otherwise mentioned
+- Hidden-text abuse / SR-only junk text: none introduced (diff is Go +
+  JS logic only, no new `sr-only`/`aria-hidden` misuse).
+- Motion/`prefers-reduced-motion`: no CSS changed by this diff; not
+  implicated.
+- Landmarks/headings: untouched by this diff; not implicated.
+
+---
+FINAL: FAIL. One in-scope, diff-introduced regression: role="alert"
+nested inside a pre-existing role="alert" wrapper on 4 of the 5 Add-form
+error paths (income/expense/bigticket/onetime), producing a duplicated
+error announcement in the real accessibility tree — confirmed via
+Playwright's `ariaSnapshot()` against the live running app, not guessed
+markup. Everything else this task's brief asked me to check (contrast in
+both themes, non-retargeted/5xx/reportValidity paths, focus handling,
+reflow, page-load silence) passes, with two pre-existing/out-of-scope
+items (320px overflow; one guardrails.html contrast finding) called out
+as observations with provenance, per the git-diff-first rule.

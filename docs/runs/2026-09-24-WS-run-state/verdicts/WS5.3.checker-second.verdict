@@ -1,0 +1,85 @@
+VERDICT: PASS
+CHECKER: checker-second
+FAMILY: adversarial
+TASK: WS5
+ATTEMPT: 3
+---
+Scope: SPEC.md D6/D7 (lines 28-29), WS5 acceptance (lines 200-205), rulings
+2026-09-24c/d/e. Snapshot identity confirmed: `git archive fix/whatif-save-path-2`
++ `patch -p1 < WS5.3.diff`, `cmp` vs snapshot -> SAME x6 manifest files
+(handlers.go, handlers_rates.go, ws5_glide_persons_test.go,
+whatif-rate-assumptions.{js,test.cjs}, rate-assumptions.html). Manifest ==
+diffed files exactly; no .swarm/critical.globs path touched. Delta vs
+WS5.2.diff (python3 difflib) isolated: the ONLY functional change this
+attempt made is personsSaveErrorMessage's new regex branch
+(rePersonsBirthMonthAfterStart) + person-naming + 3 new/extended tests; D6
+glide-path code and D7 removal code are byte-identical to attempt 2 (which
+already had a11y/tests PASS on that content) -- so all adversarial effort
+went at the new classifier.
+
+ATTEMPT-2 DEFECT (checker-second FAIL, ruling 2026-09-24e) -- CONFIRMED FIXED:
+`go test ./internal/handlers/whatif/... -run TestPersonsSaveErrorMessage|TestHandleWhatIfSettings_PersonsValidationErrorClasses -v`
+-> all PASS incl. subtest "birth_month_after_start_date_(named)". Reproduced
+end-to-end against a live-data copy of /home/darrell/bin/ai/budget2/data
+(confirmed fixture: glide_path {enabled:false,0,0,1} leftover, Christine
+spouse linked to healthcare entry hc-72577487, StartDate 2026-09) on a temp
+build (BUDGET_LISTEN_ADDR=127.0.0.1:53745, BUDGET_DATA_DIR pointed at a
+`cp -rL` copy, server killed after use, `ps` confirmed clean, no :8080
+contact, no budget2 MCP, no repo-root binary):
+  POST start_date=1970-01, both persons unchanged (Christine's 1971-08 now
+  after start) -> 400 "Christine&#39;s birth month (1971-08) is after the
+  plan&#39;s start date (1970-01)" -- names her correctly, no false "needs a
+  birth month", disk unchanged (persons + start_date both still original).
+Oracle `.swarm/tier3/WS5/accept.sh` (probe.js:97 asserts status 400 AND
+!/needs a birth month/i AND /(after|start)/i) -> `oracle.3.log` tail:
+"PASS P3 D7: a birth month after the start date -> 400 with an accurate
+message" ... "ORACLE PASS".
+
+ADVERSARIAL PROBES (written to my snapshot only, run via
+`go test ./internal/handlers/whatif/... -run TestZZProbe -v`, all PASS,
+removed after use):
+- "Can it name the WRONG person?" (duplicate/reordered birth months):
+  3 persons, index0 valid, index1+index2 share the SAME after-start
+  birth_month "2030-01". Message names index1 ("FirstOffender") only,
+  never index2 ("SecondOffender") -- matches prepare.ValidatePersons'
+  own first-failure-by-index short circuit (proved algebraically: the
+  regex-matched error can only be returned by ValidatePersons at the
+  FIRST index whose parsed BirthMonth is After(start); the naming loop's
+  first string-match over the SAME ordered slice necessarily lands on
+  that same index, since any earlier index sharing the identical
+  BirthMonth string would have produced the SAME After(start) result and
+  fired first instead).
+- Two errors true at once: person0 name="" (fails first per
+  ValidatePersons' id->dup->name->birth_month field order), person1 has an
+  after-start birth month. Message is "name is required" only; does not
+  mention the later offender or say "after" -- matches ValidatePersons'
+  own priority, no false compound claim.
+- Name with HTML/quotes (`<script>alert(1)</script>&"'`): body contains
+  `&lt;script&gt;`, never a raw `<script>` tag -- existing renderError's
+  html.EscapeString (unchanged, pre-existing) covers the new naming path
+  too.
+- Non-persons error misclassification: `healthcare_persons: person_id ...
+  not found` (the documented TOCTOU shape) does NOT match personsSaveErrorMessage's
+  HasPrefix("persons:")/HasPrefix("start_date:") gate (verified directly) --
+  correctly falls through to the generic/500 path, unchanged from attempt 2.
+  `garbage` start_date and wrong-spouse-count dumped via direct POST: both
+  400, both correctly worded, no misclassification.
+- Invalid role: still pre-empted by parsePersonsForm before reaching
+  ValidatePersons/personsSaveErrorMessage at all (unchanged).
+- Boundary start_date case: named, accurate message.
+
+Full suite (both changed and unchanged code): `go build ./...` clean;
+`go test ./internal/handlers/whatif/...` -> ok, 16.7s; `node --test
+web/static/js/whatif-rate-assumptions.test.cjs` -> 18/18 pass.
+
+D6/D7 spot re-check on the SAME live-data copy (unchanged code, sanity that
+nothing regressed): bare `enabled=on` POST -> 400 "Start %, End %, and
+Years are all required..." leftover glide_path on disk unchanged; POST
+removing Christine (linked) -> 400 "Remove Christine's healthcare entry
+first", both persons still on disk; untouched full-form resubmit -> 200,
+`Hx-Trigger: {"whatif:revision":1}`.
+
+No defect found. The narrow classifier fix for the exact case attempt-2's
+FAIL identified holds under duplicate-value, reordering, compound-error,
+escaping, and misclassification attacks, both in isolation and against
+real household data.

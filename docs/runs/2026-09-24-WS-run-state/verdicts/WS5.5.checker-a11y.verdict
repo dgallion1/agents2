@@ -1,0 +1,157 @@
+VERDICT: PASS
+CHECKER: checker-a11y
+FAMILY: anthropic
+TASK: WS5
+ATTEMPT: 5
+---
+## Scope confirmed
+`diff -u` between snap/WS5.4-a11y and snap/WS5.5-a11y: internal/handlers/whatif/
+handlers.go, web/templates/components/whatif/rate-assumptions.html, and
+web/static/js/whatif-rate-assumptions.js are BYTE-IDENTICAL. The only content
+delta is internal/handlers/whatif/handlers_rates.go's personsSaveErrorMessage:
+attempt 4's two anchored regexes over err.Error() are replaced by
+errors.As(prepare.PersonBirthMonthError / PersonBirthMonthAfterStartError /
+InvalidStartDateError) + findPersonByID, and the wording now prints the
+row's submitted Name/BirthMonth with %s (verbatim) instead of %q — confirmed
+by reading the diff (ruling 2026-09-24i). D6 (glide-path) and D7 (person-
+removal) markup/JS are unchanged, matching the dispatch's claim. This
+attempt's a11y-relevant surface is exactly the four message strings,
+rendered through the unchanged, already-PASSed renderError/base.js pipeline.
+
+## Method
+Built with `ws_build`/`ws_serve` from .swarm/tier3/lib/common.sh (nice -n 19,
+GOMAXPROCS=4, one server at a time, isolated port, never :8080) against the
+snapshot at scratchpad/snap/WS5.5-a11y, fixture built with
+`python3 .swarm/tier3/WS5/make_fixture.py` (Alex Primary 1958-11 primary, Sam
+Spouse 1971-08 spouse linked to a healthcare entry + an unlinked third
+person, start_date 2026-09, glide_path {enabled:false}). Two lanes:
+1. A Playwright driver (chromium, NODE_PATH per common.sh) that (a) POSTs
+   directly the way the oracle's probe.js does — empty birth month with a
+   quoted name (`Robert "Bob" Smith`), an unparseable five-digit-year month
+   with a backslash name (`Pat\X`, "19711-08"), an HTML-tag name (`<b>x</b>`),
+   the after-start-date case, and an invalid start date ("20266-09") — and
+   inspects the raw wire text; (b) drives the real UI (`input[type=month]`
+   .fill("19711-08") + change event, `#projection-start-date` value set +
+   change) in both themes (localStorage theme + documentElement.classList,
+   matching base.js's own toggle, matching WS5.4's method); (c) walks D6/D7;
+   (d) injects axe-core 4.13 (same build @axe-core/cli ships) via
+   page.evaluate at baseline + each error state, both themes.
+2. `axe` CLI (@axe-core/cli, on PATH) run against two throwaway static wraps
+   (light, and `<html class="dark">`) that embed the LIVE server's own raw
+   response bytes for the unparseable-birth-month fragment (curl'd from the
+   running isolated server, not hand-built HTML) and load the snapshot's
+   real built web/static/css/tailwind.css + styles.css.
+Server killed after each run (ws_stop via the sourced trap, confirmed no
+stray process/tmp dir afterward); `ps aux`/`git status --short` on both the
+agents2 worktree and /home/darrell/bin/ai/budget2 show no changes and no
+:8080 contact; grepped my own scripts for "8080" — none.
+
+## 1. Message-as-rendered checks (point 5, point 6, WS5 rulings 2026-09-24g/i)
+Raw wire text (direct POST, decoded entities for readability):
+- empty month, quoted name: `Robert "Bob" Smith needs a birth month`
+- unparseable, backslash name: `Pat\X's birth month "19711-08" isn't a
+  valid month (use YYYY-MM)`
+- HTML-tag name: `<b>x</b> needs a birth month` — wire bytes are
+  `&lt;b&gt;x&lt;/b&gt; needs a birth month`, no live `<b>` tag in the
+  response (confirmed by regex on raw bytes).
+- after-start: `Future Kid's birth month (2030-01) is after the plan's
+  start date (2026-09)` — never "needs a birth month".
+- invalid start date: `Invalid projection start date: invalid month
+  "20266-09"` — never "Invalid person data".
+All PASS: correct wording per shape, names the person, states the value/
+format (YYYY-MM) in text. Wire encoding is exactly one html.EscapeString
+pass (`&#34;`, `&#39;`, `&lt;`/`&gt;`) — no raw backslash-escape leftovers
+(`\"`) and no double-escaped entities (`&amp;#34;`) found in any of the
+four responses. Live DOM textContent (UI-triggered) shows real apostrophes/
+quotes, not entities — AT reads plain readable text, confirmed both themes.
+
+## 2. Announcement (point 5) — role/aria-live, single instance
+Both themes, UI-triggered unparseable-month: exactly one `[role="alert"]`
+node exists at a time (renderError's own markup, reused verbatim by
+base.js's buildErrorNode — never re-wrapped or duplicated); text matches
+the new message; clearing back to a valid value removes the alert (0 nodes)
+— confirmed for both the unparseable-month and (via D7's pre-existing
+linked-removal-refusal alert, unregressed) the healthcare-refusal path.
+`role="alert"` implies an implicit assertive live region per the ARIA spec
+that AT honors without a separate `aria-live` attribute — same mechanism
+WS4/WS5.2-4 already established and PASSed; unchanged here.
+
+## 3. Contrast, both themes (point 7)
+Reused, unchanged renderError classes (`text-negative` on `bg-negative-
+soft`): light fg rgb(190,18,60) / bg rgb(255,241,242); dark fg
+rgb(253,164,175) / bg rgb(41,23,42) — same computed colors WS5.4 measured
+(5.72:1 light / 8.88:1 dark, both > 4.5:1). axe-core confirms 0
+color-contrast violations on the alert's own nodes in either theme (both
+the live-page scan and the static tailwind.css-loaded wrap of the live
+server's own unparseable-month response bytes).
+
+## 4. Focus (point 9)
+Both themes: after the UI-triggered error, `document.activeElement` is
+still the edited `#person-birth-month-<id>` input — unchanged from WS5.4's
+established behaviour (no focus move to the alert, consistent with
+ACCESSIBILITY.md point 5's "or an aria-live region announces" branch, since
+role=alert is exactly that live-region announcement).
+
+## 5. D6/D7 regression (unchanged markup/JS, re-walked live)
+Ticking the glide checkbox reveals `#glide-path-fields` (visible=true).
+Removing the healthcare-linked spouse is refused with a `[role=alert]`
+naming the entry ("Remove Sam Spouse's healthcare entry first"), row count
+unchanged (2) — same behaviour WS5.1-4 already PASSed, unregressed by this
+attempt's handlers_rates.go-only diff.
+
+## AUTOMATED (axe-core 4.13), Rate Assumptions card expanded, both themes
+LIVE PAGE (Playwright-injected), 3 states x 2 themes:
+LIGHT: 0 violations at baseline, unparseable-month, invalid-start-date.
+DARK: 1 violation at all 3 states — color-contrast/serious on
+`.mt-5 > summary` ("Adjust spending rules manually", guardrails.html) —
+BYTE-IDENTICAL, same single node WS5.1-4 already recorded as pre-existing
+and out of scope (file untouched by any WS5 attempt).
+"incomplete" set: 43 nodes (nav sidebar links, portfolio-allocation badge,
+etc.), identical at every state in both themes — same page-wide
+pre-existing set WS5.4 recorded (OBSERVATION, not FAIL).
+No new violation or incomplete node in either new-message state beyond
+what baseline already had, in either theme.
+
+STATIC WRAP (axe CLI, `axe <file://...>`, real built tailwind.css/styles.css,
+live server's own unparseable-birth-month response bytes embedded verbatim):
+LIGHT: 0 violations. DARK: 1 violation, on my OWN throwaway wrapper `<h1>`
+(unstyled black text, no `dark:` class on my harness heading) — not
+project markup, not a finding. The embedded error fragment itself
+(`span.text-negative`, `p.text-negative`) is clean in both wraps.
+
+## FAILURES
+None.
+
+## OBSERVATIONS (non-blocking, pre-existing / out of scope)
+- Dark-mode color-contrast on `.mt-5 > summary` (guardrails.html) — same
+  pre-existing node WS5.1-4 recorded; file untouched by any WS5 attempt.
+- Page-wide axe "incomplete" color-contrast node set (43 nodes: nav sidebar
+  links, Portfolio Allocation badge, etc.) — present identically at every
+  state/theme; outside files WS5 touches.
+- Point 5's literal "linked via aria-describedby" is still not implemented
+  for /whatif error messages (sitewide renderError/role=alert pattern,
+  unchanged by this diff) — same observation attempts 2-4 made.
+- Pre-existing client-side derived-age miscalculation on a malformed start
+  date (WS5.4's OBSERVATION) — untouched by this attempt's diff (which only
+  touches handlers_rates.go's Go-side classifier), not re-verified this
+  attempt since no new code path reaches it.
+
+## Summary
+Attempt 5 changed only handlers_rates.go's persons-error classifier
+(typed-error/errors.As + ID lookup, replacing attempt 4's regexes; wording
+now built from the submitted Name/BirthMonth with %s, never %q) — template,
+JS, and handlers.go are byte-identical to attempt 4 (already PASSed).
+Live-traced in both themes via direct POST (matching probe.js's own
+pattern) and real UI interaction: all four message shapes are correctly
+worded, name the failing person, state the value/format, and render as
+readable text with exactly one html.EscapeString pass on the wire and real
+characters in the AT-exposed DOM (no raw backslash-escapes, no
+double-escaped entities, no live HTML injection from a `<b>x</b>` name).
+Each is announced exactly once via role=alert, clears on a valid resubmit,
+leaves focus on the edited field, and meets contrast in both themes
+(5.72:1 light / 8.88:1 dark, unchanged classes). D6 (glide reveal) and D7
+(linked-removal refusal) are unregressed. axe-core (live page, 3 states x 2
+themes, Playwright-injected) and a second axe-CLI pass against a static
+wrap of the live server's own response bytes both found 0 new violations;
+the sole dark-mode violation in each lane is a pre-existing, out-of-scope
+node (or, in the static wrap, my own harness markup). No FAILURES.

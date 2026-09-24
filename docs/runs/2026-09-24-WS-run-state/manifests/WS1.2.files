@@ -1,0 +1,14 @@
+internal/templates/render.go
+internal/handlers/whatif/ws1_value_fidelity_test.go
+internal/handlers/whatif/ws1_generic_roundtrip_test.go
+web/static/js/whatif-portfolio-settings.js
+web/static/js/whatif-quick-adjust.js
+web/static/js/whatif-rate-assumptions.js
+web/templates/components/whatif/guardrails.html
+web/templates/components/whatif/healthcare-person.html
+web/templates/components/whatif/portfolio-settings.html
+web/templates/components/whatif/quick-adjust.html
+web/templates/components/whatif/rate-assumptions.html
+web/templates/components/whatif/roth-conversion.html
+web/templates/components/whatif/social-security.html
+web/templates/components/whatif/spending-phases.html

@@ -1,0 +1,284 @@
+== build /tmp/claude-1000/-home-darrell-work-agents2--claude-worktrees-budget2-what-if-review-24ec2e/28920e62-8027-4a38-9437-8967166cd576/scratchpad/mut-ws1
+== variant main
+PASS coverage: 18 stored-value forms exercised (need >= 18, the 643fa54 inventory)
+PASS FORM POST /whatif/settings #0: form valid on the off-grid plan (criterion 2) — invalid: []
+PASS FORM POST /whatif/settings #0: untouched submission sent and accepted (sent True, status 200)
+PASS FORM PUT /whatif/income/4ea60a77-b08f-417e-be54-c83d38768a35 #0: form valid on the off-grid plan (criterion 2) — invalid: []
+PASS FORM PUT /whatif/income/4ea60a77-b08f-417e-be54-c83d38768a35 #0: untouched submission sent and accepted (sent True, status 200)
+PASS SELECT PUT /whatif/healthcare/9166cc49-2b4d-4edc-8507-b4587568b1d6 #0: untouched submission sent and accepted (sent True, status 200)
+PASS FORM PUT /whatif/healthcare/9166cc49-2b4d-4edc-8507-b4587568b1d6 #0: form valid on the off-grid plan (criterion 2) — invalid: []
+PASS FORM PUT /whatif/healthcare/9166cc49-2b4d-4edc-8507-b4587568b1d6 #0: untouched submission sent and accepted (sent True, status 200)
+PASS SELECT PUT /whatif/healthcare/72577487-b513-472d-993e-618453366c92 #0: untouched submission sent and accepted (sent True, status 200)
+PASS FORM PUT /whatif/healthcare/72577487-b513-472d-993e-618453366c92 #0: form valid on the off-grid plan (criterion 2) — invalid: []
+PASS FORM PUT /whatif/healthcare/72577487-b513-472d-993e-618453366c92 #0: untouched submission sent and accepted (sent True, status 200)
+PASS SELECT PUT /whatif/healthcare/ws1-hp-employer #0: untouched submission sent and accepted (sent True, status 200)
+PASS FORM PUT /whatif/healthcare/ws1-hp-employer #0: form valid on the off-grid plan (criterion 2) — invalid: []
+PASS FORM PUT /whatif/healthcare/ws1-hp-employer #0: untouched submission sent and accepted (sent True, status 200)
+PASS FORM PUT /whatif/expense/ws1-e1 #0: form valid on the off-grid plan (criterion 2) — invalid: []
+PASS FORM PUT /whatif/expense/ws1-e1 #0: untouched submission sent and accepted (sent True, status 200)
+PASS FORM POST /whatif/settings #1: form valid on the off-grid plan (criterion 2) — invalid: []
+PASS FORM POST /whatif/settings #1: untouched submission sent and accepted (sent True, status 200)
+PASS FORM POST /whatif/glide-path #0: form valid on the off-grid plan (criterion 2) — invalid: []
+PASS FORM POST /whatif/glide-path #0: untouched submission sent and accepted (sent True, status 200)
+PASS FORM POST /whatif/settings #2: form valid on the off-grid plan (criterion 2) — invalid: []
+PASS FORM POST /whatif/settings #2: untouched submission sent and accepted (sent True, status 200)
+PASS FORM POST /whatif/spending-phases #0: form valid on the off-grid plan (criterion 2) — invalid: []
+PASS FORM POST /whatif/spending-phases #0: untouched submission sent and accepted (sent True, status 200)
+PASS FORM POST /whatif/spending-phases #1: form valid on the off-grid plan (criterion 2) — invalid: []
+PASS FORM POST /whatif/spending-phases #1: untouched submission sent and accepted (sent True, status 200)
+PASS FORM POST /whatif/guardrails #0: form valid on the off-grid plan (criterion 2) — invalid: []
+PASS FORM POST /whatif/guardrails #0: untouched submission sent and accepted (sent True, status 200)
+PASS FORM POST /whatif/roth-conversion #0: form valid on the off-grid plan (criterion 2) — invalid: []
+PASS FORM POST /whatif/roth-conversion #0: untouched submission sent and accepted (sent True, status 200)
+PASS FORM POST /whatif/social-security #0: form valid on the off-grid plan (criterion 2) — invalid: []
+PASS FORM POST /whatif/social-security #0: untouched submission sent and accepted (sent True, status 200)
+PASS FORM POST /whatif/settings #3: form valid on the off-grid plan (criterion 2) — invalid: []
+PASS FORM POST /whatif/settings #3: untouched submission sent and accepted (sent True, status 200)
+PASS criterion 1: saved plan identical after every untouched submission (0 change(s))
+PASS criterion 3: dragging the healthcare cost slider to 1800 saves 1800 (status 200, saved 1800)
+PASS criterion 3: dragging the portfolio slider to 2,500,000 saves it (status 200, saved 2500000)
+PASS criterion 3: the Quick Adjust healthcare mirror to 1900 saves 1900 (status 200, saved 1900)
+PASS criterion 4: the healthcare cost display shows the saved $1,655.30 (display '$1,655')
+PASS criterion 4: the slider's aria-valuetext carries the displayed exact figure (aria-valuetext '$1,655', display '$1,655')
+PASS E7: served and live Quick Adjust displays found (48 vs 48)
+PASS E7 (served == live): display portfolio_value '$2,437,512' -> '$2,437,512' after load
+PASS E7 (served == live): display monthly_living_expenses '$10,736' -> '$10,736' after load
+PASS E7 (served == live): display projection_years '39 years' -> '39 years' after load
+PASS E7 (served == live): display healthcare:9166cc49-2b4d-4edc-8507-b4587568b1d6:current_monthly_cost '$612' -> '$612' after load
+PASS E7 (served == live): display healthcare:9166cc49-2b4d-4edc-8507-b4587568b1d6:post_medicare_inflation '4.3%' -> '4.3%' after load
+PASS E7 (served == live): display healthcare:72577487-b513-472d-993e-618453366c92:current_monthly_cost '$1,655' -> '$1,655' after load
+PASS E7 (served == live): display healthcare:72577487-b513-472d-993e-618453366c92:pre_medicare_inflation '7.2%' -> '7.2%' after load
+PASS E7 (served == live): display healthcare:72577487-b513-472d-993e-618453366c92:medicare_monthly_cost '$2,150' -> '$2,150' after load
+PASS E7 (served == live): display healthcare:72577487-b513-472d-993e-618453366c92:post_medicare_inflation '4.2%' -> '4.2%' after load
+PASS E7 (served == live): display healthcare:ws1-hp-employer:current_monthly_cost '$433' -> '$433' after load
+PASS E7 (served == live): display healthcare:ws1-hp-employer:employer_coverage_years '3 yrs' -> '3 yrs' after load
+PASS E7 (served == live): display healthcare:ws1-hp-employer:aca_cost_after_employer '$3,450' -> '$3,450' after load
+PASS E7 (served == live): display healthcare:ws1-hp-employer:pre_medicare_inflation '6.8%' -> '6.8%' after load
+PASS E7 (served == live): display healthcare:ws1-hp-employer:medicare_monthly_cost '$700' -> '$700' after load
+PASS E7 (served == live): display healthcare:ws1-hp-employer:post_medicare_inflation '4.2%' -> '4.2%' after load
+PASS E7 (served == live): display tax_deferred_delay_years 'No delay' -> 'No delay' after load
+PASS E7 (served == live): display inflation_rate '3.9%' -> '3.9%' after load
+PASS E7 (served == live): display investment_return 'Fixed 6.2% (overrides allocation)' -> 'Fixed 6.2% (overrides allocation)' after load
+PASS E7 (served == live): display phase:0:multiplier '101%' -> '101%' after load
+PASS E7 (served == live): display phase:0:multiplier '$10,898/mo' -> '$10,898/mo' after load
+PASS E7 (served == live): display phase:1:multiplier '93%' -> '93%' after load
+PASS E7 (served == live): display phase:1:multiplier '$9,985/mo' -> '$9,985/mo' after load
+PASS E7 (served == live): display phase:2:multiplier '82%' -> '82%' after load
+PASS E7 (served == live): display phase:2:multiplier '$8,750/mo' -> '$8,750/mo' after load
+PASS E7 (served == live): display portfolio_value '$2,437,512' -> '$2,437,512' after load
+PASS E7 (served == live): display monthly_living_expenses '$10,736' -> '$10,736' after load
+PASS E7 (served == live): display projection_years '39 years' -> '39 years' after load
+PASS E7 (served == live): display inflation_rate '3.9%' -> '3.9%' after load
+PASS E7 (served == live): display investment_return 'Fixed 6.2% (overrides allocation)' -> 'Fixed 6.2% (overrides allocation)' after load
+PASS E7 (served == live): display tax_deferred_delay_years 'No delay' -> 'No delay' after load
+PASS E7 (served == live): display phase:0:multiplier '101%' -> '101%' after load
+PASS E7 (served == live): display phase:0:multiplier '$10,898/mo' -> '$10,898/mo' after load
+PASS E7 (served == live): display phase:1:multiplier '93%' -> '93%' after load
+PASS E7 (served == live): display phase:1:multiplier '$9,985/mo' -> '$9,985/mo' after load
+PASS E7 (served == live): display phase:2:multiplier '82%' -> '82%' after load
+PASS E7 (served == live): display phase:2:multiplier '$8,750/mo' -> '$8,750/mo' after load
+PASS E7 (served == live): display healthcare:9166cc49-2b4d-4edc-8507-b4587568b1d6:current_monthly_cost '$612' -> '$612' after load
+PASS E7 (served == live): display healthcare:9166cc49-2b4d-4edc-8507-b4587568b1d6:post_medicare_inflation '4.3%' -> '4.3%' after load
+PASS E7 (served == live): display healthcare:72577487-b513-472d-993e-618453366c92:current_monthly_cost '$1,655' -> '$1,655' after load
+PASS E7 (served == live): display healthcare:72577487-b513-472d-993e-618453366c92:pre_medicare_inflation '7.2%' -> '7.2%' after load
+PASS E7 (served == live): display healthcare:72577487-b513-472d-993e-618453366c92:medicare_monthly_cost '$2,150' -> '$2,150' after load
+PASS E7 (served == live): display healthcare:72577487-b513-472d-993e-618453366c92:post_medicare_inflation '4.2%' -> '4.2%' after load
+PASS E7 (served == live): display healthcare:ws1-hp-employer:current_monthly_cost '$433' -> '$433' after load
+PASS E7 (served == live): display healthcare:ws1-hp-employer:employer_coverage_years '3 yrs' -> '3 yrs' after load
+PASS E7 (served == live): display healthcare:ws1-hp-employer:aca_cost_after_employer '$3,450' -> '$3,450' after load
+PASS E7 (served == live): display healthcare:ws1-hp-employer:pre_medicare_inflation '6.8%' -> '6.8%' after load
+PASS E7 (served == live): display healthcare:ws1-hp-employer:medicare_monthly_cost '$700' -> '$700' after load
+PASS E7 (served == live): display healthcare:ws1-hp-employer:post_medicare_inflation '4.2%' -> '4.2%' after load
+PASS E6: .50-tie fixture values probed (5)
+PASS E6 (one rounding rule): 2437512.5 renders as $2,437,512 everywhere, never $2,437,513 (served: even True up False; live: even True up False)
+PASS E6 (one rounding rule): 10736.5 renders as $10,736 everywhere, never $10,737 (served: even True up False; live: even True up False)
+PASS E6 (one rounding rule): 612.5 renders as $612 everywhere, never $613 (served: even True up False; live: even True up False)
+PASS E6 (one rounding rule): 2150.5 renders as $2,150 everywhere, never $2,151 (served: even True up False; live: even True up False)
+PASS E6 (one rounding rule): 3450.5 renders as $3,450 everywhere, never $3,451 (served: even True up False; live: even True up False)
+PASS extended checks ran (E1-E5)
+PASS E1: converted sliders found (36)
+PASS E1 (C4): portfolio-slider aria-valuetext equals its display (aria '$2,500,000', display '$2,500,000')
+PASS E1 (C4): monthly_living_expenses_input aria-valuetext equals its display (aria '$10,736', display None)
+PASS E1 (C4): healthcare-monthly-cost-9166cc49-2b4d-4edc-8507-b4587568b1d6 aria-valuetext equals its display (aria '$612', display '$612')
+PASS E1 (C4): healthcare-post-medicare-inflation-9166cc49-2b4d-4edc-8507-b4587568b1d6 aria-valuetext equals its display (aria '4.3%', display '4.3%')
+PASS E1 (C4): healthcare-monthly-cost-72577487-b513-472d-993e-618453366c92 aria-valuetext equals its display (aria '$1,900', display '$1,900')
+PASS E1 (C4): healthcare-pre-medicare-inflation-72577487-b513-472d-993e-618453366c92 aria-valuetext equals its display (aria '7.2%', display '7.2%')
+PASS E1 (C4): healthcare-medicare-cost-72577487-b513-472d-993e-618453366c92 aria-valuetext equals its display (aria '$2,150', display '$2,150')
+PASS E1 (C4): healthcare-post-medicare-inflation-72577487-b513-472d-993e-618453366c92 aria-valuetext equals its display (aria '4.2%', display '4.2%')
+PASS E1 (C4): healthcare-monthly-cost-ws1-hp-employer aria-valuetext equals its display (aria '$433', display '$433')
+PASS E1 (C4): healthcare-aca-cost-ws1-hp-employer aria-valuetext equals its display (aria '$3,450', display '$3,450')
+PASS E1 (C4): healthcare-pre-medicare-inflation-ws1-hp-employer aria-valuetext equals its display (aria '6.8%', display '6.8%')
+PASS E1 (C4): healthcare-medicare-cost-ws1-hp-employer aria-valuetext equals its display (aria '$700', display '$700')
+PASS E1 (C4): healthcare-post-medicare-inflation-ws1-hp-employer aria-valuetext equals its display (aria '4.2%', display '4.2%')
+PASS E1 (C4): inflation-rate-slider aria-valuetext equals its display (aria '3.9%', display '3.9%')
+PASS E1 (C4): investment-return-slider aria-valuetext equals its display (aria 'Fixed 6.2% (overrides allocation)', display 'Fixed 6.2% (overrides allocation)')
+PASS E1 (C4): phase-0-multiplier aria-valuetext equals its display (aria '101%', display '101%')
+PASS E1 (C4): phase-1-multiplier aria-valuetext equals its display (aria '93%', display '93%')
+PASS E1 (C4): phase-2-multiplier aria-valuetext equals its display (aria '82%', display '82%')
+PASS E1 (C4): qa-portfolio-value aria-valuetext equals its display (aria '$2,500,000', display '$2,500,000')
+PASS E1 (C4): qa-monthly-living-expenses aria-valuetext equals its display (aria '$10,736', display '$10,736')
+PASS E1 (C4): qa-inflation-rate aria-valuetext equals its display (aria '3.9%', display '3.9%')
+PASS E1 (C4): qa-investment-return aria-valuetext equals its display (aria 'Fixed 6.2% (overrides allocation)', display 'Fixed 6.2% (overrides allocation)')
+PASS E1 (C4): phase:0:multiplier aria-valuetext equals its display (aria '101%', display '101%')
+PASS E1 (C4): phase:1:multiplier aria-valuetext equals its display (aria '93%', display '93%')
+PASS E1 (C4): phase:2:multiplier aria-valuetext equals its display (aria '82%', display '82%')
+PASS E1 (C4): qa-healthcare-monthly-cost-9166cc49-2b4d-4edc-8507-b4587568b1d6 aria-valuetext equals its display (aria '$612', display '$612')
+PASS E1 (C4): qa-healthcare-post-medicare-inflation-9166cc49-2b4d-4edc-8507-b4587568b1d6 aria-valuetext equals its display (aria '4.3%', display '4.3%')
+PASS E1 (C4): qa-healthcare-monthly-cost-72577487-b513-472d-993e-618453366c92 aria-valuetext equals its display (aria '$1,900', display '$1,900')
+PASS E1 (C4): qa-healthcare-pre-medicare-inflation-72577487-b513-472d-993e-618453366c92 aria-valuetext equals its display (aria '7.2%', display '7.2%')
+PASS E1 (C4): qa-healthcare-medicare-cost-72577487-b513-472d-993e-618453366c92 aria-valuetext equals its display (aria '$2,150', display '$2,150')
+PASS E1 (C4): qa-healthcare-post-medicare-inflation-72577487-b513-472d-993e-618453366c92 aria-valuetext equals its display (aria '4.2%', display '4.2%')
+PASS E1 (C4): qa-healthcare-monthly-cost-ws1-hp-employer aria-valuetext equals its display (aria '$433', display '$433')
+PASS E1 (C4): qa-healthcare-aca-cost-ws1-hp-employer aria-valuetext equals its display (aria '$3,450', display '$3,450')
+PASS E1 (C4): qa-healthcare-pre-medicare-inflation-ws1-hp-employer aria-valuetext equals its display (aria '6.8%', display '6.8%')
+PASS E1 (C4): qa-healthcare-medicare-cost-ws1-hp-employer aria-valuetext equals its display (aria '$700', display '$700')
+PASS E1 (C4): qa-healthcare-post-medicare-inflation-ws1-hp-employer aria-valuetext equals its display (aria '4.2%', display '4.2%')
+PASS E2 (D4): no float artifacts shown or announced ([])
+PASS E3 (C5 R1) step 0: Quick Adjust portfolio slider range follows the select (main 0,5000000,50000, qa 0,5000000,50000, select 0,5000000,50000)
+PASS E3 (C5 R1) step 1: Quick Adjust portfolio slider range follows the select (main 0,1000000,10000, qa 0,1000000,10000, select 0,1000000,10000)
+PASS E3 (C5 R1) step 2: Quick Adjust portfolio slider range follows the select (main 0,5000000,50000, qa 0,5000000,50000, select 0,5000000,50000)
+PASS E4 (C5 R2): Quick Adjust investment-return drag updates the display live ('Fixed 6.2% (overrides allocation)' -> 'Fixed 3.0% (overrides allocation)')
+PASS E5 (C5 R3): Quick Adjust portfolio drag updates the per-account amounts live (['$2.1M', '$13K', '$412K'] -> ['$3.3M', '$20K', '$659K'] at 4000000)
+== all checks passed
+== variant exact
+PASS coverage: 18 stored-value forms exercised (need >= 18, the 643fa54 inventory)
+PASS FORM POST /whatif/settings #0: form valid on the off-grid plan (criterion 2) — invalid: []
+PASS FORM POST /whatif/settings #0: untouched submission sent and accepted (sent True, status 200)
+PASS FORM PUT /whatif/income/4ea60a77-b08f-417e-be54-c83d38768a35 #0: form valid on the off-grid plan (criterion 2) — invalid: []
+PASS FORM PUT /whatif/income/4ea60a77-b08f-417e-be54-c83d38768a35 #0: untouched submission sent and accepted (sent True, status 200)
+PASS SELECT PUT /whatif/healthcare/9166cc49-2b4d-4edc-8507-b4587568b1d6 #0: untouched submission sent and accepted (sent True, status 200)
+PASS FORM PUT /whatif/healthcare/9166cc49-2b4d-4edc-8507-b4587568b1d6 #0: form valid on the off-grid plan (criterion 2) — invalid: []
+PASS FORM PUT /whatif/healthcare/9166cc49-2b4d-4edc-8507-b4587568b1d6 #0: untouched submission sent and accepted (sent True, status 200)
+PASS SELECT PUT /whatif/healthcare/72577487-b513-472d-993e-618453366c92 #0: untouched submission sent and accepted (sent True, status 200)
+PASS FORM PUT /whatif/healthcare/72577487-b513-472d-993e-618453366c92 #0: form valid on the off-grid plan (criterion 2) — invalid: []
+PASS FORM PUT /whatif/healthcare/72577487-b513-472d-993e-618453366c92 #0: untouched submission sent and accepted (sent True, status 200)
+PASS SELECT PUT /whatif/healthcare/ws1-hp-employer #0: untouched submission sent and accepted (sent True, status 200)
+PASS FORM PUT /whatif/healthcare/ws1-hp-employer #0: form valid on the off-grid plan (criterion 2) — invalid: []
+PASS FORM PUT /whatif/healthcare/ws1-hp-employer #0: untouched submission sent and accepted (sent True, status 200)
+PASS FORM PUT /whatif/expense/ws1-e1 #0: form valid on the off-grid plan (criterion 2) — invalid: []
+PASS FORM PUT /whatif/expense/ws1-e1 #0: untouched submission sent and accepted (sent True, status 200)
+PASS FORM POST /whatif/settings #1: form valid on the off-grid plan (criterion 2) — invalid: []
+PASS FORM POST /whatif/settings #1: untouched submission sent and accepted (sent True, status 200)
+PASS FORM POST /whatif/glide-path #0: form valid on the off-grid plan (criterion 2) — invalid: []
+PASS FORM POST /whatif/glide-path #0: untouched submission sent and accepted (sent True, status 200)
+PASS FORM POST /whatif/settings #2: form valid on the off-grid plan (criterion 2) — invalid: []
+PASS FORM POST /whatif/settings #2: untouched submission sent and accepted (sent True, status 200)
+PASS FORM POST /whatif/spending-phases #0: form valid on the off-grid plan (criterion 2) — invalid: []
+PASS FORM POST /whatif/spending-phases #0: untouched submission sent and accepted (sent True, status 200)
+PASS FORM POST /whatif/spending-phases #1: form valid on the off-grid plan (criterion 2) — invalid: []
+PASS FORM POST /whatif/spending-phases #1: untouched submission sent and accepted (sent True, status 200)
+PASS FORM POST /whatif/guardrails #0: form valid on the off-grid plan (criterion 2) — invalid: []
+PASS FORM POST /whatif/guardrails #0: untouched submission sent and accepted (sent True, status 200)
+PASS FORM POST /whatif/roth-conversion #0: form valid on the off-grid plan (criterion 2) — invalid: []
+PASS FORM POST /whatif/roth-conversion #0: untouched submission sent and accepted (sent True, status 200)
+PASS FORM POST /whatif/social-security #0: form valid on the off-grid plan (criterion 2) — invalid: []
+PASS FORM POST /whatif/social-security #0: untouched submission sent and accepted (sent True, status 200)
+PASS FORM POST /whatif/settings #3: form valid on the off-grid plan (criterion 2) — invalid: []
+PASS FORM POST /whatif/settings #3: untouched submission sent and accepted (sent True, status 200)
+PASS criterion 1: saved plan identical after every untouched submission (0 change(s))
+PASS criterion 3: dragging the healthcare cost slider to 1800 saves 1800 (status 200, saved 1800)
+PASS criterion 3: dragging the portfolio slider to 2,500,000 saves it (status 200, saved 2500000)
+PASS criterion 3: the Quick Adjust healthcare mirror to 1900 saves 1900 (status 200, saved 1900)
+PASS criterion 4: the healthcare cost display shows the saved $1,655.30 (display '$1,655')
+PASS criterion 4: the slider's aria-valuetext carries the displayed exact figure (aria-valuetext '$1,655', display '$1,655')
+PASS E7: served and live Quick Adjust displays found (48 vs 48)
+PASS E7 (served == live): display portfolio_value '$2,437,512' -> '$2,437,512' after load
+PASS E7 (served == live): display monthly_living_expenses '$10,737' -> '$10,737' after load
+PASS E7 (served == live): display projection_years '39 years' -> '39 years' after load
+PASS E7 (served == live): display healthcare:9166cc49-2b4d-4edc-8507-b4587568b1d6:current_monthly_cost '$612' -> '$612' after load
+PASS E7 (served == live): display healthcare:9166cc49-2b4d-4edc-8507-b4587568b1d6:post_medicare_inflation '4.3%' -> '4.3%' after load
+PASS E7 (served == live): display healthcare:72577487-b513-472d-993e-618453366c92:current_monthly_cost '$1,655' -> '$1,655' after load
+PASS E7 (served == live): display healthcare:72577487-b513-472d-993e-618453366c92:pre_medicare_inflation '7.2%' -> '7.2%' after load
+PASS E7 (served == live): display healthcare:72577487-b513-472d-993e-618453366c92:medicare_monthly_cost '$2,150' -> '$2,150' after load
+PASS E7 (served == live): display healthcare:72577487-b513-472d-993e-618453366c92:post_medicare_inflation '4.2%' -> '4.2%' after load
+PASS E7 (served == live): display healthcare:ws1-hp-employer:current_monthly_cost '$433' -> '$433' after load
+PASS E7 (served == live): display healthcare:ws1-hp-employer:employer_coverage_years '3 yrs' -> '3 yrs' after load
+PASS E7 (served == live): display healthcare:ws1-hp-employer:aca_cost_after_employer '$3,450' -> '$3,450' after load
+PASS E7 (served == live): display healthcare:ws1-hp-employer:pre_medicare_inflation '6.8%' -> '6.8%' after load
+PASS E7 (served == live): display healthcare:ws1-hp-employer:medicare_monthly_cost '$700' -> '$700' after load
+PASS E7 (served == live): display healthcare:ws1-hp-employer:post_medicare_inflation '4.2%' -> '4.2%' after load
+PASS E7 (served == live): display tax_deferred_delay_years 'No delay' -> 'No delay' after load
+PASS E7 (served == live): display inflation_rate '3.9%' -> '3.9%' after load
+PASS E7 (served == live): display investment_return 'Using asset allocation (~6.2% expected)' -> 'Using asset allocation (~6.2% expected)' after load
+PASS E7 (served == live): display phase:0:multiplier '101%' -> '101%' after load
+PASS E7 (served == live): display phase:0:multiplier '$10,898/mo' -> '$10,898/mo' after load
+PASS E7 (served == live): display phase:1:multiplier '93%' -> '93%' after load
+PASS E7 (served == live): display phase:1:multiplier '$9,985/mo' -> '$9,985/mo' after load
+PASS E7 (served == live): display phase:2:multiplier '82%' -> '82%' after load
+PASS E7 (served == live): display phase:2:multiplier '$8,750/mo' -> '$8,750/mo' after load
+PASS E7 (served == live): display portfolio_value '$2,437,512' -> '$2,437,512' after load
+PASS E7 (served == live): display monthly_living_expenses '$10,737' -> '$10,737' after load
+PASS E7 (served == live): display projection_years '39 years' -> '39 years' after load
+PASS E7 (served == live): display inflation_rate '3.9%' -> '3.9%' after load
+PASS E7 (served == live): display investment_return 'Using asset allocation (~6.2% expected)' -> 'Using asset allocation (~6.2% expected)' after load
+PASS E7 (served == live): display tax_deferred_delay_years 'No delay' -> 'No delay' after load
+PASS E7 (served == live): display phase:0:multiplier '101%' -> '101%' after load
+PASS E7 (served == live): display phase:0:multiplier '$10,898/mo' -> '$10,898/mo' after load
+PASS E7 (served == live): display phase:1:multiplier '93%' -> '93%' after load
+PASS E7 (served == live): display phase:1:multiplier '$9,985/mo' -> '$9,985/mo' after load
+PASS E7 (served == live): display phase:2:multiplier '82%' -> '82%' after load
+PASS E7 (served == live): display phase:2:multiplier '$8,750/mo' -> '$8,750/mo' after load
+PASS E7 (served == live): display healthcare:9166cc49-2b4d-4edc-8507-b4587568b1d6:current_monthly_cost '$612' -> '$612' after load
+PASS E7 (served == live): display healthcare:9166cc49-2b4d-4edc-8507-b4587568b1d6:post_medicare_inflation '4.3%' -> '4.3%' after load
+PASS E7 (served == live): display healthcare:72577487-b513-472d-993e-618453366c92:current_monthly_cost '$1,655' -> '$1,655' after load
+PASS E7 (served == live): display healthcare:72577487-b513-472d-993e-618453366c92:pre_medicare_inflation '7.2%' -> '7.2%' after load
+PASS E7 (served == live): display healthcare:72577487-b513-472d-993e-618453366c92:medicare_monthly_cost '$2,150' -> '$2,150' after load
+PASS E7 (served == live): display healthcare:72577487-b513-472d-993e-618453366c92:post_medicare_inflation '4.2%' -> '4.2%' after load
+PASS E7 (served == live): display healthcare:ws1-hp-employer:current_monthly_cost '$433' -> '$433' after load
+PASS E7 (served == live): display healthcare:ws1-hp-employer:employer_coverage_years '3 yrs' -> '3 yrs' after load
+PASS E7 (served == live): display healthcare:ws1-hp-employer:aca_cost_after_employer '$3,450' -> '$3,450' after load
+PASS E7 (served == live): display healthcare:ws1-hp-employer:pre_medicare_inflation '6.8%' -> '6.8%' after load
+PASS E7 (served == live): display healthcare:ws1-hp-employer:medicare_monthly_cost '$700' -> '$700' after load
+PASS E7 (served == live): display healthcare:ws1-hp-employer:post_medicare_inflation '4.2%' -> '4.2%' after load
+PASS E6 (one rounding rule): 2437512.5 renders as $2,437,512 everywhere, never $2,437,513 (served: even True up False; live: even True up False)
+PASS E6 (one rounding rule): 612.5 renders as $612 everywhere, never $613 (served: even True up False; live: even True up False)
+PASS E6 (one rounding rule): 2150.5 renders as $2,150 everywhere, never $2,151 (served: even True up False; live: even True up False)
+PASS E6 (one rounding rule): 3450.5 renders as $3,450 everywhere, never $3,451 (served: even True up False; live: even True up False)
+PASS extended checks ran (E1-E5)
+PASS E1: converted sliders found (36)
+PASS E1 (C4): portfolio-slider aria-valuetext equals its display (aria '$2,500,000', display '$2,500,000')
+PASS E1 (C4): monthly_living_expenses_input aria-valuetext equals its display (aria '$10,737', display None)
+PASS E1 (C4): healthcare-monthly-cost-9166cc49-2b4d-4edc-8507-b4587568b1d6 aria-valuetext equals its display (aria '$612', display '$612')
+PASS E1 (C4): healthcare-post-medicare-inflation-9166cc49-2b4d-4edc-8507-b4587568b1d6 aria-valuetext equals its display (aria '4.3%', display '4.3%')
+PASS E1 (C4): healthcare-monthly-cost-72577487-b513-472d-993e-618453366c92 aria-valuetext equals its display (aria '$1,900', display '$1,900')
+PASS E1 (C4): healthcare-pre-medicare-inflation-72577487-b513-472d-993e-618453366c92 aria-valuetext equals its display (aria '7.2%', display '7.2%')
+PASS E1 (C4): healthcare-medicare-cost-72577487-b513-472d-993e-618453366c92 aria-valuetext equals its display (aria '$2,150', display '$2,150')
+PASS E1 (C4): healthcare-post-medicare-inflation-72577487-b513-472d-993e-618453366c92 aria-valuetext equals its display (aria '4.2%', display '4.2%')
+PASS E1 (C4): healthcare-monthly-cost-ws1-hp-employer aria-valuetext equals its display (aria '$433', display '$433')
+PASS E1 (C4): healthcare-aca-cost-ws1-hp-employer aria-valuetext equals its display (aria '$3,450', display '$3,450')
+PASS E1 (C4): healthcare-pre-medicare-inflation-ws1-hp-employer aria-valuetext equals its display (aria '6.8%', display '6.8%')
+PASS E1 (C4): healthcare-medicare-cost-ws1-hp-employer aria-valuetext equals its display (aria '$700', display '$700')
+PASS E1 (C4): healthcare-post-medicare-inflation-ws1-hp-employer aria-valuetext equals its display (aria '4.2%', display '4.2%')
+PASS E1 (C4): inflation-rate-slider aria-valuetext equals its display (aria '3.9%', display '3.9%')
+PASS E1 (C4): investment-return-slider aria-valuetext equals its display (aria 'Using asset allocation (~6.2% expected)', display 'Using asset allocation (~6.2% expected)')
+PASS E1 (C4): phase-0-multiplier aria-valuetext equals its display (aria '101%', display '101%')
+PASS E1 (C4): phase-1-multiplier aria-valuetext equals its display (aria '93%', display '93%')
+PASS E1 (C4): phase-2-multiplier aria-valuetext equals its display (aria '82%', display '82%')
+PASS E1 (C4): qa-portfolio-value aria-valuetext equals its display (aria '$2,500,000', display '$2,500,000')
+PASS E1 (C4): qa-monthly-living-expenses aria-valuetext equals its display (aria '$10,737', display '$10,737')
+PASS E1 (C4): qa-inflation-rate aria-valuetext equals its display (aria '3.9%', display '3.9%')
+PASS E1 (C4): qa-investment-return aria-valuetext equals its display (aria 'Using asset allocation (~6.2% expected)', display 'Using asset allocation (~6.2% expected)')
+PASS E1 (C4): phase:0:multiplier aria-valuetext equals its display (aria '101%', display '101%')
+PASS E1 (C4): phase:1:multiplier aria-valuetext equals its display (aria '93%', display '93%')
+PASS E1 (C4): phase:2:multiplier aria-valuetext equals its display (aria '82%', display '82%')
+PASS E1 (C4): qa-healthcare-monthly-cost-9166cc49-2b4d-4edc-8507-b4587568b1d6 aria-valuetext equals its display (aria '$612', display '$612')
+PASS E1 (C4): qa-healthcare-post-medicare-inflation-9166cc49-2b4d-4edc-8507-b4587568b1d6 aria-valuetext equals its display (aria '4.3%', display '4.3%')
+PASS E1 (C4): qa-healthcare-monthly-cost-72577487-b513-472d-993e-618453366c92 aria-valuetext equals its display (aria '$1,900', display '$1,900')
+PASS E1 (C4): qa-healthcare-pre-medicare-inflation-72577487-b513-472d-993e-618453366c92 aria-valuetext equals its display (aria '7.2%', display '7.2%')
+PASS E1 (C4): qa-healthcare-medicare-cost-72577487-b513-472d-993e-618453366c92 aria-valuetext equals its display (aria '$2,150', display '$2,150')
+PASS E1 (C4): qa-healthcare-post-medicare-inflation-72577487-b513-472d-993e-618453366c92 aria-valuetext equals its display (aria '4.2%', display '4.2%')
+PASS E1 (C4): qa-healthcare-monthly-cost-ws1-hp-employer aria-valuetext equals its display (aria '$433', display '$433')
+PASS E1 (C4): qa-healthcare-aca-cost-ws1-hp-employer aria-valuetext equals its display (aria '$3,450', display '$3,450')
+PASS E1 (C4): qa-healthcare-pre-medicare-inflation-ws1-hp-employer aria-valuetext equals its display (aria '6.8%', display '6.8%')
+PASS E1 (C4): qa-healthcare-medicare-cost-ws1-hp-employer aria-valuetext equals its display (aria '$700', display '$700')
+PASS E1 (C4): qa-healthcare-post-medicare-inflation-ws1-hp-employer aria-valuetext equals its display (aria '4.2%', display '4.2%')
+PASS E2 (D4): no float artifacts shown or announced ([])
+PASS E3 (C5 R1) step 0: Quick Adjust portfolio slider range follows the select (main 0,5000000,50000, qa 0,5000000,50000, select 0,5000000,50000)
+PASS E3 (C5 R1) step 1: Quick Adjust portfolio slider range follows the select (main 0,1000000,10000, qa 0,1000000,10000, select 0,1000000,10000)
+PASS E3 (C5 R1) step 2: Quick Adjust portfolio slider range follows the select (main 0,5000000,50000, qa 0,5000000,50000, select 0,5000000,50000)
+PASS E4 (C5 R2): Quick Adjust investment-return drag updates the display live ('Using asset allocation (~6.2% expected)' -> 'Fixed 3.0% (overrides allocation)')
+PASS E8 (R-FMT' live): investment return dragged back to 0 shows the server's text ('Using asset allocation (~6.2% expected)' vs served 'Using asset allocation (~6.2% expected)')
+FAIL E8b (v7): every investment-return display (in-card and Quick Adjust) shows the served text after a drag back to 0 (live ['Using asset allocation (~6.2% expected)', 'Using asset allocation (~6.1% expected)'] vs served ['Using asset allocation (~6.2% expected)', 'Using asset allocation (~6.2% expected)'])
+PASS E5 (C5 R3): Quick Adjust portfolio drag updates the per-account amounts live (['$2.1M', '$0', '$424K'] -> ['$3.3M', '$0', '$679K'] at 4000000)
+== 1 check(s) failed
+ORACLE FAIL

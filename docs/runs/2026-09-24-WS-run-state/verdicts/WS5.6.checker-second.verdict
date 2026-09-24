@@ -1,0 +1,96 @@
+VERDICT: FAIL
+CHECKER: checker-second
+FAMILY: adversarial
+TASK: WS5
+ATTEMPT: 6
+---
+Scope (ruling 2026-09-24k): (1) test killing %q-on-value, (2) real NBSP name
++ guard, (3) comment fix at handlers_rates.go:84-91. No other product-code
+change allowed.
+
+CONFIRMED GOOD (attacks that did NOT find a defect):
+
+1. Product-behaviour diff: `diff -rq snap/WS5.5-second snap/WS5.6-second`
+   (excluding the checker's own scratchpad dir) shows exactly two files
+   differ: handlers_rates.go and ws5_glide_persons_test.go. Every other
+   file (handlers.go, whatif-rate-assumptions.js, rate-assumptions.html,
+   validate.go, settings.go) is byte-identical to attempt 5.
+2. handlers_rates.go is comment-only: wrote a Go AST dump tool
+   (parser.ParseFile + f.Comments=nil + go/format) and diffed the two
+   attempts' output -> zero diff. A second, cruder check (regex-strip //
+   comments) shows the only surviving difference is blank-line count
+   inside the comment block. `go build ./...` and `go vet
+   ./internal/handlers/whatif/... ./internal/services/retirement/prepare/...`
+   both clean on attempt 6.
+3. Mutation-killed the %q-on-value defect for real: edited
+   personsSaveErrorMessage's line 167 format string from `%s's birth month
+   "%s" isn't...` to `%s's birth month %q isn't...` (value only). Ran `go
+   test ./internal/handlers/whatif/... -run
+   TestHandleWhatIfSettings_PersonsBirthMonthMessage -v`
+   (nice -n 19, GOMAXPROCS=4, GOFLAGS="-count=1 -p=2"): the NEW test
+   TestHandleWhatIfSettings_PersonsBirthMonthMessage_UnparseableValueSpecialChars
+   fails on both cases (`1971\08` -> got `"1971\\08"`, want `"1971\08"`;
+   `19"71-08` -> got `"19\"71-08"`, want `"19"71-08"`) while every
+   pre-existing test in the file (NamesXBirthMonths,
+   BackslashConfusionPair, SameNamePair) still PASSES with the same
+   mutation in place — exactly reproducing attempt 5's real gap and
+   confirming attempt 6's new test is what closes it, not a tautology.
+   Reverted (md5 verified back to original), full package re-passes.
+4. Mutation-killed the NBSP-as-space regression: edited
+   `const nbspName = "Ann Lee"` to a plain ASCII space (verified via
+   hexdump: c2 a0 replaced by 0x20). Ran
+   TestHandleWhatIfSettings_PersonsBirthMonthMessages_NamesXBirthMonths:
+   `t.Fatal("nbspName must contain an actual NBSP...")` fires immediately
+   — guard is live, not swallowed, and checks the SAME variable the table
+   uses. Reverted (md5 verified), full package re-passes. hexdump of the
+   restored const confirms real bytes `c2 a0` (U+00A0) between "Ann" and
+   "Lee", and the guard's rune literal is the same `c2 a0` bytes, so
+   `strings.ContainsRune(nbspName, ' ')` is checking the intended
+   code point, not an ASCII space that merely looks similar.
+5. `go test ./internal/handlers/whatif/...` (17.0s) and
+   `go test ./internal/services/retirement/prepare/...` (0.004s) both ok
+   on the unmutated attempt-6 tree.
+6. Oracle: `TMPDIR=<scratch> nice -n 19 .swarm/tier3/WS5/accept.sh
+   <snapshot>` ends with `ORACLE PASS` (G1-G4, P1-P3f all PASS, including
+   the P3f rows this run's own I1-I5 contract protects).
+
+DEFECT FOUND (item 3 — comment accuracy, in scope):
+
+handlers_rates.go:84-91, the exact block item (3) was scoped to fix, now
+reads:
+
+    // ... reaches prepare.ValidatePersons deep inside the save,
+    // which returns a TYPED error (prepare.PersonBirthMonthError /
+    // PersonBirthMonthAfterStartError / InvalidStartDateError, each
+    // carrying the failing row's ID); statusForMutationError has no
+    // case for any of them and falls through to 500.
+
+This claims all three listed types carry "the failing row's ID."
+`InvalidStartDateError` does not: `internal/services/retirement/prepare/validate.go:16-18`
+defines it as `type InvalidStartDateError struct { Err error }` — one
+field, no PersonID, no ID of any kind — and its own doc comment
+(validate.go:10-15) says "callers needing to distinguish this from a
+per-person failure should use errors.As", i.e. it is explicitly NOT a
+per-row error. `grep -rn InvalidStartDateError internal --include='*.go'`
+confirms every construction site (`validate.go:106`,
+`&InvalidStartDateError{Err: err}`) passes only Err, never an ID.
+personsSaveErrorMessage's OWN docstring three lines below (handlers_rates.go:134-137,
+unchanged since attempt 5) gets this right: "a failing PERSON only by that
+typed error's PersonID" — correctly scoping the ID-bearing claim to the
+person case only. The freshly-written block at 88-90 does not carry that
+distinction and is factually wrong about InvalidStartDateError.
+
+This is the exact class of error the whole 2026-09-24g/h/i/k chain exists
+to eliminate — a comment that misdescribes which typed error carries
+identifying data. Item (3) required the stale comment "corrected"; the
+delivered text trades one inaccuracy (attempt 5's "plain, untyped error")
+for another (this one), so item (3) is not fully satisfied. This is a
+comment-only defect with no runtime effect (confirmed by the AST-diff and
+mutation work above) — the remedy is a one-line wording fix, not a redo of
+items 1-2, which are solid.
+
+No other defect found. Judgment on materiality (comment-only, no
+behavioural or test-integrity impact) is left to the lead; reporting as
+FAIL per the checker contract ("Is the new comment accurate against the
+code?" was explicitly on the attack list and the answer is no, for one of
+the three listed types).

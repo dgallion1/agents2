@@ -1,0 +1,99 @@
+VERDICT: PASS
+CHECKER: checker-tests
+FAMILY: anthropic
+TASK: WS1
+ATTEMPT: 6
+---
+Scratch: /tmp/claude-1000/-home-darrell-work-agents2--claude-worktrees-budget2-what-if-review-24ec2e/28920e62-8027-4a38-9437-8967166cd576/scratchpad/checkers/WS1.6-tests-b (called C below)
+Snapshot: .../scratchpad/snap/WS1.6-tests-b (called S below)
+Throttle: every build/test/run used `nice -n 19` with GOMAXPROCS=4 and GOFLAGS="-count=1 -p=2". Mutations ran one at a time in the foreground; the full harness was not re-run. Load average went from 23 at the start to 2.7-5.5 during the runs.
+Hard rules: I never contacted :8080, ran no repo-root binary, used no MCP tools and made no git state changes. The only git command was a read-only `git archive 643fa54`. No scratch servers are left running (pgrep).
+Contract: SPEC.md ruling 2026-09-24a. Attempt 6 is test-only:
+  (1) a node test that runs the Quick Adjust branch of updateInvestmentReturnDisplay and kills C1k;
+  (2) a Go render test that pins data-expected-return on both displays to the served %.1f figure;
+  production code unchanged; oracle v7 must PASS.
+
+== 1. Production files are byte-identical to attempt 5: PASS
+- C/splitdiff.py splits WS1.5.diff and WS1.6.diff per file and compares each hunk text, including the `index` blob-hash lines.
+  - 22 files: "same".
+  - "ONLY6 internal/handlers/whatif/ws1_expected_return_render_test.go".
+  - "DIFFER web/static/js/whatif-rate-assumptions.test.cjs".
+- Every production file (handlers*.go, render.go, the 3 JS files and 8 templates) is "same".
+- The snapshot matches the diff:
+  - Applying WS1.6.diff to `git archive 643fa54` succeeded (`git apply` apply-rc=0).
+  - `diff -rq based S` shows only 2 empty untracked dirs (internal/config/data/*, testdata/uploads).
+- The snapshot equals .worktrees/ws1 on all 24 manifest paths: "equal=24/24".
+
+== 2. Oracle v7, run once on the quiet machine: PASS
+- `nice -n 19 accept.sh S` (TMPDIR=C/tmp) gave rc=0, with 278 PASS lines and 0 lines containing "FAIL". The final line is "ORACLE PASS" (C/oracle.log).
+- It includes "PASS coverage: 18 stored-value forms" and "PASS criterion 1: ... (0 change(s))" in both variants.
+- It includes "PASS E8b (v7): every investment-return display (in-card and Quick Adjust) shows the served text after a drag back to 0".
+- Load was 5.47 at the start and 3.28 at the end. The earlier failure seen under load 173 does not reproduce on a quiet machine.
+
+== 3. Baseline suites: PASS
+- `go test ./internal/handlers/whatif/... ./internal/templates/...`:
+  - "ok budget2/internal/handlers/whatif 15.666s".
+  - "ok budget2/internal/templates 1.896s".
+- `node --test web/static/js/*.test.cjs`: "tests 54 / pass 54 / fail 0". That is attempt 5's 51 plus the 3 new tests.
+- `go test -run TestWS1ExpectedReturnDataAttribute -v`: "--- PASS: TestWS1ExpectedReturnDataAttribute". It runs; it is not skipped.
+
+== 4. The new tests assert what they claim, proven by mutation: PASS
+- 22 targeted mutations, each applied alone. After each one: go (whatif + templates) plus node, then revert with a per-file sha256 check (C/runmut.py, C/muts.py, C/mut.log).
+- Result: 22 KILLED, 0 SURVIVED, 22 × "revert=OK".
+- The whole-tree sha256 afterwards is identical to the pre-mutation manifest: "TREE-CHECKSUM-EQUAL (2790 files)". It was unchanged again after make check.
+
+C1k and variants, all KILLED by node through the behavioural assertion in the new C1k test (not only through the self-check sanity asserts):
+- C1k, brief form: `const expectedReturnText = inPanel ? roundHalfEvenDecimalString(calculateExpectedReturnFromAllocation(), 1) : display.dataset.expectedReturn;`
+  -> "Quick Adjust: expected server figure 9.9, got: Using asset allocation (~5.8% expected)".
+- C1k', the literal WS1.5 survivor: an added `if (inPanel) detail.textContent = ...recompute...` line, with the anchor line untouched.
+  -> "✖ C1k: dragging investment return to 0 shows EACH display's own server data-expected-return", with the same message.
+  - This was the attempt-5 survivor ("go=0 node=0"). It is now killed.
+- C1m, in-card-only recompute on expectedReturnText -> "expected the server's data-expected-return (9.9) verbatim, got: ...(~5.8% expected)".
+- C1m', in-card-only with an added line -> "in-card: expected server figure 6.2, got: Using asset allocation (~5.8% expected)".
+- This proves the fake DOM's closest() now makes inPanel true for the QA display: a mutation confined to the `if (inPanel)` branch changes the QA output the test reads.
+
+data-expected-return template drift, all KILLED by Go TestWS1ExpectedReturnDataAttribute (node rc=0 in each case, as expected):
+- D1 rate-assumptions.html %.2f -> "ws1_expected_return_render_test.go:48: in-card investment-return-display: expected data-expected-return="6.4"".
+- D2 quick-adjust.html %.2f -> ":56: Quick Adjust investment-return display: expected data-expected-return="6.4"".
+- D3 rate-assumptions.html formatExact -> :48. Killed, so the fixture value is not a 1-decimal figure.
+- D4 quick-adjust.html formatExact -> :56.
+- D5 rate-assumptions.html attribute removed -> :48.
+- D6 quick-adjust.html attribute removed -> :56.
+- Each template's mutation fails its own assertion line, so the two displays are pinned independently.
+
+Sample from the attempt 3-5 kill lists, all KILLED:
+- K1 %.1f on guardrails floor_drop_pct -> TestWS1GenericRoundTrip_Guardrails ":787 ... saved plan changed after an untouched submission (1 field(s))".
+- K2 %.1f on the healthcare hidden current_monthly_cost -> TestWS1GenericRoundTrip_HealthcarePerson ":668 ... saved plan changed".
+- K3 %.1f on roth annual_amount -> TestWS1GenericRoundTrip_RothConversion ":809 ... saved plan changed".
+- K4 (U12) name= on the Medicare-branch post_medicare_inflation range (2nd occurrence) -> ":668 ... form #0 (PUT /whatif/healthcare/hc-c) would never submit in a real browser".
+- K5 step="0.01" on min_monthly_spending_real -> ":787 ... has a fractional stored value "1234567.555" but step="0.01"".
+- K6 'g',15 in formatExact -> TestFormatExact "formatExact(232777.48988888797) = "232777.489888888"".
+- K7 %.2f on the living-expenses hidden input -> "living_expenses_phase_note_test.go:209: expected hidden input value to be the exact saved amount 7386.345".
+- K8 toFixed(1) in the JS percent1 path -> node "computeQuickAdjustDisplayText('percent1', ...) delegates to roundHalfEvenDecimalString".
+- K9 Math.round in formatWholeDollars -> node "formatWholeDollars(1800.5)", plus 3 more tests.
+- K10 C2 sign rule dropped (the attempt-4 `negative && Number(result) !== 0`) -> node "roundHalfEvenDecimalString(-0.03, 1)".
+- K11 R6 (syncAllQuickAdjustControls re-calls updateInvestmentReturnDisplay) -> node "R6: ... display must never be rebuilt by the load/after-swap sync".
+- K12 J6 (half-up in the syncQuickAdjustAriaValueTexts currency path) -> node "syncQuickAdjustKey('pv') ... aria-valuetext ... is half-even".
+
+== 5. make check: PASS
+- `nice -n 19 make check` gave make-rc=0 (C/make_check.log):
+  - 52 "ok" packages;
+  - "No vulnerabilities found." / "Your code is affected by 0 vulnerabilities.";
+  - "tailwind.css is up to date";
+  - "✓ all checks passed".
+- make check does not run the node suite (known WS4 backlog F3). The node suite was run separately (item 3).
+
+== SCOPE: PASS
+- Manifest (24) vs WS1.6.diff (24): in diff but not in manifest: set(); in manifest but not in diff: set().
+- The attempt-6 delta is exactly 2 test files (item 1). Production code is unchanged, as the ruling requires.
+- critical.globs hits over the manifest: [].
+
+== FINDINGS (observations for the lead; not FAIL bases)
+- O1: TestWS1ExpectedReturnDataAttribute uses strings.Contains over each whole rendered template.
+  - It pins the attribute's VALUE, not which element carries it.
+  - Today each template has exactly one data-expected-return (grep), so this is equivalent.
+  - Moving the attribute to a sibling element would survive go+node. Only oracle E8b binds the attribute to the display node.
+- O2: the new C1k node test asserts the displays' textContent, not the QA range's aria-valuetext. The aria is derived from the same text in the same function, and the ruling did not require an aria check.
+- O3: the new test's in-card sentinel "6.2" is a plausible real figure.
+  - The in-card-only self-check relies on the fake DOM's recompute (5.8) differing from it.
+  - The pre-existing C1/P5 test (sentinel 9.9) independently kills in-card recompute (C1m: "expected ... (9.9) verbatim").

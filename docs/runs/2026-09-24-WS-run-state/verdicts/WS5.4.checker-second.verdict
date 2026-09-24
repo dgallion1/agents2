@@ -1,0 +1,85 @@
+VERDICT: FAIL
+CHECKER: checker-second
+FAMILY: adversarial
+TASK: WS5
+ATTEMPT: 4
+---
+Scope: SPEC.md D6/D7 (lines 28-29), WS5 acceptance (lines 200-205), rulings
+2026-09-24c through g (attempt-4 contract: "word every persons/start-date 400
+from the submitted value", ruling g). Reviewed .swarm/diffs/WS5.4.diff against
+snapshot (no .git copy, no server contacted, no budget2 binary run from a repo
+root).
+
+ATTACK: "names with quotes/regex metacharacters/unicode" (explicitly named in
+dispatch). rePersonsInvalidBirthMonth (new in this attempt, added to satisfy
+ruling g's missing-vs-unparseable distinction) is:
+  `^persons: invalid birth_month for "([^"]*)": .+$`
+It extracts the person's Name by regex-parsing prepare.ValidatePersons' %q-
+escaped error text back out. Go's %q escapes an embedded `"` in the name as
+`\"` -- a literal backslash then a literal quote character -- which the
+`[^"]*` capture class cannot skip over. For any Name containing a literal
+double-quote (an ordinary, unrestricted `<input type="text"
+name="person_name[]">`, no `pattern` attribute, confirmed in
+rate-assumptions.html and whatif-rate-assumptions.js -- e.g. a real nickname
+like `Robert "Bob" Smith`), the regex fails to match entirely and
+personsSaveErrorMessage falls through to the generic
+`"Invalid person data: " + msg` branch -- the SAME branch the contract
+reserves for classes it deliberately leaves unpolished (duplicate id, name
+required, wrong primary count), not for the empty/unparseable birth-month
+classes ruling g explicitly requires to be worded "<Name> needs a birth
+month" / "<Name>'s birth month "<value>" isn't a valid month".
+
+Reproduced at both the unit level (personsSaveErrorMessage direct call) and
+end-to-end through handleWhatIfSettings via a real form POST (temp test files
+in my snapshot only, run with GOMAXPROCS=4 GOFLAGS="-count=1 -p=2", removed
+after use; worker's own suite re-run clean afterward: `go test
+./internal/handlers/whatif/...` -> ok, 16.5s):
+
+POST person_name[]="Robert \"Bob\" Smith", person_birth_month[]="" ->
+status=400 (never 500, that invariant holds), body:
+  "Invalid person data: persons: invalid birth_month for
+  &#34;Robert \&#34;Bob\&#34; Smith&#34;: month is required"
+-- not "Robert \"Bob\" Smith needs a birth month" as ruling g requires for
+this exact class (submitted birth month genuinely empty). The raw Go
+internal error text ("month is required" wrapped inside the ValidatePersons
+message) is what actually reaches the user, in place of the specified
+wording.
+
+This is NOT a false "missing" claim and NOT a wrong-person attribution (both
+of those I also probed and found sound -- see below) -- it is a silent
+fallback out of the two classes the contract mandates specific wording for,
+triggered by input the person-name field imposes no restriction against. It
+lands inside this attempt's own written scope: rePersonsInvalidBirthMonth and
+its name round-trip through fmt.Errorf(%q)+regexp are new code this attempt
+added specifically to implement ruling g.
+
+Other probes on the same attack surface, all held (no defect):
+- Duplicate names, one candidate's submitted birth month empty and one
+  non-empty: does NOT falsely say "needs a birth month" (conservative
+  fallback "isn't valid", per the classifier's own allEmpty check).
+- Unicode name (accented + CJK, no embedded quote): correctly named,
+  "needs a birth month" -- %q does not escape printable non-ASCII runes.
+- Regex-metacharacter name (`A.B*C(D)`, no quote): correctly named -- match
+  against `p.Name == name` is a literal string compare, not a compiled
+  regex, so metacharacters in the VALUE are inert.
+- Whitespace-only submitted birth month: correctly classified as "needs a
+  birth month" (TrimSpace).
+- "birth_month after start_date" collision with duplicate/reordered values:
+  algebraically the first string-match necessarily lands on the same person
+  ValidatePersons itself failed on first (re-derived independently; attempt-3
+  second checker proved the same for that pre-existing branch).
+- "persons:" vs "start_date:" prefixes are mutually exclusive by construction
+  (ValidatePersons' own fmt.Errorf call sites) -- no mislabelling either way.
+- HTML escaping: renderError's html.EscapeString covers this new path too
+  (confirmed: raw `"` -> `&#34;` in the actual response body above); no XSS.
+
+D6 spot-check (unchanged from attempt 3, not the target of this attempt's
+contract): worker's own suite green, no re-probe beyond that given the
+attempt-4 contract is scoped to the persons/start-date wording.
+
+Remedy check (rule 6b): fixable without exceeding this task's scope -- stop
+round-tripping the person's name through a %q-formatted error string and
+back out via regex; the handler already has the SUBMITTED persons slice
+(used for the empty/unparseable/name decision itself) and does not need to
+recover the name from the error text at all, or the regex needs to correctly
+un-escape Go's %q syntax before comparing.

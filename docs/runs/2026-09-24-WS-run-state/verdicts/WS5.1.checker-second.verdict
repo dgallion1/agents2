@@ -1,0 +1,100 @@
+VERDICT: FAIL
+CHECKER: checker-second
+FAMILY: adversarial
+TASK: WS5
+ATTEMPT: 1
+---
+Scope reviewed: D6 (glide path reveal-only tick) and D7 (person removal) per
+SPEC.md lines 28-30, 200-205. Manifest: internal/handlers/whatif/handlers.go,
+handlers_rates.go, ws5_glide_persons_test.go, web/static/js/whatif-rate-
+assumptions.{js,test.cjs}, web/templates/components/whatif/rate-
+assumptions.html.
+
+Static/unit evidence (all reproduced independently, my own snapshot build):
+- `go build ./...` clean; `go vet ./internal/handlers/whatif/...` clean.
+- `go test ./internal/handlers/whatif/... -run 'TestGlidePath|TestHandleWhatIfGlidePath|TestPersonRemovalBlockedByHealthcare|TestPersonBirthMonthInputIsRequired|TestHandleWhatIfSettings_Remove' -v`
+  → all 17 tests PASS, including the pre-existing
+  TestHandleWhatIfGlidePath/_Disabled (not made vacuous by the new guard).
+- `node --test web/static/js/whatif-rate-assumptions.test.cjs` → 17/17 pass,
+  including both self-check mutation kills for D6(a) and D7(c).
+- `.swarm/tier3/WS1/accept.sh <snapshot>` → ORACLE PASS (no WS1 regression).
+- D6 server guard (handlers_rates.go:471-486): enable with any of
+  start/end/years blank → 400, leftover {0,0,1} untouched. D6 template
+  (rate-assumptions.html): checkbox onchange now calls
+  toggleGlidePathFields(this) (reveal-only, verified no requestSubmit() in
+  rendered checkbox markup); glide-path <form> has no hx-trigger attribute
+  (confirmed via grep — default is submit-only), so typing into a revealed
+  field cannot auto-save through some other hx-trigger. Unticking still
+  calls checkbox.form.requestSubmit() directly and the disabled branch
+  doesn't require the three fields — matches "unticking saves immediately".
+  D7 personRemovalBlockedByHealthcare compares by PersonID (not Name),
+  runs before any write, verified by direct unit test (2 persons/1
+  healthcare entry still on disk after a refused removal, never 500).
+
+REAL DEFECT — reproduced live in a real browser (Playwright/Chromium),
+confirmed in-scope and newly introduced by this diff:
+
+Clicking "+ Add Person" inserts a person row whose birth-month input is
+`required` (whatif-rate-assumptions.js addPersonRow, this diff). That input
+lives inside the SAME large <form> (rate-assumptions.html:7-399) as
+~30 unrelated fields (tax_deferred_percent, filing_status, dividend yield,
+cost basis, ACA fields, allocations, etc.), all covered by that form's own
+`hx-trigger="change delay:500ms, input delay:500ms from:find
+input[type=number]"`. Because base.js sets
+`htmx.config.reportValidityOfForms = true` (confirmed already present in
+this task's BASE, i.e. WS4's fix, not part of this diff), htmx validates
+EVERY control in the form before sending ANY request from it — including
+controls the user never touched.
+
+Verified with two Playwright runs against a temp server built from my
+snapshot (BUDGET_LISTEN_ADDR=127.0.0.1:44061, cp -rL data, both processes
+killed after):
+- Control (no Add Person): editing #tax-deferred-percent-input to 57 and
+  blurring → POST /whatif/settings fires, 200, reload shows 57 persisted.
+- Repro (Add Person clicked first, its birth-month field left blank, then
+  the SAME edit to an unrelated, fully valid field): NO POST
+  /whatif/settings is ever sent. `document.activeElement` after the
+  attempt is the new row's `person_birth_month[]` input (focus silently
+  stolen away from the field the user was editing), and a native "Please
+  fill out this field" tooltip appears next to the Persons section, not
+  near Rate Assumptions where the user was working (screenshot:
+  probe2-after.png). No `role="alert"` element appears anywhere — the
+  failure is otherwise silent. Reload confirms the tax_deferred_percent
+  edit was NOT saved.
+
+This blocking did not exist before this attempt: `grep required` on the
+task's BASE (fix/whatif-save-path-2, via `git archive`, read-only) returns
+zero matches in rate-assumptions.html and the JS — WS5 is the only diff
+that adds `required` anywhere in this form. So this is not a WS4-class
+pre-existing gap; it's a new interaction opened by this attempt's specific
+implementation choice (client-side `required` on a field living inside a
+shared multi-field autosave form, with no scoping of the validation and no
+feedback near the field the user actually edited).
+
+This is the exact probe named in my dispatch ("does it now block unrelated
+saves on that form until the row is filled — is that acceptable per
+D7/WS4?"). Judgment: not acceptable. It contradicts this run's own
+governing principle for this exact form (D1/WS1: "an untouched input never
+changes the saved value and never blocks the form") — here even a fully
+valid, directly-edited field silently fails to save because of a sibling
+row's incomplete state, with zero visible feedback near the edit itself.
+It also reopens the WS4 failure mode ("Request errors are visible and
+never wipe input") for a class of error WS4 didn't anticipate (client-side
+validation blocking a DIFFERENT field's save). The fix is achievable
+inside WS5's own territory (e.g., a targeted server-side refusal for the
+name-only row, mirroring personRemovalBlockedByHealthcare, instead of a
+form-wide client `required`; or scoping validation/reporting to the row
+being edited) without reintroducing the 500 D7 is meant to close.
+
+No other defect found under the enumerated attack surfaces: glide path
+MCP/scenario-copy paths are N/A (GlidePath only referenced in
+models/handlers.go/handlers_rates.go, no MCP write path touches it);
+keyboard (Space) toggling is identical to mouse for onchange, no separate
+path; edit-then-untick on an enabled glide path discards the edits and
+disables using the prior saved values (safe, matches D6); refusal-while-
+other-fields-changed on the settings form drops the WHOLE request
+("nothing saved" is the literal, spec-conforming reading, confirmed by the
+same request-boundary the code already enforces); personRemovalBlockedByHealthcare
+compares by ID not name; removing the primary person is not newly affected
+(parsePersonsForm's lack of a primary-required check is pre-existing,
+untouched by this diff — flagged as a backlog OBSERVATION, not a FAIL).

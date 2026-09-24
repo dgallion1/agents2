@@ -1,0 +1,134 @@
+VERDICT: PASS
+CHECKER: checker-second
+FAMILY: adversarial
+TASK: WS1
+ATTEMPT: 1
+---
+Method: read diff (.swarm/diffs/WS1.1.diff, 1398 lines, 11 files) and full
+rendered templates in the snapshot; built the worktree (`go build
+./cmd/server`); ran shipped tests, mutation-killed the 3 named mutations
+myself, and drove a REAL Chromium (Playwright, same harness class as the
+oracle) against a temp server on an off-grid fixture of my own construction
+(distinct from the oracle's fixture) to probe surfaces the oracle explicitly
+cannot reach. Server never touched :8080; BUDGET_LISTEN_ADDR on a free port;
+scratch under my checker dir; no git-state changes.
+
+1) Round-trip identity — CONFIRMED, independently reproduced.
+   - Oracle log (.swarm/tier3/WS1/oracle.1.log): 37/37 PASS, "criterion 1:
+     saved plan identical after every untouched submission (0 change(s))".
+   - My own fixture (portfolio_value=7386.50 tie, hp0 switched to EMPLOYER
+     coverage with off-grid ties: current_monthly_cost=1800.50,
+     aca_cost_after_employer=933.50, medicare_monthly_cost=2150.50 [also
+     above the visible max=2000], pre_medicare_inflation=6.65,
+     employer_coverage_years=3): dispatching 'change' on the employer
+     person's <form hx-put=/whatif/healthcare/...> round-tripped every
+     field exactly (verified via before/after JSON diff — 0 changes). This
+     closes the task's flagged oracle gap: "the healthcare EMPLOYER
+     coverage branch ... which the oracle fixture never renders" — I
+     rendered and exercised it and it is correctly fixed
+     (healthcare-person.html:131-146, hidden+mirror pattern applied
+     identically to the ACA/Medicare branches).
+   - Cycled the portfolio range-select through ALL 7 options in a live
+     browser: hidden #portfolio-value-exact stayed "7386.5" throughout
+     (only the display-only mirror's step/max/thumb changed); a subsequent
+     settings-form save wrote portfolio_value=7386.5 to disk unchanged —
+     confirms ruling 2026-09-23b's fix (updatePortfolioRange no longer
+     clamps/reassigns the slider's own value).
+   - Locale probe (Playwright `locale: 'de-DE'`): 34-field Rate Assumptions
+     form round-tripped tax_deferred_percent=83.037, taxable_cost_basis=
+     276146.86 unchanged, status 200 — HTML5 number/range parsing is
+     locale-independent and every JS formatter is hardcoded 'en-US', so no
+     comma-decimal defect.
+
+2) Form validity — CONFIRMED (oracle: every FORM `checkValidity()===true`
+   on the off-grid plan, "invalid: []" for all).
+
+3) Touched path (direct + Quick Adjust) — CONFIRMED (oracle: healthcare
+   slider→1800 saves 1800, portfolio slider→2,500,000 saves it, Quick
+   Adjust healthcare mirror→1900 saves 1900, all status 200).
+
+4) Display vs aria-valuetext ("matches") — investigated hard, found a real
+   but NON-SURVIVING defect. Pure server-rendered HTML uses TWO different
+   round-half rules for the same figure: the visible span's `formatNumber`
+   (Go `%.0f`, round-half-to-even) vs the new `aria-valuetext`'s
+   `formatDollars`/`formatWholeDollars` (`int64(v+0.5)`, round-half-up).
+   Verified via Go template render at $7,386.50 and $1,800.50 (portfolio
+   and healthcare-cost sliders): span shows "$7,386"/"$1,800",
+   aria-valuetext shows "$7,387"/"$1,801" — a real divergence, and it
+   repeats on every currency slider this task touched (same pairing
+   pattern). BUT: re-verified against the ACTUAL rendered DOM in a real
+   browser after JS settles (not just the Go HTML) — `DOMContentLoaded` →
+   `syncAllQuickAdjustControls()` → `syncQuickAdjustKey()` immediately
+   re-writes BOTH the display span and aria-valuetext from the SAME JS
+   function (`computeQuickAdjustDisplayText`, single Math.round-based
+   formatter), for every canonical control, unconditionally, on every page
+   load and after every htmx swap (`htmx:afterSwap`/`oobAfterSwap`). Probed
+   live: portfolio $7,386.50 → both display AND aria-valuetext read
+   "$7,387" post-settle; healthcare $1,800.50 → both "$1,801"; ACA-after-
+   employer $933.50 → both "$934". The FINAL observable state a user or
+   screen-reader encounters is consistent — the Go-side formatter mismatch
+   is a sub-100ms pre-hydration artifact this JS-heavy htmx app always
+   overwrites before any realistic interaction. Per the checker
+   constitution's rule 6 (verify the counterexample against real behavior,
+   not a plausible reading), this does not stand as a criterion-4 FAIL.
+   Reporting as an OBSERVATION for the backlog (defensive-coding gap: a
+   no-JS/JS-error path would show the Go-side $1 mismatch permanently; the
+   two Go formatters should be reconciled or one should defer to the other
+   for consistency's own sake).
+
+5) ids/behavior kept — spot-checked; all existing ids preserved
+   (`healthcare-monthly-cost-{{.ID}}`, `portfolio-slider`, etc., new `-exact`
+   ids added alongside, none renamed). Found one SPLIT-SOURCE-shaped but
+   NOT-actually-broken interaction: `whatif-rate-assumptions.js:146,213`
+   query `input[name="portfolio_value"]` / `input[name="investment_return"]`
+   — these selectors now resolve to the new HIDDEN canonical field instead
+   of the visible range (since the name moved there). Traced + live-tested
+   (dragged #portfolio-slider, watched #td-amount-display/#roth-amount-
+   display/#taxable-amount-display recompute correctly from the freshly-
+   synced hidden value): correct, because the document-level capturing
+   'input' listener (whatif-quick-adjust.js:262, registered with
+   `useCapture=true`) that proxies a mirror's dragged value into the hidden
+   canonical field always fires BEFORE the target element's own inline
+   `oninput="updateAccountAmounts()"` handler. Functionally correct today,
+   but fragile (depends on listener registration order, untested) —
+   OBSERVATION for backlog, not a FAIL.
+
+6) Permanent tests kill the 3 named mutations — CONFIRMED by directly
+   re-applying each mutation to the snapshot's template files and re-running
+   the specific shipped test:
+   (a) restored `name="current_monthly_cost"` on the healthcare range →
+       TestWS1HealthcarePersonRender_MonthlyCostRangeHasNoName FAILs.
+   (b) restored `step="1000"` on cost basis →
+       TestWS1RateAssumptionsRender_CostBasisStepIsAny FAILs.
+   (c) restored `printf "%.0f"` on tax_deferred_percent →
+       TestWS1RateAssumptionsRender_AllocationPercentExactValue FAILs.
+   Files restored clean after each (diff against backup = empty).
+
+7) go test / make check — `go test ./internal/handlers/whatif/...
+   ./internal/services/retirement/... ./internal/templates/...` all ok;
+   `make check` (vet, staticcheck, govulncheck, tailwind css-verify, full
+   `go test ./...`, `go test -count=1 ./internal/handlers/accounts`) →
+   "✓ all checks passed". No JS test file exists for the two touched JS
+   files (whatif-portfolio-settings.js, whatif-quick-adjust.js); not
+   required by SPEC.md's WS1 acceptance list (Go tests only) — OBSERVATION,
+   not a FAIL.
+
+8) formatExact scope — grepped all 41 uses across the 8 templates: every
+   one is inside a `value="..."` input attribute, never in user-facing
+   display text, matching its own doc comment's rule. No dual-formatter
+   leak into visible text found.
+
+9) checked `employer_coverage_years` (int, step=1 grid trivially exact —
+   correctly left untouched) and the duplicate
+   `id="healthcare-pre-medicare-inflation-{{.ID}}"` across the ACA-branch
+   and employer-branch blocks — pre-existing, mutually exclusive
+   conditionals (only one renders per person per CurrentCoverage), not a
+   collision, not introduced by this diff.
+
+No in-scope criterion failure survived re-verification. Two OBSERVATIONS
+for the backlog (both real, neither user-observable today): (a) reconcile
+formatNumber/formatDollars rounding so the SSR-only pre-hydration state
+can't diverge from aria-valuetext; (b) the `input[name=...]` re-resolution
+in whatif-rate-assumptions.js for portfolio_value/investment_return works
+only because of listener registration order — worth an explicit id-based
+selector or a permanent test pinning it.
