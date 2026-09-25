@@ -1,0 +1,88 @@
+== build /tmp/claude-1000/-home-darrell-work-agents2--claude-worktrees-budget2-what-if-review-24ec2e/28920e62-8027-4a38-9437-8967166cd576/scratchpad/base-643fa54
+PASS coverage: 18 stored-value forms exercised (need >= 18, the 643fa54 inventory)
+PASS FORM POST /whatif/settings #0: form valid on the off-grid plan (criterion 2) — invalid: []
+PASS FORM POST /whatif/settings #0: untouched submission sent and accepted (sent True, status 200)
+PASS FORM PUT /whatif/income/4ea60a77-b08f-417e-be54-c83d38768a35 #0: form valid on the off-grid plan (criterion 2) — invalid: []
+PASS FORM PUT /whatif/income/4ea60a77-b08f-417e-be54-c83d38768a35 #0: untouched submission sent and accepted (sent True, status 200)
+PASS SELECT PUT /whatif/healthcare/9166cc49-2b4d-4edc-8507-b4587568b1d6 #0: untouched submission sent and accepted (sent True, status 200)
+FAIL FORM PUT /whatif/healthcare/9166cc49-2b4d-4edc-8507-b4587568b1d6 #0: form valid on the off-grid plan (criterion 2) — invalid: ['care_monthly_cost=4321 (Please enter a valid value. The two nearest valid values are 4300 and 4350.)']
+FAIL FORM PUT /whatif/healthcare/9166cc49-2b4d-4edc-8507-b4587568b1d6 #0: untouched submission sent and accepted (sent False, status None)
+PASS SELECT PUT /whatif/healthcare/72577487-b513-472d-993e-618453366c92 #0: untouched submission sent and accepted (sent True, status 200)
+PASS FORM PUT /whatif/healthcare/72577487-b513-472d-993e-618453366c92 #0: form valid on the off-grid plan (criterion 2) — invalid: []
+PASS FORM PUT /whatif/healthcare/72577487-b513-472d-993e-618453366c92 #0: untouched submission sent and accepted (sent True, status 200)
+PASS SELECT PUT /whatif/healthcare/ws1-hp-employer #0: untouched submission sent and accepted (sent True, status 200)
+PASS FORM PUT /whatif/healthcare/ws1-hp-employer #0: form valid on the off-grid plan (criterion 2) — invalid: []
+PASS FORM PUT /whatif/healthcare/ws1-hp-employer #0: untouched submission sent and accepted (sent True, status 200)
+PASS FORM PUT /whatif/expense/ws1-e1 #0: form valid on the off-grid plan (criterion 2) — invalid: []
+PASS FORM PUT /whatif/expense/ws1-e1 #0: untouched submission sent and accepted (sent True, status 200)
+FAIL FORM POST /whatif/settings #1: form valid on the off-grid plan (criterion 2) — invalid: ['state_income_tax_rate=5.53 (Please enter a valid value. The two nearest valid values are 5.5 and 5.55.)', 'taxable_cost_basis=388355 (Please enter a valid value. The two nearest valid values are 388000 and 389000.)', 'aca_premium_credit=10850 (Please enter a valid value. The two nearest valid values are 10800 and 10900.)']
+FAIL FORM POST /whatif/settings #1: untouched submission sent and accepted (sent False, status None)
+PASS FORM POST /whatif/glide-path #0: form valid on the off-grid plan (criterion 2) — invalid: []
+PASS FORM POST /whatif/glide-path #0: untouched submission sent and accepted (sent True, status 200)
+PASS FORM POST /whatif/settings #2: form valid on the off-grid plan (criterion 2) — invalid: []
+PASS FORM POST /whatif/settings #2: untouched submission sent and accepted (sent True, status 200)
+PASS FORM POST /whatif/spending-phases #0: form valid on the off-grid plan (criterion 2) — invalid: []
+PASS FORM POST /whatif/spending-phases #0: untouched submission sent and accepted (sent True, status 200)
+PASS FORM POST /whatif/spending-phases #1: form valid on the off-grid plan (criterion 2) — invalid: []
+PASS FORM POST /whatif/spending-phases #1: untouched submission sent and accepted (sent True, status 200)
+PASS FORM POST /whatif/guardrails #0: form valid on the off-grid plan (criterion 2) — invalid: []
+PASS FORM POST /whatif/guardrails #0: untouched submission sent and accepted (sent True, status 200)
+PASS FORM POST /whatif/roth-conversion #0: form valid on the off-grid plan (criterion 2) — invalid: []
+PASS FORM POST /whatif/roth-conversion #0: untouched submission sent and accepted (sent True, status 200)
+PASS FORM POST /whatif/social-security #0: form valid on the off-grid plan (criterion 2) — invalid: []
+PASS FORM POST /whatif/social-security #0: untouched submission sent and accepted (sent True, status 200)
+PASS FORM POST /whatif/settings #3: form valid on the off-grid plan (criterion 2) — invalid: []
+PASS FORM POST /whatif/settings #3: untouched submission sent and accepted (sent True, status 200)
+FAIL criterion 1: saved plan identical after every untouched submission (29 change(s))
+      changed .glide_path.end_stock_pct: 40.25 -> 40
+      changed .glide_path.start_stock_pct: 70.5 -> 70
+      changed .guardrails.ceiling_raise_pct: 2.5 -> 2
+      changed .guardrails.ceiling_rise_pct: 10.5 -> 10
+      changed .guardrails.floor_cut_pct: 10.25 -> 10
+      changed .guardrails.floor_drop_pct: 5.5 -> 6
+      changed .guardrails.max_spending_pct: 120.5 -> 120
+      changed .guardrails.min_spending_pct: 0.5 -> 0
+      changed .healthcare_persons[1].current_monthly_cost: 1655.3 -> 1650
+      changed .healthcare_persons[1].medicare_monthly_cost: 2150.5 -> 2000
+      changed .healthcare_persons[1].post_medicare_inflation: 4.15 -> 4
+      changed .healthcare_persons[1].pre_medicare_inflation: 7.25 -> 7
+      changed .healthcare_persons[2].aca_cost_after_employer: 3450.5 -> 3000
+      changed .healthcare_persons[2].current_monthly_cost: 433.33 -> 450
+      changed .healthcare_persons[2].medicare_monthly_cost: 700.25 -> 700
+      changed .healthcare_persons[2].post_medicare_inflation: 4.15 -> 4
+      changed .healthcare_persons[2].pre_medicare_inflation: 6.75 -> 7
+      changed .inflation_rate: 3.85 -> 3.9
+      changed .investment_return: 6.25 -> 6
+      changed .monthly_property_tax: 666.67 -> 667
+      changed .portfolio_value: 2437512.5 -> 2400000
+      changed .property_tax_inflation: 2.25 -> 2.2
+      changed .roth_conversion.annual_amount: 50000.5 -> 50000
+      changed .social_security.cola_rate: 0.0145 -> 0.015
+      changed .social_security.fra_benefit: 4114.9 -> 4115
+      changed .social_security.spouse_fra_benefit: 1905.55 -> 1906
+      changed .spending_phase_config.phases[0].multiplier: 1.015 -> 1
+      changed .spending_phase_config.phases[1].multiplier: 0.93 -> 0.95
+      changed .spending_phase_config.phases[2].multiplier: 0.815 -> 0.8
+PASS criterion 3: dragging the healthcare cost slider to 1800 saves 1800 (status 200, saved 1800)
+PASS criterion 3: dragging the portfolio slider to 2,500,000 saves it (status 200, saved 2500000)
+PASS criterion 3: the Quick Adjust healthcare mirror to 1900 saves 1900 (status 200, saved 1900)
+FAIL criterion 4: the healthcare cost display shows the saved $1,655.30 (display '$1,650')
+FAIL criterion 4: the slider's aria-valuetext carries the displayed exact figure (aria-valuetext None, display '$1,650')
+PASS E6: .50-tie fixture values probed (5)
+PASS E6 (one rounding rule): 2437512.5 renders as $2,437,512 everywhere, never $2,437,513 (served: even True up False; live: even True up False)
+FAIL E6 (one rounding rule): 10736.5 renders as $10,736 everywhere, never $10,737 (served: even True up True; live: even True up True)
+PASS E6 (one rounding rule): 612.5 renders as $612 everywhere, never $613 (served: even True up False; live: even True up False)
+PASS E6 (one rounding rule): 2150.5 renders as $2,150 everywhere, never $2,151 (served: even True up False; live: even True up False)
+PASS E6 (one rounding rule): 3450.5 renders as $3,450 everywhere, never $3,451 (served: even True up False; live: even True up False)
+PASS extended checks ran (E1-E5)
+PASS E1: converted sliders found (2)
+PASS E1 (C4): monthly_living_expenses_input aria-valuetext equals its display (aria '$10,737', display None)
+PASS E1 (C4): qa-monthly-living-expenses aria-valuetext equals its display (aria '$10,737', display '$10,737')
+PASS E2 (D4): no float artifacts shown or announced ([])
+PASS E3 (C5 R1) step 0: Quick Adjust portfolio slider range follows the select (main 0,5000000,50000, qa 0,5000000,50000, select 0,5000000,50000)
+PASS E3 (C5 R1) step 1: Quick Adjust portfolio slider range follows the select (main 0,1000000,10000, qa 0,1000000,10000, select 0,1000000,10000)
+PASS E3 (C5 R1) step 2: Quick Adjust portfolio slider range follows the select (main 0,5000000,50000, qa 0,5000000,50000, select 0,5000000,50000)
+PASS E4 (C5 R2): Quick Adjust investment-return drag updates the display live ('Fixed 6.0% (overrides allocation)' -> 'Fixed 3.0% (overrides allocation)')
+PASS E5 (C5 R3): Quick Adjust portfolio drag updates the per-account amounts live (['$2.1M', '$0', '$425K'] -> ['$3.3M', '$0', '$680K'] at 4000000)
+== 8 check(s) failed
+ORACLE FAIL

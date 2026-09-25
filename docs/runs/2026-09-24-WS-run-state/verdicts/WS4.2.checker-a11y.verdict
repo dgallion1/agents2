@@ -1,0 +1,175 @@
+VERDICT: PASS
+CHECKER: checker-a11y
+FAMILY: anthropic
+TASK: WS4
+ATTEMPT: 2
+---
+Method: built the real snapshot (`go build ./cmd/server`), ran it against a
+`cp -rL` copy of /home/darrell/bin/ai/budget2/data on 127.0.0.1:49417 (never
+:8080, never a repo-root binary), drove it with real Playwright (Chromium,
+NODE_PATH=.../e41f203b7505f1fb/node_modules) exercising the actual live
+templates/JS/handlers, and corroborated with `axe` (@axe-core/cli 4.13.0,
+`--chrome-options=blink-settings=preferredColorScheme=1|2`, forcing each
+theme explicitly per the task's headless-defaults-dark warning; confirmed
+via `web/templates/layouts/base.html:23-26` that the inline theme script
+adds `.dark` from `prefers-color-scheme` when no localStorage override
+exists, so preferredColorScheme=2 genuinely produces `.dark` on `<html>`,
+not just an OS media-query flag).
+
+Diff audited: /home/darrell/work/agents2/.claude/worktrees/budget2-what-if-
+review-24ec2e/.swarm/diffs/WS4.2.diff vs master 643fa54 (cumulative — the
+whole WS4 task's scope, not just the attempt-1→2 delta).
+
+## 1. Nested role="alert" regression from attempt 1 — FIXED, verified live
+   (ACCESSIBILITY.md point 5 / WCAG 4.1.3)
+
+Attempt 2 removes `role="alert"` from the four Add-form wrapper slots
+(income/expense/bigticket/onetime) in both their card templates AND the
+OOB-clear copies in `pages/whatif.html:258-262`, relying on renderError's
+own `role="alert"` (added in WS4.1) on the swapped-in fragment. Verified
+with real rejections against the running app, both themes, FIRST and
+SECOND (different-message) rejection into each of the four slots:
+
+```
+PASS | B1. light/income  FIRST rejection status=400 alert-count | count=1
+PASS | B2. light/income  SECOND rejection alert-count           | count=1
+PASS | B1. light/expense FIRST rejection status=400 alert-count | count=1
+PASS | B1. light/bigticket FIRST rejection status=400 alert-count | count=1
+PASS | B1. light/onetime FIRST rejection status=400 alert-count | count=1
+PASS | B1. dark/income  FIRST rejection status=400 alert-count  | count=1
+PASS | B1. dark/expense FIRST rejection status=400 alert-count  | count=1
+PASS | B1. dark/bigticket FIRST rejection status=400 alert-count | count=1
+PASS | B1. dark/onetime FIRST rejection status=400 alert-count  | count=1
+(all SECOND-rejection counts also =1, all 8 combinations)
+```
+Real outerHTML of the container after a swap, e.g.:
+`<div id="whatif-add-income-error" class="mb-2"><div class="...
+rounded-lg" role="alert">...</div></div>` — exactly ONE `role="alert"`
+node, not nested. Reproduced for all four forms in both themes (16
+data points, 0 failures). This resolves WS4.1's FAIL in full.
+
+First-rejection-after-load concern (empty non-live wrapper receiving a
+freshly-inserted role="alert" child): confirmed this announces correctly
+in practice — `role="alert"` is specified to generate an implicit,
+assertive live region even for an element inserted fresh into the DOM
+(unlike a bare `aria-live` container, which needs to pre-exist for
+mutations inside it to be observed), so removing the wrapper's own role
+does not create a silent first rejection. The FIRST-rejection data above
+is literally a fresh page load each time (`withPage` opens a new browser
+per case) — so B1 IS the first-rejection-after-load case, and it passes.
+
+Healthcare's slot (no wrapper role, unchanged since WS4.1) still single
+`role="alert"`, confirmed again this attempt: `status=400 count=1`.
+
+## 2. Non-retargeted / edit-row rejection path — unaffected, still PASS
+
+Income edit-row (existing entry, Through before Starts via
+`hx-put="/whatif/income/{id}"`): single `[data-wf-inline-error]` node,
+single `role="alert"`, inserted as the form's first child:
+```
+PASS | F1. edit-row non-retargeted rejection status/marked-count | status=400 count=1
+PASS | F2. edit-row inline error alert-count | count=1
+```
+Focus stayed on the `end_month` input being edited (`F3`). Firing the
+IDENTICAL rejection a second time did NOT re-insert a new node — same
+node instance persisted (`F4: count=1 sameNode=true`), i.e. no
+re-announcement of unchanged content, matching ACCESSIBILITY.md point 16
+and the checker brief's "a repeated identical error is not re-announced"
+check for this path.
+
+## 3. Synthetic 5xx — PASS
+
+Route-intercepted `POST /whatif/onetime` → 500 with a renderError-shaped
+body: single `[data-wf-inline-error]` node, single `role="alert"`
+(`G: status=500 count=1 alertCount=1`).
+
+## 4. Poll sentinel / data-wf-layout-grid marker — verified live, PASS
+
+Confirmed the grid wrapper carries `data-wf-layout-grid` and the
+`#whatif-poll` sentinel is its direct child (`H`). Route-intercepted
+`GET /whatif/poll**` to return a 500 continuously and waited through two
+real 2s poll cycles: grid child count unchanged (3 before/after), no
+`[data-wf-inline-error]` anywhere in the grid or as a direct `<body>`
+child — the poll never gets an inline error injected, so it can't
+re-announce identical text every 2s (checker brief's page-load-silence /
+non-reannouncement concern, and ACCESSIBILITY.md point 16).
+
+## 5. Add-form state retention (AC1) and focus — PASS, both themes
+
+All four Add forms retained typed values after a rejected submit, and
+focus stayed on the submit `<button>` (never lost to `<body>`) — 8/8
+theme×form combinations (`C`/`D` rows).
+
+## 6. reportValidity (AC3) — PASS
+
+Negative property tax (`min="0"`): zero requests fired to
+`/whatif/settings`, `checkValidity()` false, native message "Value must
+be greater than or equal to 0.", focus on the same input (`I`).
+
+## 7. Contrast, both themes — PASS (ACCESSIBILITY.md points 7/12)
+
+Measured against the live rendered page (real built Tailwind CSS):
+- Light: text/border `rgb(190,18,60)` on `rgb(255,241,242)` → 5.72:1.
+- Dark (`.dark` forced via `prefers-color-scheme`, confirmed applied):
+  text/border `rgb(253,164,175)` on `rgb(41,23,42)` → 8.88:1.
+Both computed with the WCAG relative-luminance formula, not eyeballed.
+Unchanged from attempt 1 (this diff touches no CSS/color classes) — full
+theme parity holds.
+
+## 8. Reflow at 320/375px — PASS for the new/changed content; one
+   PRE-EXISTING, unrelated defect reconfirmed
+
+- 375px: `document.documentElement.scrollWidth === window.innerWidth`
+  (375), error fragment `scrollWidth === clientWidth` (299, no internal
+  clipping).
+- 320px: page `scrollWidth` = 344px (overflow) — reproduced identically
+  on a **fresh page load with no error ever triggered** (baseline probe,
+  344px), and the widest element is the Big-Ticket "Add Item"
+  `<button class="px-3 py-1 bg-accent-strong...">`, unrelated to the
+  error markup and untouched by WS4.2.diff. OBSERVATION (pre-existing,
+  out of scope), matching WS4.1's identical finding.
+
+## 9. Page-load silence — PASS
+
+Fresh `/whatif` load: 0 `alert` nodes in the accessibility tree (3
+`status` nodes present, none newly introduced by this diff — unrelated
+to error display).
+
+## 10. Automated audit (axe-core 4.13.0, both themes forced) — PASS
+
+`axe http://127.0.0.1:49417/whatif --tags wcag2a,wcag2aa,wcag21a,
+wcag21aa,wcag22aa` with `preferredColorScheme=1` (light) and `=2` (dark,
+confirmed `.dark` genuinely applied via the page's own theme script):
+**0 violations** in both explicit runs. (Attempt 1's one pre-existing
+`guardrails.html` contrast finding, from an earlier *unforced*-scheme
+run, was not reproduced here either way — not in scope, file untouched
+by WS4.2.diff.)
+
+## 11. aria-describedby association (3.3.1/3.3.3) — unaffected
+
+Grepped the current templates: every Add-form month input's
+`aria-describedby` still names the same container id (e.g.
+`aria-describedby="add-income-schedule-help whatif-add-income-error"`)
+— the role removal only changed the wrapper's own attribute, not the id,
+so the association is intact.
+
+## 12. Regression tests — corroborating, not the audit itself
+
+`go test ./internal/handlers/whatif/...` → ok (10.2s). `node --test
+base.js/base.test.cjs` → 10/10 pass, including the two tests written
+specifically for this attempt's nested-role fix
+(`TestScheduleForms_AddErrorsAreAnnouncedAndAssociated`'s updated
+assertions, and `base.test.cjs`'s dedupe/poll/no-enclosing-form cases).
+These are the tests lane's territory; cited here only as corroboration
+that the traced behavior isn't a fluke of my specific probe inputs.
+
+---
+FINAL: PASS. Attempt 1's sole FAIL — nested `role="alert"` on 4 of 5
+Add-form error paths, double-announcing every rejection — is fixed and
+verified live across both themes, first AND second rejections, for all
+four forms (16/16 data points clean). Every other check this task's
+brief named (non-retargeted/5xx paths, dedupe-on-identical, poll-sentinel
+non-reannouncement, focus, contrast in both themes, reflow, reportValidity,
+page-load silence, automated axe) passes, with one reconfirmed
+pre-existing/out-of-scope observation (320px reflow overflow from an
+unrelated button, present on a page with no error ever triggered).

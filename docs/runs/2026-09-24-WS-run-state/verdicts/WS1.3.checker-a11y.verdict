@@ -1,0 +1,119 @@
+VERDICT: PASS
+CHECKER: checker-a11y
+FAMILY: anthropic
+TASK: WS1
+ATTEMPT: 3
+---
+METHOD
+Built the real server from the attempt-3 snapshot (`go build ./cmd/server`
+in the standalone snapshot dir, no .git). Data = the tier3 fixture
+(make_fixture.py — every stored numeric field off its old step grid,
+including four exact .50 ties: portfolio_value 2437512.50, monthly_living_
+expenses 10736.50, medicare_monthly_cost (hp1) 2150.50, aca_cost_after_
+employer (employer person) 3450.50 — the exact class of value this attempt's
+R-FMT convergence targets). Ran with BUDGET2_DATA_DIR/BACKUP_DIR/IMPORT_DIR
+under scratch, BUDGET_LISTEN_ADDR=127.0.0.1:39741, BUDGET_DEBUG=false. Never
+touched :8080, never ran a repo-root budget2 binary, no budget2 MCP tools,
+no git state changes. Playwright (NODE_PATH pointed at the given
+node_modules) + axe-core 4.13.0 (same copy WS1.2 used, ~/.config/nvm/.../
+@axe-core/cli/node_modules/axe-core) against the REAL rendered /whatif page
+loading the project's built styles.css/tailwind.css — not template source,
+not hand-built HTML. 1440x1000 viewport. Forced light/`.dark` via the real
+`#theme-toggle` mechanism (documentElement.classList + localStorage, the
+same code path base.js uses) rather than emulateMedia. All native <details>
+opened; Quick Adjust drawer opened and axe re-run once per QA tab
+(portfolio/rates/phases/healthcare) x per theme = 8 runs, since each tab's
+content is display:none until active. Servers killed at the end of every
+run (confirmed via pgrep/ss — port free). All scripts/JSON evidence under
+.../scratchpad/checkers/WS1.3-a11y/{scripts,evidence}/.
+
+AUTOMATED (axe-core, wcag2a/wcag2aa/wcag21aa/wcag22aa, per QA-tab x theme)
+- Light: 0 violations on portfolio/phases/healthcare tabs. 1 violation on
+  "rates" — color-contrast, `.text-gray-200` (investment-return QA display's
+  "Fixed X%" label, whatif-rate-assumptions.js:244). PRE-EXISTING: `git show
+  643fa54:web/static/js/whatif-rate-assumptions.js | grep text-gray-200`
+  shows the identical line at master. WS1.3.diff's only touch to this file
+  is the new updateInvestmentReturnDisplay aria-valuetext block, which does
+  not alter this className line. Same finding WS1.2 attributed. OBSERVATION
+  only (ACCESSIBILITY.md #7/#12).
+- Dark: 1 violation on every tab — color-contrast, `.mt-5 > summary`
+  ("Adjust spending rules manually", guardrails.html:8). Confirmed via
+  `git show 643fa54:web/templates/components/whatif/guardrails.html`: the
+  `<summary>` line is byte-identical to master; WS1.3.diff's only touch to
+  this file is formatExact/step=any on the six numeric inputs below it.
+  Same finding WS1.1/WS1.2 attributed. OBSERVATION only (#7/#12).
+No new axe violations introduced by this attempt's rounding-convergence or
+formatExact changes, in either theme, on any QA tab.
+
+MANUAL — against ACCESSIBILITY.md #4 (labels), #9 (keyboard/focus/live
+aria-valuetext parity — the WCAG 4.1.2 concern this task line exists to
+fix), #12 (dark parity), #13 (currency sign — N/A, no negative values)
+1. Load-time aria-valuetext == visible display, at the FOUR .50-tie fixture
+   values specifically, both themes, all 4 QA tabs (avt-parity.json):
+   - portfolio-slider / qa-portfolio-value: aria-valuetext="$2,437,512" ==
+     display "$2,437,512" (half-even; NOT "$2,437,513", the old half-up
+     figure) — 0 mismatches across both themes x all 4 tabs.
+   - qa-monthly-living-expenses: aria-valuetext="$10,736" == the in-card
+     span's "$10,736" (half-even; NOT "$10,737") — confirmed directly
+     (avt-parity.json entry, both themes).
+   - healthcare-medicare-cost-<hp1> / its QA mirror: aria-valuetext="$2,150"
+     == display "$2,150" (half-even; NOT "$2,151") both locations, both
+     themes.
+   - healthcare-aca-cost-<employer> / its QA mirror: aria-valuetext=
+     "$3,450" == display "$3,450" (half-even; NOT "$3,451") both locations,
+     both themes.
+   - Phase multiplier QA mirrors (id-less, aria-label-named): direct DOM
+     read confirms `<input aria-valuetext="101%" aria-label="Go-Go spending
+     multiplier" ...><span data-quick-adjust-display-format="phase-percent">
+     101%</span>` — exact parity (also 93%, 82% for the other two phases).
+   202 (theme x tab x control) checks total across all WS1-converted
+   controls; 0 real mismatches (an initial script bug that filtered by
+   exact-format-string match produced false "no display found" results for
+   investment-return and phase-multiplier mirrors — root-caused and
+   confirmed false via direct DOM reads above, then the harness fixed).
+2. Live keyboard update, BOTH directions (in-card <-> QA), BOTH themes,
+   ArrowRight/ArrowLeft/Home/End/PageUp (keyboard-results.json): 33 unique
+   focusable controls carrying aria-valuetext x 5 key presses x 2 themes =
+   330 checks, 0 mismatches, 0 focus errors. Includes the two special-cased
+   controls (monthly_living_expenses via onMonthlyLivingExpensesInput's
+   direct aria-valuetext writes, investment_return via
+   updateInvestmentReturnDisplay's compound-sentence aria-valuetext writes)
+   which don't carry data-quick-adjust-key/-display-format on the range
+   itself — verified their hand-written sync paths still keep aria-valuetext
+   == visible text after every key press.
+3. Explicit cross-direction propagation (cross-sync.json), driving from
+   in-card THEN separately from the QA mirror, on a fresh page load each
+   time, for portfolio_value / monthly_living_expenses / inflation_rate /
+   investment_return / a healthcare field: aria-valuetext on the OTHER
+   location's control matched after every drive, both directions, e.g.
+   portfolio driven in-card -> QA avt "$2,500,000" both sides; QA ->
+   in-card avt "$2,500,000" both sides; investment-return's full compound
+   sentence "Fixed 7.0% (overrides allocation)" identical both sides both
+   directions.
+4. Duplicate ids: 0 (`dup-ids.json` = []), full page, light theme.
+5. Hidden canonical `-exact` inputs never keyboard-reachable: calling
+   `.focus()` directly on all 18 hidden `-exact`/`-value` fields (portfolio,
+   monthly-living-expenses, 15 healthcare/rate/phase fields) leaves
+   `document.activeElement` off that field every time (`hidden-focus.json`)
+   — confirms the W2 Part B / WS1 hidden-canonical-input pattern this
+   attempt extended to formatExact still keeps every new hidden field out
+   of the tab sequence.
+6. Console errors during the full audit (axe injection, tab switches,
+   keyboard walk): 0 (`console-errors.json` = []).
+
+ACCESSIBILITY.md POINTS EXERCISED: #4 (labels) PASS — every control resolves
+an accessible name (label[for] or aria-label). #7/#12 (contrast, both
+themes, per QA-tab) PASS for every WS1-touched element; 2 PRE-EXISTING
+dark/light contrast fails attributed above with `git show 643fa54` diffs,
+unchanged by this attempt. #9 (keyboard operability, focus order,
+hidden-not-focusable, live aria-valuetext parity in both directions) PASS —
+this is the point the WS1 R-FMT/formatExact convergence exists to keep true
+now that the underlying rounding rule changed; no regression from the
+formatter switch (formatDollars->formatNumber, half-up->half-even) on any
+aria-valuetext/display pairing, at ties or otherwise.
+
+No git state changes made; snapshot and scratch only; no :8080 contact; no
+budget2 MCP tools. Scripts and JSON evidence (axe-results.json,
+avt-parity.json, keyboard-results.json, cross-sync.json, dup-ids.json,
+hidden-focus.json, console-errors.json) live under
+.../scratchpad/checkers/WS1.3-a11y/{scripts,evidence}/ for re-inspection.

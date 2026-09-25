@@ -1,0 +1,64 @@
+VERDICT: FAIL
+CHECKER: checker-tests
+FAMILY: anthropic
+TASK: WS5
+ATTEMPT: 1
+---
+Scratch: /tmp/claude-1000/-home-darrell-work-agents2--claude-worktrees-budget2-what-if-review-24ec2e/28920e62-8027-4a38-9437-8967166cd576/scratchpad/checkers/WS5.1-tests/ (logs e2e-*.log, mut-*.log, full-b-*.log, ws1-oracle.log, makecheck.log)
+Snapshot == base(fix/whatif-save-path-2 a12477f) + .swarm/diffs/WS5.1.diff: `patch -p1` onto `git archive` base, `cmp` of all 6 manifest files -> "SAME" x6.
+E2E = real Chromium (Playwright) against the snapshot binary on 127.0.0.1:<free port>, fresh `cp -rL` of live data per scenario (live copy has glide_path {enabled:false,0,0,1} and Christine linked to healthcare entry 72577487...). Every server killed; `pgrep` -> "no servers running".
+
+CRITERION 1 (glide) -- PASS
+  node e2e.js glide (e2e-glide.log):
+  - "PASS G1 tick sends NO request (glide-path POSTs: 0 ...)" ; "PASS G1 tick reveals the fields" ; "PASS G1 revealed fields are empty (leftover 0/0/1 not pre-filled): ["","",""]" ; "PASS G1 disk unchanged after tick: {"enabled":false,"start_stock_pct":0,"end_stock_pct":0,"transition_years":1}" ; "PASS G1b after reload checkbox still unticked". (The 1 other non-GET seen was POST /whatif/spending/optimize/prepare fired at page load, before the tick -- g1.js: "after tick non-GET: []".)
+  - Missing fields, 5 cases (start only / years missing / start missing / end missing / none): each "Apply -> status 400", "visible message next to glide form: "Error Start %, End %, and Years are all required to apply a glide path" role=alert", "disk glide unchanged: {false,0,0,1}".
+  - "PASS G3 Apply with 70/40/10 -> status 200" ; "PASS G3 saved on disk: {"enabled":true,"start_stock_pct":70,"end_stock_pct":40,"transition_years":10}" ; "PASS G3 after reload ticked=true fields=["70","40","10"]" ; "PASS G3b 400 shown (true) then cleared by a successful Apply (true)".
+  - "PASS G4 untick -> immediate POST (after 34ms) status 200" ; "PASS G4 disk enabled=false after untick" ; "PASS G4 after reload unticked" ; "PASS G5 tick of a disabled non-default config sends nothing".
+  - untick.js: both Apply and untick are htmx XHRs ["xhr","true",false], URL stays /whatif.
+  Base contrast (e2e-base-glide.log): "BASE tick: glide-path POSTs=1 body=enabled=on ... after={"enabled":true,"start_stock_pct":0,"end_stock_pct":0,"transition_years":1}".
+
+CRITERION 2 (person removal) -- PASS
+  node e2e.js persons (e2e-persons.log):
+  - "PASS P1 linked removal -> status 400 (want 400, never 500); ... person_name sent: person_name[]=Darrell Gallion" ; "PASS P1 visible refusal naming the entry next to the form: "Error Remove Christine's healthcare entry first" role=alert" ; "PASS P1 row kept/restored in place: ["Darrell Gallion","Christine"]" ; focus returned to Christine's Remove button ; "PASS P1 disk unchanged ... hc unchanged=true" ; "PASS P1 after reload Christine still there".
+  - "PASS P2 unlinked removal -> status 200" ; "PASS P2 disk after removal: ["Darrell Gallion","Christine"]" ; "PASS P2 gone after reload".
+  Base contrast: "BASE linked-remove requests: []" (nothing saved).
+
+CRITERION 3 (name-only new row) -- PASS
+  - "PASS P3 name-only row sends NO request (settings POSTs since: 0)" ; "PASS P3 browser required message on birth month: {"req":true,"valid":false,"msg":"Please fill out this field.","focused":true}" ; "PASS P3 disk byte-identical after name-only row".
+  - "PASS P3b with birth month -> status 200" ; "PASS P3b Sam saved: [...,["Sam","1990-05","other"]]" ; "PASS P3b after reload rows: [...,"Sam"]" ; "PASS P* no 5xx seen ([])".
+  Base contrast: "BASE name-only row requests: [["req","/whatif/settings",null],["res","/whatif/settings",500]]".
+
+CRITERION 4 (tests fail on base, kill each mutation alone) -- FAIL (b is only partially killed)
+  Base: new Go test file on base -> "ws5_glide_persons_test.go:186:12: undefined: personRemovalBlockedByHealthcare ... [build failed]"; with that helper-only test removed, 5 behavioral tests FAIL (lines 38/41, 69, 104, 171, 223 "a linked-person removal must never 500, got 500"). node on base: "ℹ fail 6".
+  Mutations (runmut.sh: one mutation, whole whatif package + all node tests, restore, cmp):
+  (a) template onchange -> "this.form.requestSubmit()": "--- FAIL: TestGlidePathCheckboxNeverAutoSubmitsOnChange" ws5_glide_persons_test.go:38. Variant "toggleGlidePathFields(this); this.form.requestSubmit()": same FAIL. JS tick branch calls requestSubmit: node "✖ toggleGlidePathFields: ticking reveals the fields without submitting..." KILLED.
+  (b) whole guard removed ("if false {"): FAIL ws5_glide_persons_test.go:69 and :104 "status = 200, want 400". KILLED.
+      Years clause dropped: FAIL :104. KILLED.
+      START clause dropped (guard = end=="" || years==""): "ok budget2/internal/handlers/whatif", node "ℹ fail 0", and full `go test ./...` "exit=0, ok pkgs: 51, FAIL lines: 0". SURVIVES.
+      END clause dropped (guard = start=="" || years==""): same -- whatif pkg ok, node fail 0, full `go test ./...` exit=0, 51 ok, 0 FAIL. SURVIVES.
+      Both survivors break D6 end-to-end on the live-data copy (e2e.js glide against the mutant binaries): END-drop -> "FAIL G2 [start+years (end missing)] Apply -> status 200 (want 400)" and "disk glide ... {"enabled":true,"start_stock_pct":70,"end_stock_pct":0,"transition_years":10}" (0% stocks at the end). START-drop -> "FAIL G2 [end+years (start missing)] ... status 200" and disk {"enabled":true,"start_stock_pct":0,"end_stock_pct":40,...}.
+      MISSING: permanent tests that reject an enable with ONLY Start % missing and with ONLY End % missing (e.g. table-driven over each of the three fields omitted, against the leftover {false,0,0,1} config, asserting 400 + config untouched). The test comment on TestHandleWhatIfGlidePath_EnableRejectsPartiallyMissingFields ("proves the check requires all three") is not true: it only pins Years.
+  (c) dispatchEvent line deleted: node "✖ removePersonRow detaches the row and saves immediately..." KILLED. Old DOM-only removePersonRow: 3 node failures. KILLED.
+  (d) refusal check disabled: "--- FAIL: TestHandleWhatIfSettings_RemovePersonLinkedToHealthcare_Refused" :238 "a linked-person removal must never 500, got 500". Refusal mapped to 500: same FAIL. KILLED.
+  (e) JS new-row `required` dropped: node "✖ addPersonRow: the new row's birth-month input is required..." KILLED. Template `required` dropped: "--- FAIL: TestPersonBirthMonthInputIsRequired" :171. KILLED.
+  Extra: refused-removal restore removed: node "✖ removePersonRow: a refused removal restores the row in place..." KILLED.
+  All mutated files restored (cmp clean after every run).
+
+CRITERION 5 -- PASS
+  - `nice -n 19 go test ./internal/handlers/whatif/...` (GOFLAGS=-count=1) -> "ok budget2/internal/handlers/whatif 16.110s"; -v shows all 8 WS5 tests "--- PASS".
+  - `node --test web/static/js/*.test.cjs` -> "ℹ tests 73 ℹ pass 73 ℹ fail 0".
+  - `make check` -> EXIT=0, "tailwind.css is up to date", "✓ all checks passed".
+  Harness gap: the node tests use a hand-built fake DOM (not jsdom); the real-browser behavior is covered only by this verdict's Chromium probes.
+
+REGRESSIONS
+  - WS1 oracle `accept.sh <snapshot>` -> EXIT=0, 278 PASS lines, "PASS criterion 1: saved plan identical after every untouched submission (0 change(s))", /whatif/settings #0-#3 and /whatif/glide-path "untouched submission sent and accepted (status 200)", final line "ORACLE PASS".
+  - `required` on birth month cannot invalidate a stored plan: synthesized legacy persons always get a BirthMonth (settings.go:383-401); WS1 criterion 2 (checkValidity) passes.
+  - Removal racing another save (route-delayed 2s): linked removal in flight then an edit -> events [400, then 200 with Christine included], row restored, edit saved, no 5xx (race-remove-first.js). Edit in flight then Remove clicked -> removal request never sent, row reappears from the OOB re-render, disk consistent, no 5xx (e2e-race-*.log). See finding F2.
+
+SCOPE
+  Worktree .worktrees/ws5 (read-only `git status --porcelain`): exactly the 6 manifest files modified (test file "A"), only `!! tmp/` ignored. No .swarm/critical.globs path touched.
+
+FINDINGS (backlog, not counted toward this FAIL)
+  F2 (pre-existing race class): a Remove clicked while another save from the Rate Assumptions form is in flight is silently dropped -- htmx queues it on the form, the in-flight success OOB-outerHTML-swaps #whatif-rate-assumptions-card, and the queued request on the detached form is discarded; the row reappears (server truth), no 500. Same on base for any edit: race-edit.js on base and snapshot both "roth_percent 0->0.1 disk=0; requests=1".
+  F3 (pre-existing): a direct POST of a name-only person row still returns 500 on base and snapshot (curl -> 500 both); only the browser `required` stops it.
+  F4 (not reproduced): the handler's own TOCTOU comment says a concurrent link landing between the pre-check Load and the save would reach ValidatePersons, and that maps to 500.

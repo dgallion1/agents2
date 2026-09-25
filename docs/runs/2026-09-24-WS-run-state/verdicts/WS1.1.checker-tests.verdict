@@ -1,0 +1,106 @@
+VERDICT: FAIL
+CHECKER: checker-tests
+FAMILY: anthropic
+TASK: WS1
+ATTEMPT: 1
+---
+Scratch: /tmp/claude-1000/-home-darrell-work-agents2--claude-worktrees-budget2-what-if-review-24ec2e/28920e62-8027-4a38-9437-8967166cd576/scratchpad/checkers/WS1.1-tests (base = git archive 643fa54; work = cp of snapshot; mutations reverted, `diff -rq work/web snap/web` clean).
+
+SUMMARY: criteria 1, 2, 3 and 7 PASS. Criterion 6 FAILS: the "round-trip" tests never render a template and pass on base. Criterion 5 FAILS: three Quick Adjust behaviours regressed, each proven against base in real Chromium. Criterion 4 FAILS for one converted slider (investment return has no aria-valuetext). Also: a user-visible COLA formatting regression.
+
+== C1 Round-trip identity: PASS
+`TMPDIR=<scratch> accept.sh <snapshot>` -> "PASS criterion 1: saved plan identical after every untouched submission (0 change(s))", 37 PASS / 0 FAIL, final line "ORACLE PASS" (oracle.snap.log). "Float-equal" here means check.py's 1e-9 tolerance; see D4 for a 1-ulp COLA drift that is below it.
+
+== C2 No stored value invalidates a form: PASS
+Same oracle run: 14/14 "form valid on the off-grid plan (criterion 2) — invalid: []". Coverage 16 forms (the base inventory).
+
+== C3 Touched path saves exactly: PASS
+drag.js (real mouse down/move/up in Chromium) on fixture A (the oracle fixture) and fixture B (phases off, employer-coverage person). saved == range value at release, exactly one POST/PUT per drag, for all of these:
+- in-card: healthcare cost 1850, pre-Medicare inflation 6.5, Medicare cost 1400 (from the stored 2150 > max), post-Medicare inflation 5.5, Alex cost 1000, Alex post-Medicare inflation 3.5, employer ACA cost 1550, ACA inflation 8, employer cost 700
+- portfolio: 2650000; after the in-card select is set to $0-1M, 770000
+- other sliders: inflation 4.7, investment return 9, phase-1 multiplier 0.75, spending decline 2.25
+- Quick Adjust mirrors: portfolio 5400000 (and 12800000 after the QA select change), inflation 3.3, investment return 6.5, phase-1 0.65, healthcare cost 1400, Medicare cost 800, pre-Medicare 4.5, ACA cost 1300
+Keyboard (kbd.js, 2x ArrowRight): hc cost 1750 -> saved 1750; portfolio 2550000 -> saved 2550000; phase1 1.05 -> saved 1.05.
+
+== C4 Visible figure = saved value via the existing formatter; aria-valuetext equals it: FAIL (one slider), PASS for the rest
+PASS, from the drag.js "before" rows (display span == aria-valuetext == existing formatter of the exact saved value), and both update live on every mid-drag sample:
+- currency: $1,655 (1655.30), $2,150, $612, $1,235, $433, $2,437,512
+- percent1: 7.3%, 4.2%, 4.3%, 3.9%, 0.3%, 6.3%
+- phase-percent: 93%
+FAIL: #investment-return-slider was converted (name removed, hidden #investment-return-exact added) but has NO aria-valuetext. Server render has range value="6.2" and display "Fixed 6.2%" (curl page.br.html); in Chromium the range snaps to 6.5 (discover.js: investment-return-slider val "6.5", aria null). A screen reader therefore hears 6.5 while the display says 6.2% and the saved value is 6.25. The in-code reason ("no single-string representation") does not hold: the display is one string.
+
+== C5 Existing ids and behaviour kept: FAIL
+Ids: PASS. Compared id= sets of GET /whatif, base vs branch, same fixture: removed [], 12 added (all *-exact / portfolio-value-exact), no duplicates, no count changes.
+Live display while dragging in-card: PASS (C4 rows). Spending preview live on in-card inflation drag: PASS, same as base (preview.js: net 3.6% -> 1.8% -> 4.3%).
+Three regressions, each proven with base vs branch on the same fixture (drag.baseA.json vs drag.brA.json):
+- R1, the portfolio range select no longer drives the Quick Adjust portfolio slider. Before, updatePortfolioRange set the named range and syncQuickAdjustMirrorControls copied min/max/step to #qa-portfolio-value. Now the canonical control is a hidden input with no min/max/step, so nothing is copied.
+  - On load (select = $0-5M): base qa max=5000000 step=50000; branch qa max=20000000 step=100000.
+  - After the QA select is set to $0-1M: base qa max=1000000 step=10000; branch qa max=20000000 step=100000. Dragging then saves 12,800,000 while the select reads "$0-1M".
+  - After the in-card select is set to $0-1M: same result.
+- R2, dragging the QA investment-return mirror no longer updates the display live. Branch mid-drag samples at 3 and 6.5 both still show "Fixed 9.0% (overrides allocation)", corrected only after the save's swap. Base shows "Fixed 3.0%" then "Fixed 6.5%". Cause: updateInvestmentReturnDisplay lived in the canonical range's inline oninput; the canonical control is now a hidden input, and formatQuickAdjustDisplay skips 'investment-return'.
+- R3, dragging the QA portfolio mirror no longer updates the per-account $ amounts (#td/#roth/#taxable-amount-display). Branch mid-drag values stay stale at [$639K,$4K,$127K] while the portfolio goes to $2,000,000 then $5,400,000. Base updates live ([$83K,$0,$17K] -> [$224K,$0,$46K]). Cause: updateAccountAmounts was in the canonical range's oninput.
+  - Not checkable: the same mechanism would also skip updateSpendingPreview on QA inflation/decline drags. The preview panel closes on every save swap on both builds, so a live QA comparison could not be made.
+
+== C6 Permanent Go tests: FAIL
+Per family, what the permanent tests actually exercise:
+- portfolio-settings: TestWS1PortfolioSettingsRoundTripsOffGridValues. Handler only, passes on base.
+- healthcare-person: TestWS1HealthcareRoundTripsOffGridCostSliders (handler only, passes on base) plus TestWS1HealthcarePersonRender_MonthlyCostRangeHasNoName (markup, current_monthly_cost only).
+- rate-assumptions: ...RoundTripsOffGridValues and ...RoundTripsOffGridRateSliders (handler only, pass on base) plus two markup tests (cost basis step; tax_deferred_percent value).
+- spending-phases, guardrails, roth-conversion, social-security: one handler-only test each, all pass on base.
+- Worker JS (whatif-quick-adjust.js, whatif-portfolio-settings.js): no test.
+None of these is a render + handler round trip. The "RoundTrips" tests post hand-written url.Values literals to the handler and never render a template.
+- FAIL on base: the new test file copied onto base 643fa54 (`go test -count=1 -v -run TestWS1 ./internal/handlers/whatif/`) fails only the 3 markup tests. All 8 *RoundTrips* tests PASS on base.
+- Named mutations (runmut.sh, whole whatif package, -count=1):
+  - (a) name= back on the current_monthly_cost range: killed by ...MonthlyCostRangeHasNoName
+  - (b) step="1000" back on cost basis: killed by ...CostBasisStepIsAny
+  - (c) %.0f back on tax_deferred_percent: killed by ...AllocationPercentExactValue
+  Each is killed only by the one markup test pinned to that exact field.
+- Same-class mutations on sibling fields: ALL SURVIVE ("ok budget2/internal/handlers/whatif"):
+  - a2: name= on the Medicare cost range
+  - a3: name= on both pre-Medicare inflation ranges
+  - c2: %.0f on roth_percent
+  - c3: %.0f on tax_deferred_stock_percent
+- Unnamed mutations on other families: ALL SURVIVE:
+  - U1: %.1f on guardrail floor_cut_pct
+  - U2: step=0.5 on floor_cut_pct (stored 10.25 -> stepMismatch blocks the form)
+  - U3: name= on portfolio-slider
+  - U4: name= on inflation-rate-slider
+  - U5: name= on the phase multiplier range
+  - U6: %.0f on SS fra_benefit
+  - U7: %.0f on the roth annual_amount
+  - U8: %.0f on monthly_property_tax
+  - U9: step=100 on the ACA credit
+- Combined: U1 + U3 + a2 + U5 applied together; `go test -count=1 ./...` exit 0, 51 packages ok, 0 FAIL lines.
+Missing: a test per family that renders the template on an off-grid plan, extracts each named input's submitted value from the rendered form (hidden inputs; for number inputs the value attribute plus step/min/max validity), posts it through the handler, and asserts float-equal. That is the test that catches the next field added with the same bug.
+
+== C7 Suites: PASS
+- `GOFLAGS=-count=1 rtk proxy make check` in the snapshot: "✓ all checks passed", exit=0, 52 ok packages, 0 FAIL lines; includes "ok budget2/internal/handlers/whatif", "ok .../services/retirement", "ok .../internal/templates", "tailwind.css is up to date", "No vulnerabilities found."
+- `node --test web/static/js/*.test.cjs`: tests 28, pass 28, fail 0.
+
+== (iii) formatExact on edge-case floats
+formatExact outputs (temp test calling the real function, runtime floats), all ParseFloat back to the same float:
+- 1e7 -> "10000000"
+- 1e21 -> "1000000000000000000000"
+- 1e-7 -> "0.0000001"
+- 0.1+0.2 -> "0.30000000000000004"
+- -0 -> "-0"
+Chromium, `<input type=number step=any min=0 value=...>` (numaccept.js): every string valid, value kept, FormData carries the exact string, form checkValidity true. "-0" is accepted and valueAsNumber is 0.
+D4, introduced by this diff: social-security.html renders COLA as `formatExact (mul COLARate 100)`, which exposes float noise in a visible number field.
+- Stored 0.028 (the 2025 COLA), curl GET /whatif: branch `value="2.8000000000000003"`, base `value="2.8"`.
+- Other stored values: 0.029 -> "2.9000000000000004"; 0.059 -> "5.8999999999999995"; 0.07 -> "7.000000000000001".
+- An untouched submit saves 0.028000000000000004, a 1-ulp drift (0.026 does the same). It does not accumulate, stays under the oracle's 1e-9, and base drifted too (to 0.027999999999999997). The user-visible text is new.
+
+== SCOPE
+- Snapshot vs base: exactly the 11 manifest files differ. The only other entries are empty test-artifact dirs (internal/config/data/{uploads,settings}, testdata/uploads).
+- No .swarm/critical.globs path touched.
+
+== Beyond-scope observations (backlog, not FAIL)
+- O1: named numeric inputs outside the lead's enumeration that could still block a form under D1:
+  - guardrails min_monthly_spending_real: step=0.01, rendered with default {{.}}; a 3-decimal stored value would stepMismatch.
+  - spending-phases phase_N_start_age: min=50; a stored age below 50 would rangeUnderflow.
+  - employer_coverage_years (range max 20) and projection_years (range 5-50) are clamped by the browser if stored out of range.
+  Not reproduced on real data.
+- O2: updatePhaseSliderLabel (whatif-spending-phases.js:5) now has no callers.
+- O3: updateSpendingPreview reads the snapped visible ranges, not the exact hidden values: 3.9-0.25 -> "3.6%" vs exact 3.85-0.3. Same on base.
+- O4: pre-Medicare 7.25 renders "7.2%" server-side (Go %.1f, half-even) and becomes "7.3%" after JS (toFixed). A pre-existing dual formatter; aria-valuetext matches the display at each moment.
+- O5: Quick Adjust mirror ranges carry no aria-valuetext. Pre-existing; the a11y sweep is out of scope per §7.

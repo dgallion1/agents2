@@ -1,0 +1,81 @@
+VERDICT: FAIL
+CHECKER: checker-tests
+FAMILY: anthropic
+TASK: WS4
+ATTEMPT: 1
+---
+Scratch: /tmp/claude-1000/-home-darrell-work-agents2--claude-worktrees-budget2-what-if-review-24ec2e/28920e62-8027-4a38-9437-8967166cd576/scratchpad/checkers/WS4.1-tests (SC below)
+Snapshot == base 643fa54 + .swarm/diffs/WS4.1.diff: `patch -p1` onto `git archive 643fa54`, then cmp on all 4 files -> "same" x4.
+Servers: snapshot built to SC/srv; base 643fa54 built to SC/srv-base; each ran on a cp -rL data copy, on a free 127.0.0.1 port. Both stopped when done.
+
+GATES
+- `GOFLAGS=-count=1 rtk proxy make check` (SC/make-check-raw.log): vet, staticcheck, govulncheck, "tailwind.css is up to date", 52 packages ok, 0 "(cached)", "ok budget2/internal/handlers/whatif 15.118s", "✓ all checks passed", exit=0.
+- `go test -count=1 ./internal/handlers/whatif/...` -> ok 13.384s.
+- `node --test web/static/js/*.test.cjs` -> tests 34, pass 34, fail 0 (6 new ones in base.test.cjs).
+
+AC1 (a rejected Add keeps the typed values and shows the message; an accepted Add clears) -- PASS
+Real Chromium, SC/e2e.cjs -> SC/e2e-branch.json. All 5 Add forms. Each rejection is a real server 400 with HX-Retarget:
+  income (Through before Starts), expense (same), one-time (2099-01, past the horizon), big-ticket (empty month), healthcare (age 150, noValidate).
+- Every form: valuesKept=true. Example (income): name "WS4 Probe Income", amount 1234, 2027-09/2026-11, cola true are identical before and after the rejection.
+- The retarget slot shows the message, is visible, and carries role=alert. It is the form's sibling. Example text: "Error Through month cannot be before the start month".
+- inlineAfterReject=0 (no duplicate).
+- Accepted resubmit: 200, clearedToDefaults=true, slot emptied.
+Calibration on base (SC/e2e-base.json): every form has kept=False. Example (income): values wiped to name "", amount "", start 2026-09.
+
+AC2 (a non-retargeted error shows next to the triggering form) -- FAIL
+The canonical example passes:
+- Branch: PUT /whatif/income/<id> 400, retarget null. The alert is the form's firstChild, role=alert, visible, in viewport. Text: "Error Through month cannot be before the start month".
+- msgOccurrences=1. A second rejection does not stack (count stays 1). resultsUntouched=true.
+- A valid edit (200) leaves 0 inline errors and 0 occurrences of the message.
+- Base (SC/e2e-ac23.cjs): the same 400 shows visibleMsg=[] (silent).
+Defect: "from any /whatif request" breaks for requests with no form. errorHost() falls back to `elt.parentNode`. Both cases below are regressions: at base the error went to the console only and the layout stayed intact.
+(1) The poll. Real server (SC/e2e-chain2.cjs): tab A is loaded, then another client POSTs /whatif/chain (Current -> Job loss).
+    - Tab A's GET /whatif/poll goes 204 then 500 every 2 s. Body: renderError "Analysis failed: analysis computation failed; please retry" (handlers_live.go:168).
+    - The alert is inserted as the FIRST GRID ITEM of the page layout (the parent of the hidden #whatif-poll).
+    - Grid after: INLINE-ERROR@x17,y245,w206 | whatif-settings-col@x249 | whatif-results@x17,y10898. Before: settings@x17, results@x481,y245.
+    - So the projection results are pushed about 10,650 px down, below the whole inputs column. Screenshot: SC/chain-poll.png.
+    - A new role=alert node is re-inserted on every 2 s poll (reinsertedEveryPoll=true).
+    - Same scenario on base: grid unchanged, inlineCount 0.
+(2) Programmatic htmx.ajax with no source. whatif-spending-phases.js:85 calls GET /whatif/spending-trajectory; the request's elt is <body>.
+    - Real server (SC/e2e-traj.cjs), after the same chain change: the trajectory call returns 500. The alert is inserted into <html> BEFORE <head>, outside <body> (inBody=false).
+    - That is a banner above the site nav (SC/traj-after.png), which D5 explicitly rules out ("not a page-top banner").
+Missing: a correct placement rule for form-less /whatif triggers (the hidden poll sentinel; body-sourced htmx.ajax). It must not insert into the layout grid or outside <body>, and must not re-announce every poll.
+
+AC3 (a browser-invalid value reports the browser's message) -- PASS
+Property tax set to -500 with Playwright `fill`. HTMLInputElement.prototype.reportValidity was spied.
+- Branch: rv=[{name:"monthly_property_tax", msg:"Value must be greater than or equal to 0.", ret:false}], activeElement = the field, 0 POST /whatif/settings.
+- Base: rv=[], 0 posts (silent).
+Harness gap: headless Chromium does not paint the native bubble, so the evidence is the reportValidity() call plus validationMessage, not a pixel.
+
+AC4 (renderError output carries role="alert") -- PASS
+`go test -count=1 -run TestRenderError$ -v` -> PASS. Assertion at handlers_test.go:804. The AC1 and AC2 e2e runs show role=alert on the real rendered fragment.
+
+AC5 (tests kill the named mutations) -- PASS
+Applied in scratch copies; restored copy is cmp-identical to the snapshot.
+(a) Re-add `evt.detail.isError = false;` -> ✖ "a rejected retargeted 4xx still swaps but reports failure..." ("isError must NOT be forced false"); pass 5 / fail 1.
+(b) Early `return;` in the new responseError listener -> ✖ 2 tests ("exactly one message lands next to the form" actual 0).
+(c) Drop `htmx.config.reportValidityOfForms = true;` -> ✖ "enables htmx's native reportValidity()" (actual undefined).
+(d) Remove role="alert" from renderError -> "--- FAIL: TestRenderError ... handlers_test.go:804: body should carry role=\"alert\"". The full package also FAILs.
+Extra mutations, also killed:
+- Drop clear-on-success -> ✖ "...clears on the next success".
+- Drop the HX-Retarget skip -> ✖ "retargeted 4xx ... not shown a second time".
+Caveat: the node tests use a fake DOM and simulate the template's after-request handler. Behaviour is proven by the e2e runs above, not by those tests.
+
+AC6 (existing behaviour kept) -- PASS
+- Scroll: scrollY 1500 before a POST /whatif/settings 200 swap, 1500 after.
+- The 5 retargeted Add errors land in their #whatif-add-*-error slots (AC1).
+- Non-/whatif pages (/, /insights, /major-expenses, /accounts, /explorer, /transfers, /filemanager): 200, 0 pageerrors, 0 inline nodes.
+- No other handler emits HX-Retarget (grep outside handlers/whatif is empty).
+- roth-conversion and guardrail_optimizer still set isError=false for their own targets. busy-banner, whatif-poll and page-refresh listen to afterRequest unconditionally and are unaffected.
+
+SCOPE
+Changed files: handlers.go, handlers_test.go, base.js, base.test.cjs. This equals the manifest. The only other differences from base are gitignored or empty dirs (internal/config/data, testdata/uploads). No critical globs touched.
+
+OBSERVATIONS (beyond scope, for the backlog)
+O1. A retargeted 5xx shows nowhere; the typed values are kept. Stub of POST /whatif/income 500 + HX-Retarget gives slot "", inline 0, text found anywhere false. Example path: handlers_income_expense.go:53.
+    The beforeSwap only swaps 4xx, and the new listener skips anything with HX-Retarget. Same as base.
+O2. A non-HTML error body (text/plain from http.Error) makes the listener throw "TypeError: node.setAttribute is not a function", and nothing is shown. renderError bodies never trigger it.
+O3. reportValidityOfForms is now sitewide. On this plan, the settings form holding taxable_cost_basis=276147 (step 1000, WS1 surface) is invalid on load.
+    Editing tax_deferred_percent now calls reportValidity on taxable_cost_basis and moves focus there, and nothing is saved. At base this was silent.
+    This interacts with WS1, so merge order matters.
+O4. A handler panic (chi Recoverer, empty 500) shows nothing, because the listener returns when there is no firstChild.

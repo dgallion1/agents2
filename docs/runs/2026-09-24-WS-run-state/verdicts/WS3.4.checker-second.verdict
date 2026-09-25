@@ -1,0 +1,59 @@
+VERDICT: PASS
+CHECKER: checker-second
+FAMILY: adversarial
+TASK: WS3
+ATTEMPT: 4
+---
+Scope/identity: `diff .swarm/diffs/WS3.3.diff .swarm/diffs/WS3.4.diff` (per-file
+extraction) shows all 9 non-test-addition files (handlers.go, monte_carlo.go,
+guardrails.go, spending_floor.go, stepper.go, both templates, plus
+ws3_chain_guardrails_montecarlo_test.go and floor_outcomes_test.go)
+byte-IDENTICAL between attempts 3 and 4; only the two
+ws3_chain_guardrails_test.go files (engine + handlers) gained new tests.
+Independently rebuilt base(643fa54)+WS3.4.diff via `patch -p1` and
+`diff -rq` against the snapshot: zero differences outside known gitignored
+build artifacts (tmp/, internal/config/data, testdata/uploads) — snapshot
+== manifest exactly, no undisclosed change.
+
+Sensitivity (own cp -a copy, reverted after each, `go build` clean between):
+- M2d (before-site only, stepper.go:338 `st.primary`→`s`): FAILED both new
+  tests — handler test "chained rendered 5 guardrail events, want 3"; engine
+  test also FAIL.
+- M2e (after-site only, line 339): FAILED both (engine "--- FAIL:
+  TestChainGuardrailEventsMatchUnchainedWhenPrimaryFloorBinds"; handler same).
+- M2c (both sites, the exact attempt-3 survivor): FAILED both. All three
+  restores confirmed clean (`go build` OK, files byte-identical to
+  pre-mutation).
+- Rendering-side probes: mutated guardrails.html's "% of plan" scaling
+  (mul .Multiplier 100→90) — survives everything, but this line is untouched
+  by WS3's diff (pre-existing, not part of D3'/attempt-4 scope) and isn't
+  duplicated in the Go caption (different field) — not a split-classification
+  defect, just an undisplayed-in-caption detail. Mutated the caption's
+  MonthlySpendingAfter guard (handlers.go:599) to `false` — CAUGHT by the
+  pre-existing (GV2-run, not WS3) TestBuildGuardrailChartSummary. No drift
+  found in the "Guardrail cuts/raises" chart markers (same GuardrailEvents
+  struct, no independent classifier), MC lifestyle-outcome cut metrics
+  (guardrailImpact.observe reads out.GuardrailMultiplier from the same
+  st.StepMonth already mutation-killed above), or the no-guardrails overlay
+  (forces Guardrails=nil on the primary, consistent by construction).
+
+Oracle: ran `.swarm/tier3/WS3/accept.sh <my-snapshot>` myself (isolated port,
+isolated data dir per ws_serve/common.sh, :8080 never touched, binary built
+to a tmp dir not the repo/worktree) -> 22/22 PASS lines, final line
+"ORACLE PASS", byte-for-byte matching the committed oracle.4.log including
+the a2-alone/a2-to-y events+caption checks. Cross-checked the committed
+oracle.v3.mutant-floor-events.log / oracle.v3.master.log (fail-end/base-end
+calibration): 4 failed checks on the M2c-equivalent mutant, 12 on base —
+matches SPEC.md's ruling 2026-09-23l numbers.
+
+`go build ./...`, `go vet`, `gofmt -l` on both changed test files: clean.
+Full `make check` (vet, staticcheck, govulncheck 0 vulnerabilities,
+css-verify, go test ./... all ~40 packages ok, uncached): "✓ all checks
+passed", exit 0.
+
+No FAIL found; no in-scope defect. Beyond-scope observation only (guardrails.html
+% of plan template arithmetic has no absolute-correctness test, but it's
+pre-existing, untouched by WS3, and not duplicated in the caption — backlog
+candidate, not a WS3 criterion failure). All servers I started were killed
+automatically by accept.sh's own trap; no writes outside my snapshot/scratch;
+:8080 and the repo binary were never touched; no git state changed.

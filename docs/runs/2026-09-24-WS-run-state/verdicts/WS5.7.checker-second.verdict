@@ -1,0 +1,84 @@
+VERDICT: PASS
+CHECKER: checker-second
+FAMILY: adversarial
+TASK: WS5
+ATTEMPT: 7
+---
+Scope (rulings 2026-09-24l/m): test file + handler-comment lines 84-96 only,
+fixing (a) attempt-6's tautological NBSP guard (raw c2a0 byte in both the
+const and the guard rune) and (b) attempt-6's false claim that
+InvalidStartDateError carries a PersonID.
+
+ATTACKS RUN (all against a `cp -a` working copy at
+scratchpad/checkers/WS5.7-second/work, isolated from the live
+.worktrees/ws5 tree; nice -n 19, GOMAXPROCS=4, GOFLAGS="-count=1 -p=2",
+one go test process at a time):
+
+1. File-scope diff. `diff -rq snap/WS5.6-second snap/WS5.7-second`
+   (pre-made snapshots, byte-identical to the live worktree per
+   `diff -rq snap/WS5.7-second .worktrees/ws5` modulo .git) shows exactly
+   two files differ: handlers_rates.go and ws5_glide_persons_test.go.
+   `diff -u` on handlers_rates.go shows one hunk, lines 84-96, comment
+   text only (verified against the file: the block runs 84-96 exactly,
+   inside the `if hasPersons {` body, no code token changed).
+
+2. Comment accuracy against validate.go and personsSaveErrorMessage,
+   checked field-by-field:
+   - `type InvalidStartDateError struct { Err error }` (validate.go:16-18)
+     — no PersonID, no row identifier. New comment: "InvalidStartDateError
+     concerns no row ... and is matched by type alone" — accurate, and
+     personsSaveErrorMessage's own InvalidStartDateError branch
+     (handlers_rates.go:156-159) indeed matches by errors.As alone with no
+     findPersonByID call, unlike the other two branches.
+   - `PersonBirthMonthError{PersonID, Name, Err}` and
+     `PersonBirthMonthAfterStartError{PersonID, BirthMonth, StartDate}`
+     (validate.go:45-49, 71-75) both carry PersonID — matches "each carry
+     the failing row's PersonID".
+   - `statusForMutationError` → `statusForScenarioOperationError`
+     (handlers.go:146-152, 271-288) only matches
+     ScenarioChainValidationError / ScenarioValidationError /
+     ScenarioNotFoundError / ScenarioConflictError, defaulting to 500 —
+     none of the three prepare.* types are matched, confirming "falls
+     through to 500".
+   No inaccuracy found in the rewritten block.
+
+3. NBSP tautology, worked through in the specified order on the real tree:
+   a. Mutated personsSaveErrorMessage to `strings.ReplaceAll(p.Name,
+      " ", " ")` / same on p.BirthMonth before formatting (simulating
+      a handler that silently loses the NBSP). `go test ... -run
+      TestHandleWhatIfSettings_PersonsBirthMonthMessages_NamesXBirthMonths
+      -v`: subtests `Ann_Lee/empty#01` and `Ann_Lee/unparseable#01` (the
+      nbspName row) FAIL with `got "Ann Lee needs a birth month" want
+      "Ann Lee needs a birth month"` — the real behavioural defect is
+      caught. Reverted, md5-verified identical, full package re-passes
+      (`ok budget2/internal/handlers/whatif 16.485s`).
+   b. Mutated only the const: `nbspName = "Ann" + " " + "Lee"`. Guard
+      fires immediately: `nbspName must contain an actual NBSP (U+00A0)
+      character, not a plain space` before any subtest runs. Reverted,
+      md5-verified identical.
+   c. Guard (`strings.ContainsRune(nbspName, rune(0x00A0))`) and the table
+      (`names := []string{..., nbspName, ...}` at line 682) read the same
+      identifier — confirmed by inspection, and by (a)/(b) exercising both
+      paths through that one variable.
+   d. Table rows execute for real: -v output shows
+      `Ann_Lee/empty#01`/`Ann_Lee/unparseable#01`/`Ann_Lee/after_start#01`
+      (Go's disambiguating suffix for the second "Ann Lee"-labelled
+      subtest) actually RUN, not skipped, and both fail and pass
+      correctly under (a)/(b) — no swallowed failure.
+
+4. Raw non-ASCII bytes: `grep -nP '[^\x00-\x7F]'` on the test file finds
+   only pre-existing box-drawing separator comments (`── ... ──`, U+2500,
+   present unchanged since attempt 5 — confirmed via the same grep against
+   snap/WS5.5-second and snap/WS5.6-second). A byte-level search
+   (`data.find(b'\xc2\xa0')` over the whole file) returns -1: no raw NBSP
+   byte sequence anywhere in the file.
+
+5. Oracle: `TMPDIR=<scratch> nice -n 19 .swarm/tier3/WS5/accept.sh
+   <working-copy>` → G1-G4, P1-P3f (12 checks) all PASS, ends `ORACLE
+   PASS`. `go build ./...` and `go vet ./internal/handlers/whatif/...
+   ./internal/services/retirement/prepare/...` both clean. Full package
+   tests: `go test ./internal/handlers/whatif/...` ok (16.0s), `go test
+   ./internal/services/retirement/prepare/...` ok (0.005s).
+
+No defect found. Attempt 7 satisfies both ruling-l fix items and stays
+inside the two-file, comment/test-only scope.

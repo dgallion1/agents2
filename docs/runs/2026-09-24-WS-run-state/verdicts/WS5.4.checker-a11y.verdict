@@ -1,0 +1,204 @@
+VERDICT: PASS
+CHECKER: checker-a11y
+FAMILY: anthropic
+TASK: WS5
+ATTEMPT: 4
+---
+## Scope confirmed (diff-of-diffs against WS5.3.diff, both cumulative-vs-master)
+`diff -u WS5.3.diff WS5.4.diff` then per-file isolation (awk-extracted chunks,
+diffed independently): internal/handlers/whatif/handlers.go,
+web/static/js/whatif-rate-assumptions.js, and
+web/templates/components/whatif/rate-assumptions.html are BYTE-IDENTICAL
+between attempts 3 and 4. The only content delta is in
+internal/handlers/whatif/handlers_rates.go (personsSaveErrorMessage's single
+`strings.Contains(msg,"invalid birth_month for")`/generic-prefix match split
+into two anchored regexes, rePersonsInvalidBirthMonth and
+rePersonsBirthMonthAfterStart, each matching prepare.ValidatePersons' EXACT
+distinct error shape) and the two test files
+(internal/handlers/whatif/ws5_glide_persons_test.go,
+web/static/js/whatif-rate-assumptions.test.cjs). Confirms the dispatch's
+"server-side message wording + tests only" premise. This attempt's
+a11y-relevant surface is exactly the MESSAGE TEXT the two regex branches
+produce, rendered through the unchanged, already-PASSed renderError/base.js
+pipeline (same as attempt 3's scope note).
+
+## Method
+Snapshot at scratch/snap/WS5.4-a11y (no .git) built with `go build` (nice -n
+19, GOMAXPROCS=4) to a scratch binary. Data = `cp -rL` of
+/home/darrell/bin/ai/budget2/data (live fixture: Darrell Gallion 1958-11
+primary, Christine 1971-08 spouse linked to a healthcare entry, start_date
+2026-09, glide_path {enabled:false}) into scratch dirs;
+BUDGET2_BACKUP_DIR/BUDGET2_IMPORT_DIR also scratch. BUDGET_LISTEN_ADDR=
+127.0.0.1:34269 (never :8080), BUDGET_DEBUG=false. Real render via the
+snapshot's own built web/static/css/tailwind.css (already present, not
+rebuilt). Audited live with a Playwright driver (chromium via
+NODE_PATH=/home/darrell/.npm/_npx/e41f203b7505f1fb/node_modules) injecting
+axe-core 4.13.0 (same version @axe-core/cli ships:
+~/.config/nvm/.../@axe-core/cli/node_modules/axe-core/axe.min.js) at 5
+states x 2 themes (baseline card-expanded, unparseable-birth-month alert,
+invalid-start-date alert, glide-revealed, linked-removal-refusal). Dark
+forced via the site's real mechanism (localStorage theme=dark +
+documentElement.classList, matching base.js's own toggle handler) plus
+colorScheme:'dark' context. Server killed after the run (`kill`, confirmed
+dead via `ps -p` and a post-kill curl timing out); no :8080 or budget2 MCP
+tool ever contacted (grepped my own driver scripts for both — none); no
+git-state changes in either the agents2 worktree or
+/home/darrell/bin/ai/budget2 (both `git status --short` before/after show
+only pre-existing unrelated entries).
+
+## AUTOMATED (axe-core), both themes, Rate Assumptions card expanded (default, aria-expanded=true)
+LIGHT: 0 violations at all 5 states.
+DARK: 1 violation at all 5 states -- color-contrast/serious on
+`.mt-5 > summary` ("Adjust spending rules manually"). Traced to
+web/templates/components/whatif/guardrails.html, a file no WS5 attempt (1-4)
+touches -- PRE-EXISTING, same single node attempts 2/3 already recorded.
+Not a regression.
+"incomplete" (axe could not auto-verify) color-contrast nodes: ~43-node set
+(nav sidebar links, portfolio-allocation "Primary" badge, guardrail-chart
+SVG text) present identically at baseline and in every state -- same
+pre-existing/page-wide set attempt 3 recorded. OBSERVATION, not a FAIL.
+The invalid-start-date state adds 2 extra "incomplete" nodes
+([data-person-age-preview] badges) -- see PRE-EXISTING content bug below;
+same bg/fg colors as baseline (rgb(245,245,244)/rgb(68,64,60)), so this is
+axe's heuristic reacting to the changed text length, not a new contrast
+defect.
+No new violation or incomplete node appeared in any of the three new/
+re-tested interaction states (unparseable-birth-month,
+invalid-start-date, glide-revealed) beyond what baseline already had.
+
+## MANUAL -- walked per dispatch, both themes
+
+**New/changed message: unparseable birth month (five-digit year into an
+existing person's birth month) -- THIS attempt's regex split.**
+Edited Darrell Gallion's birth-month input (type=month) to "19711-08" via a
+real htmx `change` event (form's own `hx-trigger="change delay:500ms..."`).
+Both themes, identical:
+  - Exactly 1 `[role=alert]` node -- announced once, no stacking.
+  - `isFirstChild` of the settings `<form>` -- next to the form.
+  - textContent: `Darrell Gallion's birth month "19711-08" isn't a valid
+    month (use YYYY-MM)` -- real apostrophe/quote characters (confirmed via
+    .textContent read, i.e. what AT exposes), names the person and the bad
+    value, never falsely says "needs a birth month".
+  - Focus stays on the edited birth-month input (document.activeElement).
+  - Restoring a valid value (1958-11) and re-triggering `change` clears the
+    alert (alerts=[] after), confirming the afterRequest success-path
+    removal (unchanged base.js) still works through the new regex classifier.
+
+**New/changed message: invalid projection start date (a distinct five-digit
+year, "20266-09", into the now-editable start-date field after unchecking
+"Use current month") -- exercises the `start_date:` branch, unchanged code
+but newly walked this attempt per dispatch.** Both themes, identical:
+  - Exactly 1 alert, first child of the form.
+  - textContent: `Invalid projection start date: invalid month "20266-09"`
+    -- correctly labelled as the PROJECTION start date, never "person data"
+    or a birth-month message.
+  - Focus stays on #projection-start-date.
+  - Raw wire response (fetch()) confirms entity-encoded apostrophes on the
+    wire (`&#39;`) with real apostrophes in the live DOM textContent --
+    same innerHTML-safe pattern as attempt 3, unmodified by this diff.
+
+**Regression check: "birth month after start date" (the DISTINCT shape
+attempt 4's regex split had to keep correctly classified, separately from
+"unparseable") -- present birth month (2030-01), but later than start_date
+(2026-09).** Both themes, identical:
+  - `Darrell Gallion's birth month (2030-01) is after the plan's start date
+    (2026-09)` -- never "needs a birth month" or "isn't a valid month".
+  - Raw wire text confirmed entity-encoded (`Darrell Gallion&#39;s birth
+    month (2030-01) is after the plan&#39;s start date (2026-09)`),
+    live DOM textContent shows real apostrophes. Unregressed by the regex
+    split.
+
+**Sequential-edit check (same field, two different error classes back to
+back, no reload).** unparseable -> after-start-date -> cleared-to-empty:
+at every step exactly ONE `[role=alert]` node exists and its text updates
+to match the newest response (never two stacked alerts, never a stale
+message left showing alongside a new one). Confirms point 16 (client-side
+suppression is parity-complete / no duplicate re-announcement) holds for
+the new regex-classified messages, not just the pre-existing ones.
+
+**Glide checkbox keyboard tick/untick, linked-removal refusal (regression,
+unchanged markup/JS since attempt 2/3).** Re-verified live, both themes,
+identical to attempt 3: tick reveals #glide-path-fields (hidden class
+removed) without submitting; Christine's (spouse, healthcare-linked) Remove
+click produces exactly 1 alert "Remove Christine's healthcare entry first",
+row count restored to 2, focus returns to her own Remove button (not lost
+to <body>).
+
+**Contrast of the messages, both themes (point 7).** Both new-this-attempt
+alerts (unparseable-birth-month, invalid-start-date) and the regression-
+checked ones (after-start-date, linked-removal) reuse the identical
+renderError markup/classes (`text-negative` on `bg-negative-soft`, fully
+opaque). Measured via standard WCAG relative-luminance contrast on the
+captured computed-style rgb values:
+  LIGHT: fg rgb(190,18,60) on bg rgb(255,241,242) -- 5.72:1. PASS.
+  DARK: fg rgb(253,164,175) on bg rgb(41,23,42) -- 8.88:1. PASS.
+Both well over the 4.5:1 floor (14.875px normal weight).
+
+**Focus indicator sanity (point 9).** #person-birth-month-<id> after an
+error still shows a visible replacement ring on focus (boxShadow
+`rgb(79,70,229) 0 0 0 2px`, outline:none WITH a replacement) -- unchanged
+Tailwind focus-ring CSS, not touched by this diff.
+
+**axe-core with the Rate Assumptions card expanded.** Confirmed
+aria-expanded="true" (server-rendered default) at every scan.
+
+## PRE-EXISTING content-accuracy finding (not a WS5 regression, OBSERVATION)
+Setting the malformed start date "20266-09" (a five-digit year, the same
+class of value this task's own message correctly labels "invalid") makes
+the un-related, pre-existing client-side `computeDerivedAge`/
+`updatePersonAgePreviews` (web/static/js/whatif-rate-assumptions.js lines
+31-51, confirmed BYTE-IDENTICAL to master and untouched by any WS5 attempt
+1-4 -- the diff's earliest hunk starts at line 19's
+`updatePersonRole`/`removePersonRow`, well past this function) display
+"Age 18307" / "Age 18295" in the Derived Age badges instead of a sane
+value or "Age -". This is a pre-existing content-accuracy bug (present on
+master, reachable via any malformed start date regardless of this task),
+not an a11y-specific defect and not introduced by WS5 -- flagged as an
+OBSERVATION for the backlog, consistent with the scope rule (git diff
+master governs; a hit on markup/JS byte-identical to master is
+PRE-EXISTING). It is the likely cause of axe's 2 extra "incomplete"
+color-contrast nodes in that one state (same bg/fg colors as baseline;
+axe's heuristic reacting to the longer digit string, not a real contrast
+regression).
+
+## FAILURES
+None.
+
+## OBSERVATIONS (non-blocking, pre-existing / out of scope)
+- Dark-mode color-contrast on `.mt-5 > summary` (guardrails.html) --
+  byte-identical to attempts 2/3's recorded pre-existing finding; file
+  untouched by any WS5 attempt.
+- Page-wide axe "incomplete" color-contrast node set (nav sidebar links,
+  Portfolio Allocation "Primary" badge, guardrail-chart SVG text) --
+  present identically at baseline and in every later state; outside files
+  WS5 touches.
+- Point 5's literal "linked via aria-describedby" is still not implemented
+  for any /whatif error message (sitewide renderError/role=alert pattern,
+  unchanged by this diff) -- same observation attempts 2/3 made.
+- Successful (non-refused) person removal still loses focus to <body>
+  (attempt 2's observation, unchanged by this attempt's diff).
+- NEW this attempt: pre-existing client-side derived-age miscalculation
+  ("Age 18307") on a malformed/out-of-range start date -- see above;
+  content-accuracy bug, not an a11y regression, not introduced by WS5.
+
+## Summary
+Attempt 4 changed only handlers_rates.go's persons-error classifier (split
+into two anchored regexes distinguishing "unparseable" from "after start
+date") and its tests -- rate-assumptions.html, whatif-rate-assumptions.js,
+and handlers.go are byte-identical to attempt 3 (already PASSed). Live-
+traced in both themes: the new unparseable-birth-month message and the
+invalid-projection-start-date message are each announced exactly once via
+role=alert, sit as the settings form's first child, are truthful (correct
+per-shape wording, never conflated), render with real apostrophes/quotes
+(wire text is correctly entity-encoded; live DOM/AT-exposed text is not),
+pass contrast (5.72:1 light / 8.88:1 dark), and leave focus on the edited
+field. The distinct "after start date" message was re-verified unregressed
+by the regex split, and a same-field sequential-edit test confirmed no
+alert stacking/duplicate announcement across error-class transitions. Glide
+checkbox behavior and the linked-removal refusal are unchanged and re-
+verified in both themes. axe-core (card expanded, 5 states, both themes)
+found 0 new violations; the one dark-mode violation is the same
+pre-existing, out-of-scope node attempts 2/3 recorded. One pre-existing,
+out-of-scope content-accuracy bug (derived-age display on a malformed start
+date) is noted as an OBSERVATION, not a FAIL, per the git-diff-master scope
+rule. No FAILURES.

@@ -1,0 +1,66 @@
+VERDICT: PASS
+CHECKER: checker-a11y
+FAMILY: anthropic
+TASK: WS-final
+ATTEMPT: 1
+---
+Final full-site accessibility sweep for run WS (WS1-WS5, /whatif save-path
+fixes). Full evidence, methodology, and per-finding RUN-vs-BASE
+classification written to
+/home/darrell/work/agents2/.claude/worktrees/budget2-what-if-review-24ec2e/.swarm/final-a11y-sweep.md
+
+## Method
+RUN = `git -C /home/darrell/bin/ai/budget2 archive d9bf7ef` (everything WS
+ships). BASE = `git archive 643fa54` (pre-WS). Built with
+`nice -n 19 go build` (GOMAXPROCS=4) into a scratch dir, each against its own
+`cp -rL` of the real data/ directory, isolated ports 18080/18081 (never
+:8080), one server up at a time while Playwright drove it, killed after each
+phase; `ss -ltnp | grep budget2` at the end shows only the pre-existing
+:8080 (pid 1836774) — never contacted. axe-core 4.13.0
+(/home/darrell/.npm/_npx/e003b6b07d062486/node_modules/axe-core, matching
+the globally-installed @axe-core/cli 4.13.0 earlier WS checkers used)
+injected into the live Chromium page via Playwright, not hand-built HTML.
+Scope confirmed via a byte-level `filecmp` directory diff (not the
+rtk-rewritten `diff`/`git diff`): WS touches only internal/handlers/whatif,
+internal/services/retirement (non-rendering engine code),
+internal/templates/render.go, four web/static/js files, and the
+web/templates/components/whatif/* + pages/whatif.html templates. Every
+other page is byte-identical to BASE.
+
+## Coverage
+All nav-reachable top-level pages (dashboard, explorer, insights,
+major-expenses, whatif, accounts, transfers, filemanager, duplicates) in
+light+dark. /whatif deep dive: baseline (three collapse groups expanded by
+default); D6 glide-path checkbox reveal; D7 birth-month error (live UI,
+`19711-08`) and linked-person-removal refusal; Quick Adjust FAB (all 4
+tabs, canonical+mirror slider drag, aria-valuetext read before/after);
+Add-Income server-side rejection (WS4.2 role="alert" de-dup fix); a direct
+POST matching the run's own oracle probe shape; Guardrails/Roth/Social
+Security/Healthcare/Portfolio/Spending Phases/Scenario Chain (all visible
+by default, markup cross-checked against the diff).
+
+## Findings
+F1: `.mt-5 > summary` color-contrast (guardrails.html, dark) — byte-
+identical element on RUN and BASE; PRE-EXISTING (same node
+`.swarm/verdicts/WS5.5.checker-a11y.verdict` already recorded).
+F2: page-wide color-contrast "incomplete" set (43 nodes: nav, chart axes,
+etc.) — identical node lists RUN vs BASE at every state; PRE-EXISTING.
+F3: ~90-node color-contrast violation set on the post-swap results panel,
+light theme only (lifestyle-outcomes/spending-optimizer templates, none
+touched by WS) — reproduced identically on BASE; PRE-EXISTING, OBSERVATION
+for the backlog.
+F4: one non-deterministic heading-order "incomplete" flicker on the glide-
+revealed state, alternating between trees across repeated captures of the
+SAME tree — harness/async-chart timing artifact, not attributable to
+either tree's code.
+
+Manual walks of every WS-introduced surface (D6, D7 both branches, WS4.2's
+role="alert" nesting fix, WS1's generalized aria-valuetext sync, WS4 AC3's
+native HTML5-validation gate) found 0 new violations and correct behavior
+in both themes; see the report for full command-level evidence per point.
+
+## FAILURES
+None.
+
+## Bottom line
+No violations introduced by run WS.

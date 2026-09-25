@@ -1,0 +1,18 @@
+== build /tmp/claude-1000/-home-darrell-work-agents2--claude-worktrees-budget2-what-if-review-24ec2e/28920e62-8027-4a38-9437-8967166cd576/scratchpad/ws5-base-probe
+FAIL G1 D6: ticking the glide box sends no request (posts ["/whatif/glide-path"])
+FAIL G1 D6: the leftover glide config is untouched ({"enabled":true,"start_stock_pct":0,"end_stock_pct":0,"transition_years":1})
+FAIL G1 a11y: the revealed fields are visible and required ([false,false,false])
+FAIL G1 a11y: a visible instruction says the fields are required
+FAIL G2 D6: enable with only start missing → 400, nothing saved (status 200, glide {"enabled":true,"start_stock_pct":0,"end_stock_pct":40,"transition_years":10})
+FAIL G2 D6: enable with only end missing → 400, nothing saved (status 200, glide {"enabled":true,"start_stock_pct":60,"end_stock_pct":0,"transition_years":10})
+FAIL G2 D6: enable with only years missing → 400, nothing saved (status 200, glide {"enabled":true,"start_stock_pct":60,"end_stock_pct":40,"transition_years":1})
+PASS G3 D6: Apply with all three saves ({"enabled":true,"start_stock_pct":60,"end_stock_pct":40,"transition_years":10})
+PASS G4 D6: unticking saves enabled=false (posts ["/whatif/glide-path"], glide {"enabled":false,"start_stock_pct":60,"end_stock_pct":40,"transition_years":10})
+FAIL P1 D7: removing an unlinked person saves (status null, persons Alex Primary,Sam Spouse,Pat Unlinked)
+FAIL P1 D7: the removed person is gone after reload
+FAIL P2 D7: a linked removal is refused with 400, never 500 (status null)
+FAIL P2 D7: the refusal names the entry, the row stays, nothing saved (alert null, row false)
+FAIL P3 D7: a name-only new row sends no request (posts ["/whatif/settings"])
+FAIL P3 D7: a birth-month-less row posted directly → 400 naming the birth month (status 500, "Error Failed to save settings: persons: invalid birth_month for &#34;New Kid&#34;: month is required")
+FAIL P3 D7: a birth month after the start date → 400 with an accurate message (status 500, "Error Failed to save settings: persons: birth_month &#34;2030-01&#34; is after start_date &#34;2026-09&#34;")
+ORACLE FAIL

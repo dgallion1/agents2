@@ -1,0 +1,181 @@
+VERDICT: PASS
+CHECKER: checker-a11y
+FAMILY: anthropic
+TASK: WS5
+ATTEMPT: 3
+---
+## Scope confirmed (git diff master + diff-of-diffs)
+Diffed WS5.2.diff against WS5.3.diff directly (`diff -u`). Attempt 3 changes
+ONLY internal/handlers/whatif/handlers_rates.go (personsSaveErrorMessage
+signature grows a `persons []models.Person` param; a new
+rePersonsBirthMonthAfterStart regex distinguishes "invalid birth_month for
+%q" [missing/unparseable] from "birth_month %q is after start_date %q"
+[present but too late] -- previously both collapsed into one bare
+strings.Contains(msg,"birth_month") check per checker-second's attempt-2
+FAIL) and ws5_glide_persons_test.go (new/expanded Go tests). rate-
+assumptions.html, whatif-rate-assumptions.{js,test.cjs}, handlers.go are
+BYTE-IDENTICAL to attempt 2 (already PASSed). Confirmed the current worktree
+is still at master (git status: only unrelated SPEC.md/.codex/AGENTS.md) --
+WS5's changes live only in the diff files and snapshot, so nothing in
+rate-assumptions.html/whatif-rate-assumptions.js was touched by any WS5
+attempt beyond what attempt 2 already passed. This attempt's a11y-relevant
+surface is exactly the new/changed error MESSAGE TEXT rendered through the
+unchanged, already-verified renderError/base.js pipeline.
+
+## Method
+Built cmd/server from the snapshot (nice -n 19, GOMAXPROCS=4) to a scratch
+binary. Data = `cp -rL` of /home/darrell/bin/ai/budget2/data (same fixture
+attempt 2 used: Darrell Gallion 1958-11 primary, Christine 1971-08 spouse
+linked to a healthcare entry, start_date 2026-09, glide_path
+{enabled:false}). BUDGET_DATA_DIR/BUDGET2_BACKUP_DIR/BUDGET2_IMPORT_DIR
+pointed at scratch dirs, BUDGET_LISTEN_ADDR=127.0.0.1:41763,
+BUDGET_DEBUG=false. Real render via the app's own built
+web/static/css/tailwind.css. Audited with a Playwright driver (chromium
+1.63.0 via NODE_PATH=.../e41f203b7505f1fb, colorScheme + localStorage
+theme=dark forced per the site's real toggle mechanism) injecting the same
+axe-core 4.13.0 axe.min.js @axe-core/cli ships, at 4 states x 2 themes
+(baseline card-expanded, glide revealed, refusal-alert visible, birth-month-
+error visible). Server killed after the run (confirmed via `ps -p` empty and
+port unresponsive); no :8080 or budget2 MCP tool ever contacted (grepped my
+own driver script); no git-state changes.
+
+## AUTOMATED (axe-core), both themes, Rate Assumptions card expanded (default)
+LIGHT: 0 violations at all 4 states.
+DARK: 1 violation at all 4 states -- color-contrast/serious on
+`.mt-5 > summary` ("Adjust spending rules manually"). Traced to
+web/templates/components/whatif/guardrails.html, a file no WS5 attempt
+(1/2/3) touches -- PRE-EXISTING, same single node attempt 2 already recorded.
+Not a regression.
+"incomplete" (axe could not auto-verify) color-contrast items -- an
+identical ~40-node list (nav sidebar links, portfolio-allocation "Primary"
+badge, guardrail-chart SVG text) appeared in EVERY state including the
+card-expanded BASELINE before any WS5 interaction -- confirms page-wide/
+pre-existing, unrelated to rate-assumptions.html or handlers_rates.go.
+OBSERVATION, not a FAIL.
+No new violation or incomplete node appeared in the two new interaction
+states (refusal-alert, birth-month-error) beyond what baseline already had.
+
+## MANUAL -- walked per dispatch, both themes
+
+**Glide checkbox keyboard tick/untick, revealed fields required + visible
+instruction, hidden fields out of tab order and AT tree.** (Unchanged
+markup since attempt 2 -- re-verified live, both themes, identical result.)
+Before tick: #glide-path-fields has class `hidden`; all 3 inputs
+disabled=true, required=false, offsetParent===null (excluded from the
+accessibility tree, not merely visually hidden). Tab from the checkbox
+skips straight to the next unrelated control (#inflation-rate-slider).
+Space on the focused checkbox: checked=true, hidden removed, all 3 inputs
+disabled=false/required=true, the persistent instruction "All three fields
+are required to apply a glide path." renders inside the revealed region.
+ariaSnapshot of #glide-path-fields after tick: paragraph + 3 correctly-
+labelled spinbuttons (Start %/End %/Years) + "Apply Glide Path" button.
+Tab chain from checkbox: start-stock-pct -> end-stock-pct -> transition-
+years (visual order). Space again: hidden/disabled/required all restore.
+PASS, points 6/9/16 in both themes.
+
+**Person-row errors -- linked-removal refusal.** Enter on Christine's
+(spouse, healthcare-linked) Remove button: exactly 1 `[role=alert]` node,
+text "Remove Christine's healthcare entry first", is the settings form's
+FIRST CHILD element, rows restore to 2 (nothing lost), focus returns to
+Christine's own restored Remove button (not lost to <body>). Identical in
+both themes. PASS, points 5/10.
+
+**Person-row errors -- NEW persons 400 "birth month after start" message
+(THIS attempt's change).** Edited Darrell Gallion's existing birth-month
+input (type=month) to 2099-01 (after start_date 2026-09) via a real
+htmx-triggered `change` event (the form's own `hx-trigger="change
+delay:500ms..."`, not a hand-built request) -- confirmed a genuine
+POST /whatif/settings 400 round-trip in the network log. Result, both
+themes, identical:
+  - alertCount = 1 (announced once, no duplicate/stacked alert; replacing
+    the prior refusal alert that had been showing on the same host).
+  - Placement: first child of the settings `<form>` -- next to the form.
+  - Text (read via .textContent, i.e. what AT actually exposes): "Darrell
+    Gallion's birth month (2099-01) is after the plan's start date
+    (2026-09)" -- names the person, states the true reason, never says
+    "needs a birth month" (the false claim checker-second's attempt-2 FAIL
+    caught). Confirmed correctly classified for the DISTINCT "missing"
+    shape too: a separately-posted request with an EMPTY birth month still
+    returns 400 "Each person needs a birth month" -- the two classes remain
+    properly disjoint post-fix.
+  - Entity handling ("no raw codes or escaped entities like &#39;"):
+    the server's raw response text over the wire IS entity-encoded
+    (`Darrell Gallion&#39;s birth month ... plan&#39;s start date`,
+    confirmed via a direct fetch() of the same endpoint) -- but this is
+    correct HTML source, and it is only ever inserted via `innerHTML`-style
+    parsing (base.js's buildErrorNode: `wrap.innerHTML = text`, unchanged
+    infrastructure from WS4, confirmed unmodified by this diff). The LIVE
+    DOM textContent after that parse contains real apostrophe characters,
+    not literal "&#39;" text -- confirmed both by the JS read above and
+    visually via screenshot (screenshot_light/dark_birthmonth_error.png):
+    "Darrell Gallion's birth month (2099-01) is after the plan's start
+    date (2026-09)" renders as ordinary legible prose in both themes, no
+    entity garbage visible. A screen reader gets the same real apostrophe
+    a sighted user sees. PASS.
+  - HTML-injection/escaping sanity check (a person name containing
+    `Rock & <b>Roll</b>`): server output is `Rock &amp; &lt;b&gt;Roll&lt;/
+    b&gt;&#39;s birth month...` -- correctly escaped, renders as inert text
+    (not a bold element), confirming the same innerHTML-safe path holds for
+    adversarial names, not just this fixture's plain ones.
+  - Focus: stays on the birth-month input the user was editing
+    (document.activeElement = #person-birth-month-<id>) -- not lost, and
+    point 5's "focus moves to... OR an aria-live region announces" is
+    satisfied via role="alert" regardless (same mechanism as the refusal
+    case and as WS4's sitewide pattern).
+
+**Contrast of the messages, both themes (point 7).** Both the refusal
+alert and the new birth-month alert reuse the identical renderError markup/
+classes (`text-negative` on `bg-negative-soft`, fully opaque backgrounds --
+no compositing needed, unlike the instruction text attempt 2 checked).
+Computed via standard WCAG relative-luminance contrast, cross-checked
+against axe's own per-state 0-violation results on this node as ground
+truth:
+  LIGHT: fg rgb(190,18,60) on bg rgb(255,241,242) -- 5.72:1. PASS.
+  DARK: fg rgb(253,164,175) on bg rgb(41,23,42) -- 8.88:1. PASS.
+Both well over the 4.5:1 floor (small text, 14.875px normal weight).
+
+**axe-core with the Rate Assumptions card expanded.** Confirmed the card
+is expanded by default (no localStorage collapse key set) at every scan --
+`#glide-path-fields` present in the DOM from page load, matching attempt
+2's established default-expanded behavior (whatif-tabs.js, unchanged).
+
+## FAILURES
+None.
+
+## OBSERVATIONS (non-blocking, pre-existing / out of scope)
+- Dark-mode color-contrast on `.mt-5 > summary` (guardrails.html,
+  "Adjust spending rules manually") -- byte-identical to attempt 2's
+  recorded pre-existing finding; file untouched by any WS5 attempt.
+- A page-wide set of axe "incomplete" (not auto-verifiable) color-contrast
+  nodes -- nav sidebar links, the Portfolio Allocation "Primary" role
+  badge, guardrail-chart SVG axis/legend text -- present identically at
+  baseline (before any WS5 interaction) and in every later state. Outside
+  files WS5 touches; flagged for the lead's backlog, not a WS5 regression.
+- Point 5's literal "linked via aria-describedby" is still not implemented
+  for the new birth-month-after-start message (same sitewide
+  renderError/role=alert pattern as every other /whatif error, unchanged
+  by this diff) -- pre-existing pattern, same observation attempt 2 made
+  for the refusal message.
+- Successful (non-refused) person removal still loses focus to <body>
+  (attempt 2's observation, unchanged by this attempt's diff -- this diff
+  never touches the removal-success path).
+
+## Summary
+Attempt 3 changed only the server-side persons-error classifier
+(handlers_rates.go) and its tests, fixing checker-second's attempt-2 catch
+(a bare `strings.Contains(msg,"birth_month")` falsely collapsed "birth
+month after start date" into "needs a birth month"). All markup/JS/CSS
+(rate-assumptions.html, whatif-rate-assumptions.js) is byte-identical to
+the already-PASSed attempt 2. Live-traced in both themes: the new "birth
+month after start date" message is announced once via role=alert, sits as
+the settings form's first child, is truthful (names the person, correctly
+says "after" not "needs"), renders with real apostrophes (no raw &#39;
+exposed to AT or sighted users -- confirmed via DOM read + screenshot),
+passes contrast (5.72:1 light / 8.88:1 dark), and leaves focus on the
+edited field with the alert still announcing via role="alert". The
+distinct "missing birth month" message remains correctly reachable and
+unconflated. Glide checkbox keyboard behavior and the linked-removal
+refusal were re-verified unchanged in both themes. axe-core (card
+expanded, all 4 states, both themes) found 0 new violations; the one dark-
+mode violation is the same pre-existing, out-of-scope node attempt 2
+recorded. No FAILURES.

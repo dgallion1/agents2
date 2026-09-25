@@ -1,0 +1,48 @@
+VERDICT: OVERRULE
+CHECKER: judge-impact
+FAMILY: impact
+TASK: WS5
+ATTEMPT: 4
+---
+Premise verified factually correct: The regex `[^"]*` in `rePersonsInvalidBirthMonth` 
+does fail on person names containing literal double quotes (tested: 
+"Robert \"Bob\" Smith" → NO MATCH; fallback to "Invalid person data: ..." occurs).
+
+User impact assessment:
+
+1. TRUTHFULNESS: The fallback message "Invalid person data: persons: invalid 
+   birth_month for "Robert \"Bob\" Smith": month is required" is factually true — 
+   the birth month IS missing. Not a false claim.
+
+2. IDENTIFIABILITY: Person name remains identifiable to the user (readable as 
+   Robert "Bob" Smith despite escaped quotes in the output).
+
+3. CLARITY: User understands the problem (birth month required for that person). 
+   No ambiguity about who or what went wrong.
+
+4. DATA IMPACT: Validation correctly rejects the request (400, no save). No data 
+   loss or inconsistency.
+
+5. USER BLOCKING: User is NOT blocked. They see the error, understand the 
+   requirement, and can retry with a birth month.
+
+6. HOUSEHOLD LIKELIHOOD: Actual household names are "Darrell Gallion" and 
+   "Christine"—neither contains quotes. Requires edge case: new person + quoted 
+   nickname + empty month + direct POST bypassing browser validation. Very low.
+
+7. ORIGINAL HARD STOP: Ruling 2026-09-24g addressed FALSE messages ("month is 
+   missing" when one was entered). This defect produces an unpolished message, 
+   not a false one.
+
+Contract vs. impact: The attempt violates the polished-wording contract (regex 
+implementation bug), but the fallback message remains actionable and truthful. 
+No real-world user of this household's plan is harmed or misled by the message.
+
+RULING: The contested verdict identifies a genuine contract violation (category 
+fallback on quoted names), but user-impact assessment finds no harm, deception, 
+or blocking. The underlying message is truthful and allows the user to understand 
+and fix the issue.
+
+Final message: Regex limitation on escaped quotes is a code defect, but the 
+fallback message is truthful and user-actionable—insufficient user harm to 
+uphold the FAIL on impact grounds.

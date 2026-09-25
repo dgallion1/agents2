@@ -1,0 +1,82 @@
+VERDICT: PASS
+CHECKER: checker-second
+FAMILY: adversarial
+TASK: WS1
+ATTEMPT: 6
+---
+Scope check (ruling 2026-09-24a: "nothing else" — production code unchanged):
+- Split WS1.5.diff and WS1.6.diff into per-file patches (csplit on `^diff --git`)
+  and diffed matching filenames pairwise. Result: of 23/24 files, only two
+  differ from attempt 5 — `internal/handlers/whatif/ws1_expected_return_render_test.go`
+  (new) and `web/static/js/whatif-rate-assumptions.test.cjs` (extended).
+  Every production file (handlers.go, handlers_rates.go, render.go, all
+  three whatif-*.js, all 9 templates) is byte-identical to attempt 5.
+  CONFIRMED: production code untouched.
+
+1. Node test runs the real Quick Adjust branch, not a re-implementation:
+   `loadCombined()` reads whatif-quick-adjust.js and whatif-rate-assumptions.js
+   from disk (`fs.readFileSync`) and executes them via `vm.runInContext` —
+   the actual production source, not a mock. The new `closest(sel)` mock
+   resolves truthy only for elements built with `{inPanel:true}` matching
+   the exact selector (`#quick-adjust-panel`) the production code checks at
+   whatif-rate-assumptions.js:240/278. Ran `node --test
+   whatif-rate-assumptions.test.cjs` against the real files: 10/10 pass.
+
+2. Mutation-killed C1k and named variants, independently (not just the
+   test's own baked-in self-checks):
+   - "recompute only when inPanel" (injected via python, not the test's
+     own patch fn): C1k FAILS. Confirmed.
+   - "recompute via a different helper" (inline weighted-average, not
+     calculateExpectedReturnFromAllocation): C1/P5 and C1k both FAIL.
+   - "reading a different data attribute on the QA display"
+     (`inPanel ? dataset.staleExpectedReturn : dataset.expectedReturn`):
+     C1k FAILS.
+   - Global attribute-name drift (`expectedReturn` -> `expectedReturn2`):
+     C1k FAILS (cascades from C1/P5 too, as expected).
+   All mutants restored; final file diff'd byte-identical to the snapshot
+   afterward.
+
+3. Go test (`TestWS1ExpectedReturnDataAttribute`) pins data-expected-return
+   on BOTH `whatif-rate-assumptions` and `whatif-quick-adjust-rates-content`
+   templates against `s.GetExpectedReturnFromAllocation()` computed live
+   (not a hardcoded string), on a fixture with RothPercent=0 (the live
+   plan's real zero-allocation field, WS1.4 finding O1). `go test -run
+   TestWS1ExpectedReturnDataAttribute -v`: PASS. Independently mutated:
+   - format-verb drift `%.1f`->`%.2f` on rate-assumptions.html only: FAIL.
+   - format-verb drift on quick-adjust.html only: FAIL.
+   - data-source drift (`GetExpectedReturnFromAllocation`->`InvestmentReturn`)
+     on rate-assumptions.html: FAIL.
+   - attribute removed entirely from quick-adjust.html: FAIL.
+   Every mutation caught on both templates independently.
+
+4. Full suites green: `go build ./...` exit 0; `go test
+   ./internal/handlers/whatif/...` and `./internal/templates/...` both ok;
+   `node --test whatif-quick-adjust.test.cjs whatif-rate-assumptions.test.cjs
+   whatif-portfolio-settings.test.cjs`: 26/26 pass.
+
+5. Oracle v7: `.swarm/tier3/WS1/oracle.6.log` tail confirms E8/E8b PASS and
+   final line `ORACLE PASS`.
+
+6. End-to-end on a copy of live data (never :8080, never the real dir,
+   never a repo-root binary): built the snapshot's server into scratch,
+   `cp -rL /home/darrell/bin/ai/budget2/data` into an isolated scratch dir,
+   served on a random 127.0.0.1 port (refused 8080), killed after use.
+   Confirmed via Playwright (real Chromium):
+   - Live plan has `roth_percent=0`, `investment_return=0` — the exact
+     zero-allocation scenario the fix targets, present in real data (not
+     hypothetical).
+   - Both in-card and Quick Adjust displays render "Using asset allocation
+     (~6.2% expected)" with `data-expected-return="6.2"`, identically.
+   - Calling the OLD buggy path directly, `calculateExpectedReturnFromAllocation()`,
+     on this real page/data returns 6.1160596 (~6.1%) — genuinely diverging
+     from the served 6.2 — proving WS1.4/O1 is a real defect on live data
+     and that the fix (never calling that function for this display) is
+     the correct defense, not a coincidental match.
+   - Dragging the Quick Adjust investment-return control to 5 and back to 0
+     leaves both displays' `data-expected-return` at "6.2" throughout, never
+     diverging between the in-card and Quick Adjust copies.
+   Server process confirmed killed after the probe; scratch dirs removed.
+
+No FAIL basis found within attempt 6's scope. The accepted "updates on save,
+not per keystroke" behaviour (ruling 2026-09-24a) was not treated as a
+finding, per instructions.

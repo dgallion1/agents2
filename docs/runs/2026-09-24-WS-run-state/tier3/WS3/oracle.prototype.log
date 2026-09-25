@@ -1,0 +1,19 @@
+== build /tmp/claude-1000/-home-darrell-work-agents2--claude-worktrees-budget2-what-if-review-24ec2e/28920e62-8027-4a38-9437-8967166cd576/scratchpad/proto-ws3
+PASS [a-to-b] GET /whatif 200 (got 200, errors [])
+PASS [a-to-b] Year-by-Year renders (results-full 200, 33 rows)
+PASS [a-to-b] guardrail cuts still act BEFORE the transition (cut years [10, 11, 12])
+PASS [a-to-b] no guardrail multiplier after the transition into the guardrail-less step (D3: multiplier 1.0) — offending years []
+== [a-to-b] all checks passed
+PASS [b-to-a] GET /whatif 200 (got 200)
+PASS [b-to-a] Year-by-Year renders (results-full 200, 39 rows)
+PASS [b-to-a] no guardrail multiplier before/at the transition — offending years []
+PASS [b-to-a] guardrails start acting after the transition into the guardrail step (D3) — cut years [10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38]
+== [b-to-a] all checks passed
+PASS [missing] D4: failed analysis still renders the inputs column + Scenario Chain card + results area (rate True, chain True, results True; status 200)
+PASS [missing] D4: the failure reason is shown on the page (found ['Analysis failed', 'failed to load chained scenario'])
+PASS [missing] D4: no projection figures are shown for a plan that failed to analyse (0 year rows)
+PASS [missing] the chain step's own Remove control works from the failed page (/whatif/chain/0 -> 200)
+PASS [missing] after removing the step the plan analyses normally (status 200, links 0, rows 39)
+== [missing] all checks passed
+== all 3 variants passed
+ORACLE PASS

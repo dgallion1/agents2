@@ -1,0 +1,104 @@
+VERDICT: FAIL
+CHECKER: checker-second
+FAMILY: adversarial
+TASK: WS1
+ATTEMPT: 5
+---
+METHOD
+Built ./cmd/server from the given snapshot (`go build ./cmd/server` -> success,
+no .git present). Stood up the real built server on a scratch data dir with
+the oracle's own "exact" fixture (`.swarm/tier3/WS1/make_fixture.py fx-exact`,
+read via `python3`, no :8080/repo-root binary/MCP contact), driven by real
+Chromium (Playwright, given NODE_PATH). Separately built master (643fa54) via
+`git archive` into a second scratch tree and ran the identical fixture/probe
+against it for a control comparison. Also extracted the real
+`roundHalfEvenDecimalString` into a standalone module and diffed it against a
+real Go `%.1f` reference binary over 113,012 values. Both scratch servers
+killed at the end (`kill`, confirmed via `ss -ltnp` — both ports free, no
+lingering processes). No git state changes; nothing written outside my own
+checker scratch dir.
+
+FINDING (in scope, FAIL basis): C1's fix broke the pre-existing LIVE preview
+of "(~X% expected)" whenever an account's allocation is edited while
+investment_return is 0 — a second, untested call path into the same display
+function that the fix did not account for.
+- `updateAccountBonds()` (whatif-rate-assumptions.js) fires on every
+  `oninput` of the six per-account stock/cash percent fields
+  (tax_deferred_stock_percent, tax_deferred_cash_percent, roth_*, taxable_*;
+  wired via `oninput="updateAccountBonds('td'|'roth'|'taxable')"` in
+  rate-assumptions.html) and, when `investment_return` is 0, calls
+  `updateInvestmentReturnDisplay(0)` — the SAME function C1 changed to read
+  only `display.dataset.expectedReturn` (the last SERVER-rendered figure,
+  static HTML, never updated by JS). This call site is untouched by the
+  attempt-5 diff's comments/reasoning (which discusses only the
+  investment-return slider's own drag) and has zero test coverage (`grep -n
+  updateAccountBonds web/static/js/whatif-rate-assumptions.test.cjs` = 0
+  matches); the oracle's E8 also never touches an allocation field (it only
+  sets `#qa-investment-return` to 3 then back to 0 with allocation
+  untouched, so `data-expected-return` never goes stale in that check).
+- Demonstrated live on the real server (fixture: investment_return=0,
+  tax_deferred_percent=83.037%, tax_deferred_stock/cash=70.5/2.25%,
+  roth_percent=0, taxable_stock/cash=99.5/0%; served text/attr both "6.2"):
+  typing "0" into the tax-deferred stock-percent field (real keyboard
+  events, Playwright) leaves the in-card display frozen at "Using asset
+  allocation (~6.2% expected)" — byte-identical to before the keystroke —
+  for as long as the field holds focus. Only after Tab (blur -> `change` ->
+  the form's existing 500ms-debounced `hx-post /whatif/settings` -> OOB
+  swap) does it update, to "(~4.5% expected)" — which I independently
+  computed by hand from `GetExpectedReturnFromAllocation`'s own published
+  formula/constants for the new allocation (0/97.75/2.25 stock/bond/cash at
+  weight 0.830371…) and confirmed matches exactly. So the save/render path
+  itself is correct; only the LIVE window before blur shows a stale figure.
+- Confirmed this is a NEW regression, not pre-existing: ran the identical
+  keystroke against a real master (643fa54) build on the same fixture.
+  Master's `updateInvestmentReturnDisplay(0)` still calls
+  `calculateExpectedReturnFromAllocation()` (unchanged there), which reads
+  the live DOM values on every call — master's display updated IMMEDIATELY
+  on the same keystroke, to "(~5.9% expected)" (itself imperfect, per
+  WS1.4's O1 `||60`/`||10` fallback finding on OTHER zero fields, but
+  genuinely live/responsive). Attempt 5 traded a wrong-but-live number for a
+  right-but-frozen one on this trigger, and the freeze is real: confirmed no
+  other code path writes `dataset.expectedReturn` (`grep -n
+  "dataset.expectedReturn\|data-expected-return" web/static/js/*.js` finds
+  only the one read site introduced by this attempt).
+- Root cause: C1's remedy (always trust the server's baked attribute, never
+  recompute) was scoped by the contract/worker to "dragging investment
+  return to 0," but `updateInvestmentReturnDisplay(0)` is shared by a SECOND,
+  independent trigger (editing allocation while investment_return is
+  already 0) that the fix silently disabled without replacing with anything
+  live. This is the split-classification/shared-function class CLAUDE.md
+  flags: one function, two triggers, the fix addressed one and broke the
+  other's existing (if imperfect) correctness property — "Live updates on
+  user input must produce exactly the string the server would render"
+  (R-FMT') is violated for the allocation-edit trigger: the string shown
+  during the edit is NOT what the server would render for the just-typed,
+  about-to-be-saved allocation (it's the server's OLD figure).
+- Remedy checked for plausibility (not misdiagnosed): a fix that recomputes
+  from the live account fields when THIS EXACT call originates from an
+  allocation edit (or fixes the `||60`/`||10` fallback bug in
+  `calculateExpectedReturnFromAllocation` and keeps using it for this
+  trigger, reserving the server-attribute read only for the
+  investment-return control's own drag) would restore live behavior without
+  reintroducing O1 — well within WS1's own scope.
+
+SECONDARY VERIFICATION (not disputed, recorded for completeness)
+- C2 (sign): extracted `roundHalfEvenDecimalString` and diffed against a
+  real Go `%.1f` binary over 113,012 values (x.x5 ties across ±2000 at
+  0.05-steps, a fine-grained ±2 near-zero band at 0.0005-steps, 20,000
+  uniform randoms in [-1000,1000], 5,000 in [-0.001,0.001], plus
+  -0.03/-0.001/-0.049/-0.05/-0.0499999/0.0/-0.0/7.25/4.35/3.85): 0 mismatches
+  (previous attempt-4 FAIL was 1,014/32,465, all "-0.0" vs "0.0"). C2 is
+  genuinely fixed.
+- Oracle v6 (`.swarm/tier3/WS1/oracle.5.log`): ends `ORACLE PASS`, including
+  E8 as designed.
+
+SCOPE
+- FAIL basis: `web/static/js/whatif-rate-assumptions.js`'s
+  `updateInvestmentReturnDisplay` (modified by this attempt) as reached via
+  `updateAccountBonds` (unmodified, but its existing live-recompute
+  correctness was removed as a side effect of this attempt's own diff) —
+  squarely a consequence of code this attempt touched, fixable inside WS1's
+  scope, not a pre-existing/backlog item.
+- Per CLAUDE.md's default-to-FAIL-on-ambiguity rule and the task's own
+  attack directive ("can the data-expected-return attribute go stale
+  (allocation edited -> ...)"), this is a FAIL, not an observation.

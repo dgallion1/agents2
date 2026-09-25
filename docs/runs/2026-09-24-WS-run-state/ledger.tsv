@@ -1,0 +1,6 @@
+# task_id	tier	checks	status	attempt	worker	reason
+WS1	3	tests,second,a11y	accepted	6	worker-coder	gate-ok-tier3-attempt-6: oracle v7 PASS + tests PASS (throttled rerun) + second PASS + a11y PASS; committed 92178c1 on fix/ws1-value-fidelity; PR #121 MERGED ba952f4 (2026-09-24)
+WS2	3	tests,second	accepted	1	worker-coder	gate-ok-tier3-attempt-1: oracle 5/5 + tests PASS + second PASS; committed 58ad664 on fix/ws2-start-date; F1 (clamp makes round trips lossy) to user
+WS3	3	tests,second	accepted	4	worker-coder	gate-ok-tier3-attempt-4: oracle v3 PASS + tests PASS + second PASS; committed 8b02147 on fix/ws3-chain-guardrails; D3 prime (viewed scenario governs chain)
+WS4	3	tests,second,a11y	accepted	3	worker-coder	gate-ok-tier3-attempt-3: oracle PASS + tests PASS + second PASS + a11y PASS; committed c0eda67 on fix/ws4-error-display; backlog F1-F4 (role-attr order test gap, healthcare slot, make check skips node tests, reportValidityOfForms sitewide)
+WS5	3	tests,second,a11y	accepted	7	worker-coder	gate-ok-tier3-attempt-7: oracle v3 PASS 21 + tests PASS + second PASS + a11y PASS; typed ValidatePersons errors + ID lookup (ruling 2026-09-24i/m); committed d9bf7ef on fix/ws5-glide-persons

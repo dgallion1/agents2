@@ -1,0 +1,76 @@
+VERDICT: PASS
+CHECKER: checker-tests
+FAMILY: anthropic
+TASK: WS2
+ATTEMPT: 1
+---
+Snapshot: scratchpad/snap/WS2.1-tests (worker tree, no .git). Base: `git -C /home/darrell/bin/ai/budget2 archive 643fa54` extracted to scratchpad/checkers/WS2.1-tests/base.
+Mutations and probes were run in a cp -a copy (checkers/WS2.1-tests/mut). settings.go was restored after every run (sha256 2d32c0adf9001815… matches the snapshot).
+
+CRITERION 1: rendered calendar months unchanged except items D2 clamps. PASS
+  cmd: .swarm/tier3/WS2/accept.sh <snapshot>  -> exit 0, 85 PASS lines, 0 FAIL, final line "ORACLE PASS" (all 5 scenarios).
+  The oracle drives the real form in Chromium and asserts on RENDERED strings, e.g.
+    PASS [A-later] start date moved (2026-09 -> 2027-01, delta 4)
+    PASS [A-later] income_start ws2-i1: same calendar month (2027-06 -> 2027-06)
+    PASS [A-later] expense_end ws2-e1: same calendar month (2029-08 -> 2029-08)
+    PASS [A-later] onetime 'Deck': same calendar month (Nov 2026 -> Nov 2026 (past))
+    PASS [A-later] bigticket 'Home sale': same calendar month (Jun 2030 -> Jun 2030)
+    PASS [B-earlier] start date moved (2026-09 -> 2026-05, delta -4) ... every income/expense/one-time/big-ticket row "same calendar month"
+  go test (handler level): TestHandleWhatIfSettings_ManualStartDateShiftsSchedules PASS. It posts start_date 2026-04 -> 2026-05 through handleWhatIfSettings and asserts the saved offsets 12->11 for income start/end, one-time and big-ticket.
+
+CRITERION 2: offsets move by exactly -delta through the SAME shiftScheduleOffsets, in both directions, and the tick behaves the same. PASS
+  grep: settings.go:1458-1459 `if elapsed, ok := monthsBetween(settings.StartDate, startDate); ok { shiftScheduleOffsets(settings, elapsed) }`. The rollover's only other call site is settings_current_month.go:103, so there is one rule.
+  oracle: "saved {income,expense,removed_expense,removed_income} offsets follow the rollover rule: expected X got X" and "saved onetime/bigticket months shifted by -delta" for A-later (+4) and B-earlier (-4). E-tick-current (fixed-past plan, tick Use current month) -> all checks passed.
+  go test -count=1 -v: TestUpdateSettingsWithPersonsShiftsSchedulesForward/Backward/WhenTogglingUseCurrentMonth PASS. checkOffsets also asserts the Removed* lists and the clamping (the toggle case expects max(0,12-elapsed) and a negative one-time month).
+  extra mutations, each KILLED:
+    (e) a local re-implementation without clamping -> FAIL TestUpdateSettingsWithPersonsShiftsSchedulesWhenTogglingUseCurrentMonth
+    (f) shifting the active lists only, not Removed* -> FAIL Forward, Backward, Toggling
+    (d) skipping the shift when UseCurrentMonth is set -> FAIL Toggling
+    (g) assigning StartDate before measuring elapsed -> FAIL Forward, Backward, Toggling and the handler test
+
+CRITERION 3: unchanged date means zero shift, and a use-current-month plan is untouched. PASS
+  go test: TestUpdateSettingsWithPersonsUnchangedStartDateIsNoOp PASS (portfolio_value applied, offsets 12/24 kept).
+  oracle: C-unrelated (fixed plan, state-tax edit) and D-currentplan (use-current-month plan) -> "start date unchanged" plus all 6 "saved … offsets unchanged" PASS.
+  throwaway probes (mut/internal/services/retirement/zz_probe_ws2_test.go):
+    P1 use-current-month plan with a stale start date on disk (-3 months), form posts the resolved month -> got == want (exactly one shift). Master gives the same result.
+    P2 use-current-month plan, stale page posts last month -> branch: identity. Master: every item drifts -1 (inc 0..23, soon=2, ot=4), so the branch also fixes this.
+
+CRITERION 4: tests fail on unfixed code and kill mutations (a), (b) and (c). PASS
+  unfixed: copying base 643fa54 settings.go into mut and running `go test -count=1` gives FAIL on Forward, Backward, Toggling and TestHandleWhatIfSettings_ManualStartDateShiftsSchedules.
+  (a) shift call removed (python mutate.py a_remove_shift) -> e.g. settings_schedule_shift_test.go:357: "income start=12 … want 11/23"; current_month_test.go:104: "income StartMonth = 12, want 11".
+  (b) shiftScheduleOffsets(settings, -elapsed) -> settings_schedule_shift_test.go:357: "income start=13 … want 11/23"; :378 "income start=11 … want 13/25"; current_month_test.go:104 "= 13, want 11".
+  (c) elapsed forced to 1 when it is 0 -> FAIL TestUpdateSettingsWithPersonsUnchangedStartDateIsNoOp, settings_schedule_shift_test.go:403: "income start=11 … want 12/24".
+
+CRITERION 5: package tests and make check pass. PASS
+  go test -count=1 ./internal/services/retirement/... ./internal/handlers/whatif/... -> all 8 packages ok.
+  GOFLAGS=-count=1 make check (in the snapshot) -> exit 0: vet, staticcheck, govulncheck ("Your code is affected by 0 vulnerabilities"), css-verify ("tailwind.css is up to date"), test. 0 "(cached)" lines; retirement and handlers/whatif ok. gofmt -l on the 3 files lists nothing.
+
+REGRESSION PROBES (the lead asked for these)
+  - No-persons handler path (UpdateSettings): POST inflation_rate only -> 200, start 2026-04, offsets 12..24 / 12 unchanged. Branch and master behave the same.
+  - Unparseable start date: manager returns `start_date: invalid month "2026-13"` and the disk is unchanged. The handler POST with start_date=garbage returns 500 and the disk is unchanged. Branch and master behave the same (see F4).
+  - Roth/SS/ages untouched (P8): after a manual move 2026-09 -> 2027-05, Roth 2..6 with overrides map[3:5000], SocialSecurity, HealthcareStartYears=3 and Persons.BirthMonth are all identical.
+  - Removed lists: covered by checkOffsets (RemovedIncome, RemovedExpense, RemovedBigTicket) and by the oracle (removed_income, removed_expense).
+
+FINDINGS (none fails a written criterion; the lead adjudicates)
+  F1 [SPEC-LEVEL, high user impact; follows from D2's "including its clamping"]
+     A manual forward-then-back start-date change is now irreversible. On master a round trip gives back the same plan.
+     Repro P4 (fixed plan, UpdateSettingsWithPersons 2026-09 -> 2027-09 -> 2026-09):
+       want inc run0=0..24 soon=3 late=30, exp ends=0..6, ot=5
+       got  inc run0=12..24 soon=12 late=30, exp ends=12..12, ot=5
+     Result: 12 months of running income are lost, a future income is delayed 9 months, and a finished expense comes back at the far date.
+     On master (base settings.go) P4 is an identity.
+     The date input is hx-trigger="change delay:500ms", so every committed picker value is saved. Trying out a later start and coming back is enough to trigger this.
+     The rollover only ever moves forward, so its clamping never met this case. Each single step still meets criterion 1, so this is the brief's rule and not a worker deviation.
+  F2 [low] If the browser's month is ahead of the server's (the tick handler uses the browser's local `new Date()`), the tick or a direct POST shifts forward with clamping, then resolveCurrentMonth shifts back.
+     Items at start 0 become 1 (P3: run0 0..24 -> 1..24, exp ends 0..6 -> 1..6). Master drifts EVERY item +1 on the same input, so the branch is still better.
+     This cannot happen through the readonly server-rendered input of a use-current-month plan.
+  F3 [pre-existing on master; backlog] A failed save leaks into the manager cache. When decodeSettings reports changed=true, loadInternal's saveInternal publishes the raw object as sm.cache (P9: "decode changed=true … loadInternal==cache: true"), and UpdateSettingsWithPersons then mutates it.
+     P7: after a rejected save (birth month after start "1950-01"), Load() returns start=1950-01, while the disk still holds 2026-09.
+     On master the leaked object has unshifted offsets; on the branch they are shifted to match. This breaks Load's documented "published object is immutable" contract.
+  F4 [pre-existing; backlog] An unparseable start_date on the Rate Assumptions form comes back as HTTP 500, not 4xx. Branch and master are the same.
+  Promotion candidates (V3 pattern): P1 and P2 (a use-current-month plan through UpdateSettingsWithPersons: stale disk and stale page) are not covered by any permanent test.
+
+SCOPE
+  diff, manifest and snapshot-vs-base all list the same 3 files: settings.go (+16 -0), settings_schedule_shift_test.go (+116 -0) and current_month_test.go (+66 -0). Every change is additive.
+  settings.go matches critical.globs, which Tier 3 permits (SPEC §3 WS2 row).
+  Beyond those 3 files, the snapshot has only gitignored or empty dirs (tmp/, internal/config/data/, testdata/uploads/).

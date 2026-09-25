@@ -1,0 +1,104 @@
+VERDICT: PASS
+CHECKER: checker-a11y
+FAMILY: anthropic
+TASK: WS1
+ATTEMPT: 6
+---
+SCOPE CONFIRMATION (mechanical, before any manual check)
+Parsed WS1.5.diff and WS1.6.diff into per-file hunks and diffed file-by-file
+(script, not eyeballing). Result: every production file (handlers.go,
+handlers_rates.go, render.go, whatif-portfolio-settings.js,
+whatif-quick-adjust.js, whatif-rate-assumptions.js, and all 8 whatif
+component .html templates) is byte-IDENTICAL between attempt 5 and attempt
+6. The only differences are two test files: a new Go test
+(ws1_expected_return_render_test.go, pins data-expected-return on both
+displays via RenderToString against the same production template + the
+same GetExpectedReturnFromAllocation formula I exercised live) and an
+edited whatif-rate-assumptions.test.cjs (Node vm-harness unit test, never
+referenced by any template — grepped web/templates/ for "test.cjs": no
+hits, confirmed it is never served to a real page). This matches the
+lead's claim exactly. Since the rendered surface is unchanged from
+attempt 5 (which I already PASSed with full evidence, verdict on file),
+attempt 6 cannot introduce a new a11y defect on the page; the checks
+below are a fresh, real re-render to confirm nothing else drifted.
+
+METHOD
+Built the real server from the attempt-6 snapshot (go build ./cmd/server,
+standalone snapshot dir, no .git) — clean build, no errors. Two data sets
+via make_fixture.py: "main" (InvestmentReturn=6.25, non-zero allocation)
+on 127.0.0.1:39760, "exact" (InvestmentReturn=0 with roth_percent/
+roth_stock_percent/roth_cash_percent/taxable_cash_percent all zeroed —
+the zero-allocation shape that broke the old client recompute) on
+127.0.0.1:39761. BUDGET_DATA_DIR/BUDGET2_BACKUP_DIR/BUDGET2_IMPORT_DIR
+under scratch, BUDGET_DEBUG=false. Reused my own attempt-5 Playwright/
+axe-core scripts (axe-core 4.13.0, NODE_PATH pointed at the given
+node_modules) against the REAL rendered /whatif page loading the
+project's built styles, 1440x1000, light and forced `.dark`. Never
+touched :8080, never ran a repo-root budget2 binary, no budget2 MCP
+tools, no git state changes (read-only git show for attribution). Both
+servers killed at the end; confirmed via ss/lsof/ps (ports 39760/39761
+free, PIDs gone).
+
+AUTOMATED (axe-core, wcag2a/wcag2aa/wcag21aa/wcag22aa; all 4 QA tabs x
+light/dark, all <details> + QA drawer open, both fixtures = 16 runs)
+- Light, both fixtures: 0 violations, all 4 tabs.
+- Dark, both fixtures: 1 violation on every tab — color-contrast,
+  `.mt-5 > summary` ("Adjust spending rules manually", guardrails.html:8).
+  PRE-EXISTING: `git -C /home/darrell/bin/ai/budget2 show
+  643fa54:web/templates/components/whatif/guardrails.html` line 8 is
+  byte-identical to the snapshot's line 8. Same finding attempts 1-5
+  attributed. OBSERVATION only (ACCESSIBILITY.md #7/#12).
+- 0 console errors across every probe (both fixtures).
+
+MANUAL — against ACCESSIBILITY.md #4 (labels), #9 (keyboard/focus/live
+aria-valuetext parity), #12 (dark parity)
+
+1. Investment-return "Using asset allocation (~X% expected)" text vs
+   aria-valuetext vs data-expected-return, in-card AND Quick Adjust
+   mirror, BOTH themes: load, Home (drag to 0), End (drag to max), 40x
+   ArrowLeft, driving from the QA mirror (End then Home — the explicit
+   "mirror dragged to 0" case), and after a real htmx swap. 28 checks x
+   2 fixtures (main + zero-allocation "exact") = 56 checks, 0
+   mismatches, 0 console errors. Zero-allocation fixture: served
+   text/aria/data-expected-return agreed at load and after every drive.
+2. Broad sample of every OTHER converted slider, all 4 QA tabs, in-card
+   + QA mirror: 164 slider samples, aria-valuetext == co-located display
+   text in every case, 0 mismatches. The 6 with no aria-valuetext
+   (projection_years, tax_deferred_delay_years,
+   employer_coverage_years, x2 locations x pure-year type) are
+   pre-existing/out-of-WS1-scope integer-year sliders — same set
+   attempts 1-5 excluded.
+3. Duplicate ids: 0, full page (all 4 QA tabs' markup + all <details>
+   open simultaneously).
+4. Hidden canonical inputs never keyboard-reachable: `document.
+   activeElement` never landed on any hidden `input[data-quick-adjust-
+   key]` under direct .focus() probing.
+5. Keyboard reachability + visible focus indicator on both
+   investment-return controls: Tab/.focus() lands correctly on each;
+   both show a 2px indigo box-shadow focus ring (rgb(79,70,229) 0 0 0
+   2px), the sitewide fallback ring, unaffected by this diff.
+6. Read both changed test files in full: ws1_expected_return_render_test
+   .go (Go RenderToString test, asserts data-expected-return string on
+   the same production templates I exercised live — no rendered-page
+   surface of its own) and whatif-rate-assumptions.test.cjs (Node vm
+   fake-DOM harness — confirmed via grep it is never linked from any
+   template, so it is never fetched by a browser and has no
+   accessibility-tree presence). Neither introduces hidden-text abuse,
+   suppressed content, or any DOM the page actually renders.
+
+ACCESSIBILITY.md POINTS EXERCISED: #4 (labels) — unaffected, PASS. #7/#12
+(contrast, both themes) — PASS for every WS1-touched element; 1
+PRE-EXISTING finding attributed above, unchanged by this attempt. #9
+(keyboard operability, focus order, hidden-not-focusable, live
+aria-valuetext parity including across a real htmx-swap) — PASS; the
+investment-return control never announces a client-recomputed figure
+that disagrees with the server, in either fixture shape, either theme,
+at load or live, including the mirror-dragged-to-0 case named in the
+task brief.
+
+No git state changes made (only read-only `git show` for attribution); no
+:8080 contact; no budget2 MCP tools; no repo-root budget2 binary run.
+Scripts and JSON evidence (axe-results.json x2, console-errors.json x2,
+invreturn-parity output x2, broadsample.json, focuscheck output) live
+under .../scratchpad/checkers/WS1.6-a11y/{scripts,evidence,
+evidence-exact}/ for re-inspection.

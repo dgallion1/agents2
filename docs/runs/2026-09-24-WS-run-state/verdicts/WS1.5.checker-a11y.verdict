@@ -1,0 +1,117 @@
+VERDICT: PASS
+CHECKER: checker-a11y
+FAMILY: anthropic
+TASK: WS1
+ATTEMPT: 5
+---
+METHOD
+Built the real server from the attempt-5 snapshot (go build ./cmd/server,
+standalone snapshot dir, no .git). Two data sets, regenerated fresh via
+make_fixture.py: "main" (tier3 WS1 fixture, InvestmentReturn=6.25, a
+non-zero override) on 127.0.0.1:39750, and "exact" (InvestmentReturn=0
+with roth_percent/roth_stock_percent/roth_cash_percent/taxable_cash_percent
+all zeroed — the exact zero-allocation shape that made the old client
+recompute (`calculateExpectedReturnFromAllocation`'s `||10`/`||60`
+fallbacks) diverge from the server, per this attempt's own C1 note) on
+127.0.0.1:39751. BUDGET_DATA_DIR/BUDGET2_BACKUP_DIR/BUDGET2_IMPORT_DIR
+under scratch, BUDGET_DEBUG=false. Playwright (NODE_PATH pointed at the
+given node_modules) + axe-core 4.13.0 against the REAL rendered /whatif
+page loading the project's built styles.css/tailwind.css, 1440x1000,
+light and forced `.dark`. Never touched :8080, never ran a repo-root
+budget2 binary, no budget2 MCP tools, no git state changes (only reads:
+git show 643fa54:... for attribution). Both servers killed at the end;
+confirmed via pgrep/ss (ports 39750/39751 free).
+
+WHAT CHANGED SINCE ATTEMPT 4 (the actual scope of this verdict)
+whatif-rate-assumptions.js's updateInvestmentReturnDisplay, val===0
+branch: was `calculateExpectedReturnFromAllocation().toFixed(1)` (client
+recompute), now reads `display.dataset.expectedReturn` — the server's own
+%.1f figure, baked into both templates (rate-assumptions.html in-card and
+quick-adjust.html QA mirror) as `data-expected-return="{{printf "%.1f"
+.Settings.GetExpectedReturnFromAllocation}}"`. Also: the val!=0 "Fixed X%"
+branch's roundHalfEvenDecimalString call now matches Go's raw `%.1f`
+sign-preservation for negative inputs (including a rounded-to-zero
+negative, e.g. -0.03 -> "-0.0") rather than dropping the sign. Confirmed
+Go itself does this (`fmt.Sprintf("%.1f", -0.03)` -> "-0.0"); every
+percent1 slider in the template (inflation_rate, spending_decline_rate,
+phase multipliers, investment_return) has min=0, so this branch is not
+keyboard-reachable in the current UI — OBSERVATION only, not a defect
+(nothing on screen can show it). handlers_rates.go's roundToSignificantDigits
+(server-side COLA-save rounding) has no accessible-text surface.
+
+AUTOMATED (axe-core, wcag2a/wcag2aa/wcag21aa/wcag22aa; all 4 QA tabs x
+light/dark, all <details> + QA drawer open, both fixtures = 16 runs)
+- Light, both fixtures: 0 violations, all 4 tabs.
+- Dark, both fixtures: 1 violation on every tab — color-contrast,
+  `.mt-5 > summary` ("Adjust spending rules manually", guardrails.html:8).
+  PRE-EXISTING: `git -C /home/darrell/bin/ai/budget2 show
+  643fa54:web/templates/components/whatif/guardrails.html` — the
+  <summary> line is byte-identical to master; the diff touches only
+  guardrails.html's six numeric inputs (formatExact/step=any), never the
+  <summary>. Same finding WS1.1/1.2/1.3/1.4 attributed. OBSERVATION only
+  (ACCESSIBILITY.md #7/#12).
+- 0 console errors across every probe.
+
+MANUAL — against ACCESSIBILITY.md #4 (labels), #9 (keyboard/focus/live
+aria-valuetext parity), #12 (dark parity), #13 (currency sign — N/A, no
+new signed-currency display), #16 (client-side suppression parity — N/A)
+
+1. C1 THE ATTEMPT-5-SPECIFIC CHECK — investment-return "Using asset
+   allocation (~X% expected)" text vs its aria-valuetext vs
+   data-expected-return, in-card AND Quick Adjust mirror, BOTH themes:
+   load state, keyboard Home (drag to 0), keyboard End (drag to max),
+   40x ArrowLeft back toward 0, driving from the QA mirror instead
+   (End then Home), and after a real htmx swap (a genuine keyboard-driven
+   change on the unrelated inflation-rate slider, Tab to commit, wait for
+   the OOB swap) — 28 checks per fixture (7 states x 2 locations x 2
+   themes) x 2 fixtures (main + zero-allocation "exact") = 56 checks, 0
+   mismatches. On the zero-allocation fixture specifically (the shape
+   that broke the OLD client recompute per this attempt's own C1 finding)
+   the served text/aria/data-expected-return all agreed at load and after
+   every drive. 0 console errors across every drive.
+2. Corroboration (non-authoritative, checker-tests' lane): `node --test`
+   on whatif-rate-assumptions.test.cjs + whatif-quick-adjust.test.cjs
+   (the diff's own JS unit tests, including R5/R6/C1/P5 self-check mutants
+   that prove the assertions are real, not tautological) -> 23/23 pass.
+3. Broad sample of every OTHER converted slider (not just
+   investment_return), all 4 QA tabs, in-card + QA mirror: 164 slider
+   samples, aria-valuetext == co-located display text in every case, 0
+   mismatches. The handful with no aria-valuetext (projection_years,
+   tax_deferred_delay_years, employer_coverage_years) are pre-existing/
+   out-of-WS1-scope integer-year sliders, confirmed via template grep —
+   same set attempt-4 excluded for the same reason.
+4. Duplicate ids: 0, full page (all 4 QA tabs' markup + all <details>
+   open simultaneously).
+5. Hidden canonical `-exact`/`-value` inputs never keyboard-reachable:
+   every `input[type=hidden][data-quick-adjust-key]` on the page (18)
+   tested via direct .focus() — document.activeElement never lands on any
+   of them.
+6. Keyboard reachability + visible focus indicator on both
+   investment-return controls: Tab/.focus() lands correctly on each;
+   both show a 2px indigo box-shadow focus ring (the sitewide fallback
+   ring mechanism, pre-existing, unaffected by this diff).
+7. Templates/JS diff review (full `git diff`-style read of WS1.5.diff):
+   confirmed every markup/JS change beyond the C1 investment-return item
+   above (mirror-only load/swap sync, roundHalfEvenDecimalString for
+   whole-dollar/percent1, aria-valuetext plumbing on every converted
+   slider, hidden exact-value inputs) is UNCHANGED from what attempt-4's
+   PASS verdict already reviewed line-for-line — this attempt's diff vs
+   attempt-4 is the C1 investment-return fix plus a server-side COLA
+   rounding fix (no accessible-text surface) plus tests.
+
+ACCESSIBILITY.md POINTS EXERCISED: #4 (labels) PASS — unaffected by this
+attempt's change. #7/#12 (contrast, both themes) PASS for every
+WS1-touched element; 1 PRE-EXISTING finding attributed above with a
+git-show diff against master 643fa54, unchanged by this attempt's diff.
+#9 (keyboard operability, focus order, hidden-not-focusable, live
+aria-valuetext parity in both directions, including across a real
+htmx-swap) PASS — the investment-return control (this attempt's central
+risk) never announces a client-recomputed figure that disagrees with the
+server, in either fixture shape, in either theme, at load or live.
+
+No git state changes made (only read-only `git show` for attribution); no
+:8080 contact; no budget2 MCP tools; no repo-root budget2 binary run.
+Scripts and JSON evidence (axe-results.json x2, invreturn-parity.json x2,
+broadsample.json, dupids.json, hiddenfocus.json, console-errors.json)
+live under .../scratchpad/checkers/WS1.5-a11y/{scripts,evidence,
+evidence-exact}/ for re-inspection.

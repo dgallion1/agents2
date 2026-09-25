@@ -1,0 +1,112 @@
+VERDICT: PASS
+CHECKER: checker-tests
+FAMILY: anthropic
+TASK: WS4
+ATTEMPT: 3
+---
+Scratch dir (SC): /tmp/claude-1000/-home-darrell-work-agents2--claude-worktrees-budget2-what-if-review-24ec2e/28920e62-8027-4a38-9437-8967166cd576/scratchpad/checkers/WS4.3-tests
+Snapshot: .../scratchpad/snap/WS4.3-tests.
+
+IDENTITY AND SCOPE
+- Snapshot = base 643fa54 + .swarm/diffs/WS4.3.diff.
+  - Method: `git archive 643fa54`, then `patch -p1`, then cmp on all 10 manifest files. Result: "same" x10. Re-checked at the end of the run: still 10/10 same.
+  - `diff -rq` base vs snapshot shows only the 10 manifest files plus untracked or gitignored dirs: tmp/ (.gitignore:4), internal/config/data (.gitignore:10), and testdata/uploads (empty dir, a test side-effect).
+- base.js and templates are unchanged since attempt 2. A per-file hunk comparison of WS4.2.diff vs WS4.3.diff gives IDENTICAL for handlers.go, handlers_test.go, schedule_month_form_test.go, base.js and all 5 templates. DIFFERS only for web/static/js/base.test.cjs.
+  - That delta is purely additive: 2 tests (base.test.cjs:226 M1, :245 M2) plus comments.
+- Critical globs: no manifest path matches the budget2 .swarm/critical.globs or the run's critical.globs.
+
+GATES (cache defeated)
+- `GOFLAGS=-count=1 rtk proxy make check` (SC/make-check.log): exit=0.
+  - vet, staticcheck and govulncheck ran; "tailwind.css is up to date".
+  - 52 "ok" packages, 0 "(cached)". "ok budget2/internal/handlers/whatif 13.536s".
+  - "✓ all checks passed".
+- `GOFLAGS=-count=1 go test ./internal/handlers/whatif/...` (SC/go-whatif.log): exit=0, "ok ... 12.558s".
+- `node --test web/static/js/*.test.cjs` (SC/node.log): exit=0, "tests 40 / pass 40 / fail 0". Attempt 2 had 38.
+  - The two new tests run and pass: "a load-triggered sentinel under an ordinary, non-forbidden parent..." and "an eligible form-less control whose only host is forbidden...".
+- Lead oracle `accept.sh <snapshot>` (TMPDIR=SC/tmpdir; log SC/oracle.log): exit=0, 38 PASS, 0 FAIL, last line "ORACLE PASS".
+  - Fail ends checked in the lead's logs: oracle.master.log ends in 17 FAIL lines and "ORACLE FAIL". oracle.mutant-M1.log shows "FAIL [background] R2: ... (found 1)".
+
+CRITERIA
+1. AC1 (a rejected Add keeps typed values with the message next to the form; an accepted Add clears the form) -- PASS
+   - Income, expense, one-time: oracle.log lines "AC1 <kind> add: typed values kept", "message shown in its slot", "accepted add clears the form (status 200...)" and "message gone after success". All PASS.
+   - Big-ticket (SC/e2e2.cjs, fresh server, SC/e2e2-br-fresh.json):
+     - 400 with retarget #whatif-add-bigticket-error.
+     - Values kept: ["Probe Sale","-5","2029-04","probe note"].
+     - Slot says "Error Amount cannot be negative", roles 1, nested false. slotBeforeForm=true.
+     - Accept: 200, fields cleared ["","","2026-09",""], slot "".
+     - Base calibration (SC/e2e2-base.json): values wiped ["","","2026-09",""].
+   - Healthcare (SC/e2e.cjs, SC/e2e-br.json):
+     - 400 with retarget #whatif-add-healthcare-error.
+     - Values kept: ["Probe Spouse","61","-5"].
+     - Slot says "Error Monthly cost cannot be negative", roles 1, not nested, adjacent before the form.
+     - Accept: 200, name "", slot "".
+     - Base (SC/e2e-base.json): kept ["","54","1100"], i.e. wiped.
+   - Harness note: the client `min` was removed so the value reaches the server-only rejection path.
+2. AC2 (a non-retargeted 4xx/5xx shows next to the triggering form with role=alert; a later success clears it; nothing else is replaced) -- PASS
+   - 4xx, from the oracle:
+     - "AC2: Through before Starts is rejected, non-retargeted (400, HX-Retarget undefined)".
+     - "exactly one un-nested alert ... next to that income entry (1, nested false)".
+     - "results panel not replaced".
+     - "a later success ... clears the message (200, remaining 0)".
+   - 5xx from a settings form (route-fulfilled 500, fresh server, SC/e2e2-br-fresh.json):
+     - inline ["FORM:Analysis failed: probe 5xx"] (host = the triggering form), role alert.
+     - #whatif-results: innerHTML same=true, MutationObserver nmut=0, errInResults=false.
+     - Later 200: inlineAfterSuccess 0 (SC/e2e-br.json).
+     - Base shows nothing (n 0).
+     - A first run on a server whose data an earlier probe had already changed showed results mutating. SC/e2e3.cjs traced this to a GET /api/ui-refresh at t=322, before the POST at t=529 (page-refresh.js, not in the diff). With fresh data, both branch and base show RESULTS-CHILDLIST [].
+   - 5xx from a form-less control (Monte Carlo button, Risk tab): status 500, n 1, host is the button's parent (DIV), hostForbidden false, role alert, visible. Base: n 0.
+3. AC3 (a browser-invalid value triggers reportValidity) -- PASS
+   - oracle.log: "reportValidity called for the invalid value (calls 1, message \"Value must be greater than or equal to 0.\")", "focus moved to the invalid field", "not sent (0 POSTs)". Master fails these (oracle.master.log).
+   - Harness gap: headless Chromium does not paint the native bubble. The evidence is the reportValidity() call plus validationMessage.
+4. AC4 (renderError carries role=alert) -- PASS
+   - curl PUT /whatif/income/<id> with end<start on a fresh branch server returned "HTTP/1.1 400", no HX-Retarget, and a body starting `<div class="p-4 bg-negative-soft border border-negative rounded-lg" role="alert">` with role count 1.
+   - Go TestRenderError passes (handlers_test.go:804). Mutation (d) kills it.
+5. AC5 (tests kill the named mutations) -- PASS
+   - Every mutant was applied ALONE, the suite was run, and the file was restored. Restores were confirmed by cmp against the snapshot.
+   - JS mutants (SC/mutjs.py, log SC/mutations-js.log), all KILLED:
+     - (a) re-add `evt.detail.isError = false`: fail=1, "a rejected retargeted 4xx still swaps but reports failure..."
+     - (b) inline responseError listener made a no-op: fail=4.
+     - (b2) insertBefore dropped: fail=4.
+     - (c) reportValidityOfForms line removed: fail=1, "enables htmx's native reportValidity()".
+     - R1: inline node wrapped in a second role=alert: fail=3. Fallback without a role: fail=1.
+     - R3: `existing.__wfText === text` short-circuit removed: fail=1, "the exact same message ... not re-inserted".
+     - R4: nodeType guard replaced by `if (true)`: fail=1. Fallback using innerHTML instead of textContent: fail=1.
+     - M1: `if (!host && INTERACTIVE_TAGS[elt.tagName] && hasOwnHxVerb(elt))` changed to `if (!host)`: fail=1, "a load-triggered sentinel under an ordinary, non-forbidden parent...". The assertion message is "AssertionError: no inline error inserted into the ordinary, non-forbidden #whatif-results", so this is a real assertion failure, not a harness error.
+     - M1b: INTERACTIVE_TAGS check dropped only: KILLED by the same test.
+     - M2: `return isForbiddenHost(host) ? null : host;` changed to `return host;`: fail=1, "an eligible form-less control whose only host is forbidden...". Message: "AssertionError: no inline error inserted into forbidden host <DIV>".
+     - M2' (isForbiddenHost returns false), M2a (FORBIDDEN_TAGS check dropped), M2b (layout-grid check dropped), M2c (MAIN dropped from the map), M2d (BODY dropped from the map): each KILLED by the M2 test. Each forbidden-host axis is independently guarded.
+     - Also killed: clear-on-success dropped; HX-Retarget skip dropped.
+   - Go/template mutants (SC/mutgo.py, log SC/mutations-go.log):
+     - (d) role removed from renderError: KILLED (handlers_test.go:804 and schedule_month_form_test.go:858).
+     - R1: master-shaped wrapper `role="alert"` re-added on the income slot (:833), the onetime slot (:833) and the bigticket OOB clear (:872/:876): all KILLED.
+6. AC6 (existing behaviour kept) -- PASS
+   - Twin dump GET /whatif, fresh base vs branch servers, python difflib: 11 diff lines. All are expected:
+     - the layout grid gains data-wf-layout-grid, plus one blank line from the template comment;
+     - the income, bigticket, onetime and expense slot wrappers lose role="alert".
+   - Scroll after a settings change that swaps #whatif-results: 1500->1500 and 2600->2600, the same as base (SC/e2e4.cjs).
+   - /, /insights, /major-expenses, /accounts, /explorer, /transfers and /filemanager all return 200 with 0 inline nodes and pageErrors [].
+
+RULINGS
+- R1 -- PASS.
+  - Oracle "R1/AC4 <kind> add: exactly one alert role, none nested" for 3 kinds; big-ticket and healthcare roles 1 / nested false (above).
+  - Oracle "R1: no nested alert/status roles anywhere on the page ([])".
+- R2 -- PASS.
+  - Oracle background scenario: grid unchanged, first child HEAD, found 0.
+  - Live sweep (SC/e2e.cjs, r2): every element with an hx-verb on /whatif (42) got a synthetic htmx:responseError through the real base.js listener.
+    - 41 user-initiated elements: each got exactly 1 insertion, 0 into html/body/main/grid (violations []).
+    - 1 sentinel (DIV#whatif-poll, every 2s): 0 insertions.
+    - Body-sourced: 0 insertions.
+- R3 -- PASS: oracle "the same rejection again keeps one alert, same node, no re-announce (400, n 1, same true)".
+- R4 -- PASS: oracle "text/plain body shown once as an alert next to the form (1)", page errors ().
+
+FINDINGS (beyond attempt-3 scope; the Go test files are byte-identical to attempt 2; for the backlog, not a FAIL)
+- F1 (R1 test strength). Re-adding the wrapper role AFTER the class attribute survives go test and node:
+  - mutant: `<div id="whatif-add-income-error" class="mb-2" role="alert">`
+  - "ok budget2/internal/handlers/whatif 9.575s", node pass 12 fail 0.
+  - Cause: schedule_month_form_test.go:832 matches the literal prefix `<div id="X" role="alert"`.
+  - The master-shaped revert IS killed. The lead oracle (Chromium role count) would catch this variant.
+- F2 (carried from WS4.2 O1). role="alert" added to the healthcare slot (healthcare-card.html:24) survives go test. The kinds list omits healthcare.
+- F3. `make check` = vet static vuln css-verify test (Makefile:84). It never runs `node --test`, so every JS guard above (a, b, c, R1-inline, R3, R4, M1, M2) sits outside the composite gate. This Makefile shape predates WS4.
+- F4 (carried from WS4.1 O3). htmx.config.reportValidityOfForms is true on all 7 non-whatif pages (base: false). The sitewide effect was not re-audited.
+
+Servers: each on a fresh cp of the lead fixture (make_fixture.py), bound to 127.0.0.1 on a free port. :8080 was never contacted. No repo-root binary was run. All servers were stopped ("no scratch servers running").

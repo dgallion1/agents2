@@ -1,0 +1,164 @@
+VERDICT: FAIL
+CHECKER: checker-second
+FAMILY: adversarial
+TASK: WS3
+ATTEMPT: 2
+---
+Scope reviewed: SPEC.md "### WS3 — A chain step never crashes the projection;
+a failed analysis never bricks the page (Tier 3)" acceptance criteria 1-4,
+plus dispatch note "Attempt 2 adds engine.GuardrailsGovernStep(s) ... used by
+stepper.go, spending_floor.go and monte_carlo.go", plus the attack-surface
+list naming "the guardrail chart trigger lines/markers (GuardrailPeak/
+Baseline/CutTrigger/RaiseTrigger on year summaries, handlers_guardrail_graph.go,
+charts)" explicitly.
+
+== Confirmed working (tried to refute, could not) ==
+
+1. Oracle re-run on my snapshot: ORACLE PASS.
+   `bash .swarm/tier3/WS3/accept.sh <snapshot>` -> tail:
+   "== all 3 variants passed" / "ORACLE PASS" (all 15 table/D4 checks PASS,
+   incl. A->B cuts before/none after, B->A none before/at + acts after,
+   D4 full-page render + Remove + re-analysis).
+
+2. `engine.GuardrailsGovernStep` is genuinely the single predicate for the
+   engine layer: grep confirms stepper.go, spending_floor.go and
+   monte_carlo.go are its only production call sites; no remaining
+   `st.Guardrails != nil` or inlined `s.Guardrails != nil && s.Guardrails.Enabled`
+   survives in those three files.
+
+3. Mutation-kill checks (own copy, reverted after each):
+   - monte_carlo.go: reverting `guardrailsActive := engine.GuardrailsGovernStep(s)`
+     to `st.Guardrails != nil` (the exact attempt-1 defect, ruling 2026-09-23d)
+     -> `TestMonteCarloAdaptiveSpendingFollowsActiveStepGuardrails` FAILs
+     ("depleted at year 3.67, final balance 0" instead of Survives).
+   - stepper.go: reverting the activeMultiplier gate from
+     `if activeGuardrailsOn && st.Guardrails != nil` to `if st.Guardrails != nil`
+     (multiplier/trigger carry-over after an on->off transition) ->
+     `TestChainGuardrailsOnToOff` FAILs with a PANIC (nil `s.Guardrails`
+     dereferenced computing GuardrailCutTrigger) — the named mutation is
+     killed, and killed hard.
+   - `go test ./internal/services/retirement/... ./internal/handlers/whatif/...`
+     all packages ok (criterion 6).
+
+== Refutation that succeeded: chart-layer split classification ==
+
+`internal/handlers/whatif/handlers.go` was NOT migrated to
+`GuardrailsGovernStep` (it is not in the WS3.2 manifest) even though it is a
+real per-step consumer of guardrail state, exactly the class this task
+exists to eliminate (SPEC.md's own "Why" column for WS3: "money figures
+after a transition"; my dispatch's attack-surface list names this file
+line-by-line: "handlers_guardrail_graph.go, charts").
+
+`buildProjectionChartData`'s guardrail-line gate (handlers.go:844):
+  guardrailsEnabled := settings != nil && settings.Guardrails != nil &&
+      settings.Guardrails.Enabled && len(...) > 0
+`settings` here is the PRIMARY (pre-chain) step's settings — a single
+whole-chart boolean, not `GuardrailsGovernStep` evaluated per year/step.
+`buildGuardrailChartSummary` (handlers.go:570) uses the identical
+primary-only gate for the "Guardrails: N cuts/raises..." caption under the
+chart.
+
+Built the snapshot, served it with the oracle's own harness
+(`.swarm/tier3/lib/common.sh`) and the oracle's own a-to-b / b-to-a
+fixtures (`make_fixture.py`), and fetched the SAME endpoint the live
+projection-chart card on GET /whatif calls (`/whatif/chart/projection`,
+routes.go:1277, `web/templates/pages/whatif.html:212`
+`{{template "whatif-projection-chart" .}}`).
+
+A -> B (guardrails on -> off at year 13), `curl $WS_BASE/whatif/chart/projection`,
+"Cut trigger" trace:
+  x = [0..32, 32.25]  (34 points, one per year + end-of-chart)
+  y = [...,2160775.41 (year 12), 2160775.41 (year 13), 0, 0, 0, ... 0]  (years 14-33 all 0)
+  text[13..] = "Cut if balance ≤ $0.00 at the year 14 check" ... through
+  "... at the year 33 check" (20 consecutive false $0.00 labels)
+"Raise trigger" trace: identical pattern, "$2,640,000.00" through year 13
+then "$0.00" for every year after.
+This is a literal false dollar figure rendered on screen: the chart tells
+the user "guardrails will cut if your balance falls to $0" for a step that
+has NO guardrails at all — not merely stale, but semantically wrong (no such
+threshold exists once guardrails stop governing).
+
+B -> A (guardrails off -> on at year 3/4), same probe on
+`/whatif/chart/projection`:
+  trace names present = ['Portfolio Balance', 'Key events',
+  'Guardrail cuts / raises']  — "Cut trigger" and "Raise trigger" are
+  ABSENT ENTIRELY from the chart, even though guardrails ARE governing
+  spending from year 4 onward (the SAME server's `/whatif/results-full`
+  table shows cuts in that range per the oracle's own PASS, and the
+  "Guardrail cuts / raises" marker trace on this very chart response is
+  non-empty — the event marker layer is correct, only the gate for the
+  trigger LINES and the summary caption is wrong). The
+  `buildGuardrailChartSummary` caption ("Guardrails: ...") is likewise
+  fully suppressed for the entire B->A projection because its gate is also
+  `settings.Guardrails.Enabled` on the PRIMARY (B, off) settings — a user
+  chaining into a guardrail step gets zero on-chart indication guardrails
+  are active later in their own plan.
+
+Confirms this is genuine split classification (recurring defect class 1):
+the per-year `YearlySummaries[i].GuardrailCutTrigger/RaiseTrigger` fields
+ARE correctly computed by the fixed stepper.go (0 for ungoverned years,
+correct positive values for governed years — I read these directly off the
+JSON above), but the CHART's decision of "should I even use those numbers /
+should I show the trigger line/summary at all" is a second, stale
+classifier keyed on the primary settings only, never reconciled with
+`GuardrailsGovernStep`. The individual event markers ("Guardrail cuts /
+raises", the Guardrail Events card guarded by
+`.Analysis.Projection.GuardrailEvents`) are correct in both directions —
+only the CutTrigger/RaiseTrigger line traces and the chart caption are
+wrong.
+
+This can only be triggered by a guardrail-governing scenario-chain
+transition (a non-chained plan either always has guardrailsEnabled=true
+with correct, unvarying trigger values for every year, or has it false and
+shows nothing) — i.e., it is not a pre-existing, unrelated defect; it is a
+second, unmigrated instance of the exact classification bug WS3 was
+chartered to eliminate, and it was unreachable/unobservable before this
+task's own fix (pre-WS3, this scenario panicked before any chart ever
+rendered — SPEC.md "Chain crash (WS3)": "A step whose settings have
+Guardrails == nil -> nil deref -> panic"). The fix is straightforward and
+within the same file/predicate family the worker already touched this
+attempt (`buildProjectionChartData` and `buildGuardrailChartSummary` in
+handlers.go should derive per-year/whole-chain guardrail-governance from
+the projection's own per-year data — e.g. `GuardrailsGovernStep` evaluated
+against the correct step, or simply `ys.GuardrailCutTrigger > 0` — instead
+of the primary-only `settings.Guardrails.Enabled` gate).
+
+== Other attack surfaces checked, no defect found ==
+- handlers_guardrail_optimizer.go / handlers_spending_optimizer.go: both
+  explicitly refuse chained scenarios at the request boundary
+  ("Chained scenarios are not supported[ by the guardrail optimizer]." /
+  400) before any candidate/graph work runs, so `GuardrailsGovernStep` vs.
+  `.Guardrails != nil` divergence cannot occur there (grep + read,
+  handlers_guardrail_optimizer.go:99-102, handlers_spending_optimizer.go:
+  163-165, 210-212).
+- `buildGuardrailAnchors` ("Next yearly check" panel): gated on primary
+  settings but only ever describes the immediately-upcoming (year-0) check,
+  which is legitimately governed by the primary step in every chain
+  (transitions happen later) — correct in both fixtures.
+- `handlers_guardrail_graph.go` (optimizer candidate graph preview): only
+  reachable after a successful (i.e. non-chained, per the guard above)
+  optimizer run — chains never reach it.
+- Monte Carlo / lifestyle-outcomes: now correctly keyed on
+  `GuardrailsGovernStep`, verified by the mutation-kill above and by
+  `TestMonteCarloAdaptiveSpendingFollowsActiveStepGuardrails` passing
+  unmutated.
+- MCP plan tools (`internal/services/mcpsvc/plan/*.go`): grep for
+  "Guardrail" returns nothing — no independent classifier there to
+  diverge.
+- D4: the underlying nil-deref this task fixes is in the shared engine
+  (stepper.go), so every entry point (GET /whatif, results-full, MC) is
+  protected by the same fix; `handleWhatIfResultsFull`'s own `renderError`
+  fallback is an HTMX partial into an already-rendered page, not a bricked
+  full page, and out of D4's stated scope (GET /whatif's inputs column).
+
+== Verdict ==
+FAIL. Acceptance criteria 1/2 ("no guardrail multiplier/figure appears
+after the transition" / "guardrails can act after the transition") are met
+on the Year-by-Year table and event list but NOT on the projection chart —
+a second, explicitly-named attack surface for this task — which shows a
+fabricated $0.00 guardrail trigger after an on->off transition and shows NO
+trigger line or summary at all after an off->on transition despite
+guardrails genuinely governing that range. This is the same split-
+classification defect class ruling 2026-09-23d already caught once this
+attempt (Monte Carlo) in a sibling consumer that was migrated; the chart
+consumer was not.

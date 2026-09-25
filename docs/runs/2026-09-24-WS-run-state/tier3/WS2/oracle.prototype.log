@@ -1,0 +1,93 @@
+== build /tmp/claude-1000/-home-darrell-work-agents2--claude-worktrees-budget2-what-if-review-24ec2e/28920e62-8027-4a38-9437-8967166cd576/scratchpad/proto-ws2
+PASS [A-later] harness precondition: Rate Assumptions form valid before the action (got True)
+PASS [A-later] POST /whatif/settings status 200 (got 200; body ' <div id="whatif-async-loader" data-busy-quiet hx-get="/whatif/results-full?hash=a80959e961b87948" hx-trigger="load" hx-')
+PASS [A-later] start date moved (2026-09 -> 2027-01, delta 4)
+PASS [A-later] saved income offsets follow the rollover rule: expected {'4ea60a77-b08f-417e-be54-c83d38768a35': [0, None], 'ws2-i1': [5, 104], 'ws2-i2': [0, 0]} got {'4ea60a77-b08f-417e-be54-c83d38768a35': [0, None], 'ws2-i1': [5, 104], 'ws2-i2': [0, 0]}
+PASS [A-later] saved expense offsets follow the rollover rule: expected {'ws2-e1': [0, 32], 'ws2-e2': [3, None]} got {'ws2-e1': [0, 32], 'ws2-e2': [3, None]}
+PASS [A-later] saved removed_expense offsets follow the rollover rule: expected {'2c53333a-db9d-4dcf-8374-cb182edb070a': [0, 32], 'ws2-r1': [1, 16]} got {'2c53333a-db9d-4dcf-8374-cb182edb070a': [0, 32], 'ws2-r1': [1, 16]}
+PASS [A-later] saved removed_income offsets follow the rollover rule: expected {'ab0a74d9-0ada-4edc-82f6-550122f360af': [0, 44], '023d2597-757b-40c5-943a-a781b6af758f': [0, 476], '43707341-9418-44da-8a35-38dd1e676bef': [0, None], 'insights-rebuild-payroll': [0, None]} got {'ab0a74d9-0ada-4edc-82f6-550122f360af': [0, 44], '023d2597-757b-40c5-943a-a781b6af758f': [0, 476], '43707341-9418-44da-8a35-38dd1e676bef': [0, None], 'insights-rebuild-payroll': [0, None]}
+PASS [A-later] saved onetime months shifted by -4: expected {'ws2-o1': 27, 'ws2-o2': -2} got {'ws2-o1': 27, 'ws2-o2': -2}
+PASS [A-later] saved bigticket months shifted by -4: expected {'ws2-b1': 41} got {'ws2-b1': 41}
+PASS [A-later] income_start ws2-i1: same calendar month (2027-06 -> 2027-06)
+PASS [A-later] income_end 4ea60a77-b08f-417e-be54-c83d38768a35: blank stays blank ('' -> '')
+PASS [A-later] income_end ws2-i1: same calendar month (2035-08 -> 2035-08)
+PASS [A-later] expense_start ws2-e2: same calendar month (2027-04 -> 2027-04)
+PASS [A-later] expense_end ws2-e1: same calendar month (2029-08 -> 2029-08)
+PASS [A-later] expense_end ws2-e2: blank stays blank ('' -> '')
+PASS [A-later] onetime 'Roof': same calendar month (Apr 2029 -> Apr 2029)
+PASS [A-later] onetime 'Roof': '(past)' shown iff before the new start (month 27, label 'Apr 2029')
+PASS [A-later] onetime 'Deck': same calendar month (Nov 2026 -> Nov 2026 (past))
+PASS [A-later] onetime 'Deck': '(past)' shown iff before the new start (month -2, label 'Nov 2026 (past)')
+PASS [A-later] bigticket 'Home sale': same calendar month (Jun 2030 -> Jun 2030)
+PASS [A-later] bigticket 'Home sale': '(past)' shown iff before the new start (month 41, label 'Jun 2030')
+== [A-later] all checks passed
+PASS [B-earlier] harness precondition: Rate Assumptions form valid before the action (got True)
+PASS [B-earlier] POST /whatif/settings status 200 (got 200; body ' <div id="whatif-async-loader" data-busy-quiet hx-get="/whatif/results-full?hash=4f8aa17d7eb29015" hx-trigger="load" hx-')
+PASS [B-earlier] start date moved (2026-09 -> 2026-05, delta -4)
+PASS [B-earlier] saved income offsets follow the rollover rule: expected {'4ea60a77-b08f-417e-be54-c83d38768a35': [4, None], 'ws2-i1': [13, 112], 'ws2-i2': [4, 6]} got {'4ea60a77-b08f-417e-be54-c83d38768a35': [4, None], 'ws2-i1': [13, 112], 'ws2-i2': [4, 6]}
+PASS [B-earlier] saved expense offsets follow the rollover rule: expected {'ws2-e1': [4, 40], 'ws2-e2': [11, None]} got {'ws2-e1': [4, 40], 'ws2-e2': [11, None]}
+PASS [B-earlier] saved removed_expense offsets follow the rollover rule: expected {'2c53333a-db9d-4dcf-8374-cb182edb070a': [4, 40], 'ws2-r1': [9, 24]} got {'2c53333a-db9d-4dcf-8374-cb182edb070a': [4, 40], 'ws2-r1': [9, 24]}
+PASS [B-earlier] saved removed_income offsets follow the rollover rule: expected {'ab0a74d9-0ada-4edc-82f6-550122f360af': [4, 52], '023d2597-757b-40c5-943a-a781b6af758f': [4, 484], '43707341-9418-44da-8a35-38dd1e676bef': [4, None], 'insights-rebuild-payroll': [4, None]} got {'ab0a74d9-0ada-4edc-82f6-550122f360af': [4, 52], '023d2597-757b-40c5-943a-a781b6af758f': [4, 484], '43707341-9418-44da-8a35-38dd1e676bef': [4, None], 'insights-rebuild-payroll': [4, None]}
+PASS [B-earlier] saved onetime months shifted by --4: expected {'ws2-o1': 35, 'ws2-o2': 6} got {'ws2-o1': 35, 'ws2-o2': 6}
+PASS [B-earlier] saved bigticket months shifted by --4: expected {'ws2-b1': 49} got {'ws2-b1': 49}
+PASS [B-earlier] income_start 4ea60a77-b08f-417e-be54-c83d38768a35: same calendar month (2026-09 -> 2026-09)
+PASS [B-earlier] income_start ws2-i1: same calendar month (2027-06 -> 2027-06)
+PASS [B-earlier] income_start ws2-i2: same calendar month (2026-09 -> 2026-09)
+PASS [B-earlier] income_end 4ea60a77-b08f-417e-be54-c83d38768a35: blank stays blank ('' -> '')
+PASS [B-earlier] income_end ws2-i1: same calendar month (2035-08 -> 2035-08)
+PASS [B-earlier] income_end ws2-i2: same calendar month (2026-10 -> 2026-10)
+PASS [B-earlier] expense_start ws2-e1: same calendar month (2026-09 -> 2026-09)
+PASS [B-earlier] expense_start ws2-e2: same calendar month (2027-04 -> 2027-04)
+PASS [B-earlier] expense_end ws2-e1: same calendar month (2029-08 -> 2029-08)
+PASS [B-earlier] expense_end ws2-e2: blank stays blank ('' -> '')
+PASS [B-earlier] onetime 'Roof': same calendar month (Apr 2029 -> Apr 2029)
+PASS [B-earlier] onetime 'Roof': '(past)' shown iff before the new start (month 35, label 'Apr 2029')
+PASS [B-earlier] onetime 'Deck': same calendar month (Nov 2026 -> Nov 2026)
+PASS [B-earlier] onetime 'Deck': '(past)' shown iff before the new start (month 6, label 'Nov 2026')
+PASS [B-earlier] bigticket 'Home sale': same calendar month (Jun 2030 -> Jun 2030)
+PASS [B-earlier] bigticket 'Home sale': '(past)' shown iff before the new start (month 49, label 'Jun 2030')
+== [B-earlier] all checks passed
+PASS [C-unrelated] harness precondition: Rate Assumptions form valid before the action (got True)
+PASS [C-unrelated] POST /whatif/settings status 200 (got 200; body ' <div id="whatif-async-loader" data-busy-quiet hx-get="/whatif/results-full?hash=2546566fc9b7ed85" hx-trigger="load" hx-')
+PASS [C-unrelated] start date unchanged (2026-09 -> 2026-09)
+PASS [C-unrelated] saved income offsets unchanged
+PASS [C-unrelated] saved expense offsets unchanged
+PASS [C-unrelated] saved removed_expense offsets unchanged
+PASS [C-unrelated] saved removed_income offsets unchanged
+PASS [C-unrelated] saved onetime offsets unchanged
+PASS [C-unrelated] saved bigticket offsets unchanged
+== [C-unrelated] all checks passed
+PASS [D-currentplan] harness precondition: Rate Assumptions form valid before the action (got True)
+PASS [D-currentplan] POST /whatif/settings status 200 (got 200; body ' <div id="whatif-async-loader" data-busy-quiet hx-get="/whatif/results-full?hash=d8da9ebab9b8a7fa" hx-trigger="load" hx-')
+PASS [D-currentplan] start date unchanged (2026-09 -> 2026-09)
+PASS [D-currentplan] saved income offsets unchanged
+PASS [D-currentplan] saved expense offsets unchanged
+PASS [D-currentplan] saved removed_expense offsets unchanged
+PASS [D-currentplan] saved removed_income offsets unchanged
+PASS [D-currentplan] saved onetime offsets unchanged
+PASS [D-currentplan] saved bigticket offsets unchanged
+== [D-currentplan] all checks passed
+PASS [E-tick-current] harness precondition: Rate Assumptions form valid before the action (got True)
+PASS [E-tick-current] POST /whatif/settings status 200 (got 200; body ' <div id="whatif-async-loader" data-busy-quiet hx-get="/whatif/results-full?hash=90dea5a7849cbf3a" hx-trigger="load" hx-')
+PASS [E-tick-current] start date moved (2026-05 -> 2026-09, delta 4)
+PASS [E-tick-current] saved income offsets follow the rollover rule: expected {'4ea60a77-b08f-417e-be54-c83d38768a35': [0, None], 'ws2-i1': [5, 104], 'ws2-i2': [0, 0]} got {'4ea60a77-b08f-417e-be54-c83d38768a35': [0, None], 'ws2-i1': [5, 104], 'ws2-i2': [0, 0]}
+PASS [E-tick-current] saved expense offsets follow the rollover rule: expected {'ws2-e1': [0, 32], 'ws2-e2': [3, None]} got {'ws2-e1': [0, 32], 'ws2-e2': [3, None]}
+PASS [E-tick-current] saved removed_expense offsets follow the rollover rule: expected {'2c53333a-db9d-4dcf-8374-cb182edb070a': [0, 32], 'ws2-r1': [1, 16]} got {'2c53333a-db9d-4dcf-8374-cb182edb070a': [0, 32], 'ws2-r1': [1, 16]}
+PASS [E-tick-current] saved removed_income offsets follow the rollover rule: expected {'ab0a74d9-0ada-4edc-82f6-550122f360af': [0, 44], '023d2597-757b-40c5-943a-a781b6af758f': [0, 476], '43707341-9418-44da-8a35-38dd1e676bef': [0, None], 'insights-rebuild-payroll': [0, None]} got {'ab0a74d9-0ada-4edc-82f6-550122f360af': [0, 44], '023d2597-757b-40c5-943a-a781b6af758f': [0, 476], '43707341-9418-44da-8a35-38dd1e676bef': [0, None], 'insights-rebuild-payroll': [0, None]}
+PASS [E-tick-current] saved onetime months shifted by -4: expected {'ws2-o1': 27, 'ws2-o2': -2} got {'ws2-o1': 27, 'ws2-o2': -2}
+PASS [E-tick-current] saved bigticket months shifted by -4: expected {'ws2-b1': 41} got {'ws2-b1': 41}
+PASS [E-tick-current] income_start ws2-i1: same calendar month (2027-02 -> 2027-02)
+PASS [E-tick-current] income_end 4ea60a77-b08f-417e-be54-c83d38768a35: blank stays blank ('' -> '')
+PASS [E-tick-current] income_end ws2-i1: same calendar month (2035-04 -> 2035-04)
+PASS [E-tick-current] expense_start ws2-e2: same calendar month (2026-12 -> 2026-12)
+PASS [E-tick-current] expense_end ws2-e1: same calendar month (2029-04 -> 2029-04)
+PASS [E-tick-current] expense_end ws2-e2: blank stays blank ('' -> '')
+PASS [E-tick-current] onetime 'Roof': same calendar month (Dec 2028 -> Dec 2028)
+PASS [E-tick-current] onetime 'Roof': '(past)' shown iff before the new start (month 27, label 'Dec 2028')
+PASS [E-tick-current] onetime 'Deck': same calendar month (Jul 2026 -> Jul 2026 (past))
+PASS [E-tick-current] onetime 'Deck': '(past)' shown iff before the new start (month -2, label 'Jul 2026 (past)')
+PASS [E-tick-current] bigticket 'Home sale': same calendar month (Feb 2030 -> Feb 2030)
+PASS [E-tick-current] bigticket 'Home sale': '(past)' shown iff before the new start (month 41, label 'Feb 2030')
+== [E-tick-current] all checks passed
+== all 5 scenarios passed
+ORACLE PASS

@@ -1,0 +1,155 @@
+VERDICT: PASS
+CHECKER: checker-a11y
+FAMILY: anthropic
+TASK: WS1
+ATTEMPT: 2
+---
+METHOD
+Built the real server from the attempt-2 snapshot (`go build ./cmd/server`),
+ran it against the tier3 fixture (make_fixture.py — every stored value off
+its old step grid: portfolio 2437512.34, healthcare costs/inflations,
+phase multiplier 0.93, etc.) with BUDGET2_BACKUP_DIR/IMPORT_DIR under
+scratch. Audited the real rendered /whatif page (Playwright + the project's
+built tailwind.css/styles.css, not template source or hand-built HTML) with
+axe-core 4.13.0 (same copy attempt-1 used:
+~/.config/nvm/.../@axe-core/cli/node_modules/axe-core). Forced
+`localStorage.theme`/`emulateMedia`/`documentElement.className` to
+light/dark explicitly (not relying on prefers-color-scheme), 1440x1000
+viewport so the QA panel's `lg:block` isn't hidden. All native <details>
+opened; the Quick Adjust drawer opened AND, unlike attempt-1's method, axe
+was re-run once per QA TAB (portfolio/rates/phases/healthcare) since each
+tab's content is display:none (excluded from the a11y tree) until active —
+scanning only the default tab, as attempt-1 did, misses anything gated
+behind another tab. Servers killed at end; no :8080 contact; no budget2 MCP
+tools; no git state changes; snapshot/scratch-only writes.
+
+AUTOMATED (axe-core, wcag2a/wcag2aa/wcag21aa/wcag22aa, per QA-tab x theme)
+- Light: 0 violations on portfolio/phases/healthcare tabs. 1 violation on
+  the "rates" tab — color-contrast, `.text-gray-200` (the investment-return
+  QA display's "Fixed X%" label span, whatif-rate-assumptions.js:256,
+  `label.className = inPanel ? 'text-gray-200' : ...`). PRE-EXISTING:
+  `git show 643fa54:web/static/js/whatif-rate-assumptions.js` has the
+  IDENTICAL line (at 244, same text, shifted only by WS1's own added
+  comment block above it — confirmed via diff of grepped context). WS1.2's
+  hunk only adds a `ranges` var and an aria-valuetext-setting block after
+  the branch; it does not touch this className line. OBSERVATION only
+  (ACCESSIBILITY.md #7/#12) — not caught by attempt-1's audit either since
+  its axe run never switched QA tabs; flagging for the backlog since it
+  directly affects the readability of the very control WS1 added
+  aria-valuetext parity to (screen-reader users are unaffected — the
+  aria-valuetext/textContent are correct — but a low-vision sighted user in
+  light mode cannot read "Fixed 6.3%" in the QA drawer).
+- Dark: 1 violation on every tab — color-contrast, `.mt-5 > summary`
+  ("Adjust spending rules manually", guardrails.html:8). Byte-diffed
+  `web/templates/components/whatif/guardrails.html` against
+  `git show 643fa54:...guardrails.html`: only the six `<input>` lines below
+  it differ (the WS1 formatExact/step=any conversion, matching WS1.2.diff
+  exactly); the `<summary>` line itself is untouched. PRE-EXISTING, same
+  finding as WS1.1's verdict. OBSERVATION only (#7/#12).
+
+MANUAL — against ACCESSIBILITY.md #4 (labels), #9 (keyboard/focus), #12
+(dark parity), #13 (currency sign semantics N/A — no negative values here)
+1. Every converted slider (in-card) + its Quick Adjust mirror, across all 4
+   QA tabs, both themes (29 range controls with data-quick-adjust-key found
+   on the rendered page):
+   - Accessible name resolves for every one (`missingLabel: []` in both
+     themes) — label[for=] for named controls, aria-label for the phase-
+     multiplier QA mirrors (which carry no id, by design, pre-existing).
+   - aria-valuetext present and EXACTLY equal to the adjacent visible
+     display text at initial render, in BOTH themes, for every WS1-
+     converted control (0 mismatches across 29 controls x 2 themes) —
+     portfolio ($2,437,512), monthly living expenses, inflation rate,
+     investment-return (compound "Fixed 6.3% (overrides allocation)"),
+     phase multipliers (100%/93%/80%), and all 4 healthcare fields x 2
+     persons (medicare person: monthly cost, post-medicare inflation; ACA
+     person: monthly cost, pre-medicare inflation, medicare cost, post-
+     medicare inflation) both in-card AND their QA-drawer mirrors.
+   - Only 2 controls (+ their QA mirrors) lack aria-valuetext:
+     projection-years-slider and tax-deferred-delay-slider. Confirmed via
+     `grep` on WS1.2.diff — neither id appears anywhere in the diff; not
+     WS1-converted, not in scope, unchanged from master.
+   - spending-decline-slider did not render on this fixture (its card is
+     conditional on SpendingPhaseConfig.Enabled=false; this fixture has
+     phases enabled so the phase-multiplier sliders render instead) — same
+     as attempt-1's finding. Verified by template read
+     (rate-assumptions.html:462-473): the else-branch carrying the slider
+     is byte-for-byte the same hidden-exact/aria-valuetext/
+     data-quick-adjust-mirror pattern already verified working on
+     inflation-rate-slider (identical `percent1` format, identical
+     mechanism) — not treated as a gap, per attempt-1's precedent.
+2. Live keyboard update, BOTH directions, BOTH themes:
+   - In-card sliders: ArrowRight on all 14 in-card converted sliders (full
+     walk, both themes) updated .value, aria-valuetext, AND the visible
+     display span in lockstep every time (e.g. portfolio
+     "$2,500,000"->"$2,550,000" matching aria-valuetext and display
+     exactly; healthcare "$1,655"->"1,700"; phase "93%"->"100%").
+   - QA-drawer mirrors, ONE TAB AT A TIME (switching tabs first, since a
+     hidden-tab control cannot receive focus in a real browser — confirmed
+     empirically: `scrollIntoViewIfNeeded`/`.focus()` times out on a
+     control in an inactive tab): ArrowRight+Home+End+PageUp on every QA
+     mirror across all 4 tabs (portfolio, rates, phases incl. the 3
+     id-less phase mirrors located by DOM index, healthcare x2 persons) —
+     final aria-valuetext == final displayed text in every case, both
+     themes (0 mismatches, `qa-tax-deferred-delay` correctly excluded, not
+     WS1-scope).
+   - Compound investment-return text, BOTH branches, BOTH directions:
+     started "Fixed 6.3% (overrides allocation)" (card+QA avt+display all
+     equal); Home on the in-card slider -> "Using asset allocation (~6.2%
+     expected)" on all four locations; End on the QA mirror ->
+     "Fixed 15.0% (overrides allocation)" on all four again. Screen-reader
+     text for this control is correct in every state.
+3. Restored Quick Adjust behaviours (C5 R1-R3), isolated fresh-fixture
+   retest after an initial noisy multi-step probe showed an inconclusive
+   result for R3 (explained below):
+   - R1 (portfolio range-select drives QA slider bounds): selecting the
+     "$0-20M" preset moved `#qa-portfolio-value` min/max/step from
+     0/5000000/50000 to 0/20000000/100000 and synced
+     `#quick-adjust-portfolio-range`'s own value to match. Confirmed.
+   - R2 (QA investment-return live display): already covered under #2
+     above (both branches, both directions) — confirmed.
+   - R3 (QA portfolio input -> per-account $ breakdown): a step-by-step
+     ArrowRight walk on a clean fixture/server (5 presses) showed
+     td/roth/taxable-amount-display updating on EVERY keystroke
+     ($2.0M/$12K/$401K -> $2.2M/$14K/$445K), each figure matching the
+     portfolio value x stored allocation % exactly. An earlier, messier
+     probe (same session, after a long prior multi-slider walk had already
+     driven the value to a rounding-bucket boundary) showed no visible
+     text delta for one single step — re-verified this was a
+     rounding-bucket artifact of that accumulated state, not a functional
+     gap, via the clean isolated retest above.
+4. Duplicate ids: 0 in both themes, full page (`dupIds: []`). The
+   healthcare `-exact` hidden fields WS1.2 added inherit the same
+   mutually-exclusive-branch guard attempt-1 verified for the visible
+   pre_medicare_inflation range (employer vs non-employer/non-medicare),
+   so the new hidden mirrors don't reintroduce it either.
+5. Hidden canonical inputs never keyboard-reachable: (a) calling
+   `.focus()` directly on `#portfolio-value-exact` leaves
+   `document.activeElement` at `<body>` (browser refuses focus on
+   type=hidden); (b) a real Tab sequence starting at `#portfolio-slider`
+   visits range -> range -> number -> number -> range -> button, never a
+   hidden field. Confirms attempt-1's finding still holds with the larger
+   attempt-2 hidden-field surface (12 `-exact` fields total: portfolio,
+   6xhealthcare, inflation-rate, investment-return, 3xphase).
+6. Attempt-1 OBSERVATIONS re-checked:
+   - step="any" arrow granularity (usability-only, not a WCAG/
+     ACCESSIBILITY.md failure): unchanged by attempt-2 — attempt-2 touches
+     no step values, only adds aria-valuetext/formatDollars/JS wiring.
+     Still an open usability note for the backlog, not a gate item.
+   - QA healthcare mirrors previously lacked aria-valuetext: RESOLVED.
+     Confirmed present, correct, and live-updating on all 6 QA healthcare
+     mirrors (2 persons) in both themes (see #1-#2 above). The
+     `syncQuickAdjustAriaValueTexts` code comment's claim ("covers the
+     primary in-card slider AND its Quick Adjust mirror alike") is now
+     also factually true for these controls.
+
+ACCESSIBILITY.md POINTS EXERCISED: #4 (labels) PASS, #7/#12 (contrast, both
+themes, per-QA-tab) PASS for every WS1-touched element — 2 PRE-EXISTING
+dark/light contrast fails attributed above (byte-identical to master), #9
+(keyboard operability, focus order, hidden-not-focusable, live
+aria-valuetext parity — the WCAG 4.1.2 concern this task exists to fix)
+PASS.
+
+No git state changes made; snapshot and scratch only. Playwright scripts
+and JSON evidence (sliders-*.json, keyboard-*.json, tabwalk.json,
+axe-per-tab.json, parity.json, screenshots) live under
+.../scratchpad/checkers/WS1.2-a11y/ for re-inspection.

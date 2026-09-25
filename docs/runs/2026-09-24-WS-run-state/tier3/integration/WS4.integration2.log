@@ -1,0 +1,41 @@
+== build /home/darrell/bin/ai/budget2/.worktrees/whatif-save-path-2
+PASS [background] harness precondition: cold load has the async results loader (true)
+PASS [background] R2: page layout grid unchanged by background failures (["whatif-settings-col","whatif-results","whatif-poll"] -> ["whatif-settings-col","whatif-results","whatif-poll"])
+PASS [background] R2: nothing inserted before <head> (first child HEAD)
+PASS [background] R2: no background-failure message inserted anywhere (found 0)
+PASS [background] no page errors ()
+PASS [forms] income add: server rejects (status 400)
+PASS [forms] AC1 income add: typed values kept after rejection (["Oracle Pension","1234","2027-06","2027-01"])
+PASS [forms] AC1 income add: message shown in its slot (Error Through month cannot be before the start month)
+PASS [forms] R1/AC4 income add: exactly one alert role, none nested (roles 1, nested false)
+PASS [forms] AC1 income add: accepted add clears the form (status 200, first field "")
+PASS [forms] income add: message gone after success ()
+PASS [forms] income add: accepted item saved
+PASS [forms] expense add: server rejects (status 400)
+PASS [forms] AC1 expense add: typed values kept after rejection (["Oracle Travel","321","2027-06","2027-01"])
+PASS [forms] AC1 expense add: message shown in its slot (Error Through month cannot be before the start month)
+PASS [forms] R1/AC4 expense add: exactly one alert role, none nested (roles 1, nested false)
+PASS [forms] AC1 expense add: accepted add clears the form (status 200, first field "")
+PASS [forms] expense add: message gone after success ()
+PASS [forms] expense add: accepted item saved
+PASS [forms] one-time add: server rejects (status 400)
+PASS [forms] AC1 one-time add: typed values kept after rejection (["Oracle Roof","2070-01","20000"])
+PASS [forms] AC1 one-time add: message shown in its slot (Error Jan 2070 is beyond the 39-year projection horizon)
+PASS [forms] R1/AC4 one-time add: exactly one alert role, none nested (roles 1, nested false)
+PASS [forms] AC1 one-time add: accepted add clears the form (status 200, first field "")
+PASS [forms] one-time add: message gone after success ()
+PASS [forms] one-time add: accepted item saved
+PASS [forms] AC2 harness: moving the income start is accepted (200)
+PASS [forms] AC2: Through before Starts is rejected, non-retargeted (400, HX-Retarget undefined)
+PASS [forms] AC2/R1: exactly one un-nested alert with the message next to that income entry (1, nested false)
+PASS [forms] AC2: results panel not replaced by the error
+PASS [forms] R3: the same rejection again keeps one alert, same node, no re-announce (400, n 1, same true)
+PASS [forms] AC2: a later success from that form clears the message (200, remaining 0)
+PASS [forms] R4: text/plain body shown once as an alert next to the form (1)
+PASS [forms] AC3: reportValidity called for the invalid value (calls 1, message "Value must be greater than or equal to 0.")
+PASS [forms] AC3: focus moved to the invalid field (monthly-property-tax-input)
+PASS [forms] AC3: the invalid value was not sent (0 POSTs)
+PASS [forms] R1: no nested alert/status roles anywhere on the page ([])
+PASS [forms] no page errors ()
+== both scenarios passed
+ORACLE PASS

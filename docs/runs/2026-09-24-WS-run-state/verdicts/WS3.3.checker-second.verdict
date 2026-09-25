@@ -1,0 +1,102 @@
+VERDICT: PASS
+CHECKER: checker-second
+FAMILY: adversarial
+TASK: WS3
+ATTEMPT: 3
+---
+Tried to refute D3' ("the VIEWED/primary scenario's guardrail setting
+governs the WHOLE chain") and found no defect. Evidence:
+
+1. Oracle re-run on my snapshot: `bash accept.sh <snapshot>` -> 17/17 PASS,
+   final line "ORACLE PASS" (matches committed oracle.3.log).
+
+2. Single predicate confirmed: `engine.GuardrailsGovernStep(s)` = `s!=nil &&
+   s.Guardrails!=nil && s.Guardrails.Enabled`; every engine call site
+   (stepper.go NewProjectionState/StepMonth, spending_floor.go
+   floorAdjustedLiving, monte_carlo.go) passes `st.primary`/`st.Primary()`,
+   never the active step `s`. `st.primary` is assigned once in
+   NewProjectionState and never reassigned — grep confirms no other write —
+   so the invariant holds through any number of chain transitions.
+
+3. Independent mutation-kills (own copy, reverted after each), all 5 named
+   mutations:
+   - evaluate with active step's config (`s.Guardrails` at the Evaluate
+     call) -> KILLED: TestChainPrimaryGovernsOnToOffTransition panics (nil
+     cfg deref, guardrails.go:77 via stepper.go:336) and
+     TestChainPrimaryConfigIgnoresChainedStepConfig fails on wrong
+     multiplier/trigger values (this same mutation is also "the nil deref"
+     the contract names separately).
+   - spending floor from the active step (both floorAdjustedLiving calls
+     reverted to `s`) -> KILLED: TestChainFloorAppliesPrimaryMinMonthlySpendingReal
+     and the edited pre-existing TestFloorActiveChainReplacement (D3'
+     wording, asserts primary floor 7500 for all 24 months, not weaker than
+     the original D3 assertion it replaced).
+   - MC adaptive spending from the active step (`engine.GuardrailsGovernStep(s)`
+     via the closure's shadowed active-settings param instead of
+     `st.Primary()`) -> KILLED: TestMonteCarloAdaptiveSpendingFollowsPrimaryGuardrails.
+   - restoring the bare renderError page (handleWhatIf reverted to
+     renderError+return on analysisErr) -> KILLED:
+     TestHandleWhatIf_BrokenChainRendersFullPageWithAlert.
+   go build + go test all clean between each revert.
+
+4. Split-classification enumeration (every consumer of guardrail state),
+   all consistent with the primary-only predicate:
+   - buildGuardrailChartSummary/buildGuardrailAnchors/buildProjectionChartData
+     (handlers.go:570/650/844) gate on `settings.Guardrails.Enabled` where
+     `settings` = `retirementMgr.LoadContext()` = the primary, in every
+     caller (handleWhatIf, handleWhatIfProjectionChart) — same field D3'
+     predicates on, not a second classifier.
+   - verdict.go:85 and projectionHasLivingCuts derive from primary settings
+     / the engine's own computed GuardrailMultiplier — no independent logic.
+   - guardrails.html / projection-chart.html template gates all key off
+     `.Settings.Guardrails.Enabled` (primary) or `.GuardrailChartSummary`/
+     `.GuardrailAnchors` (nil-safe, built from primary).
+   - /whatif/chart/projection/no-guardrails forces `clone.Guardrails = nil`
+     on the PRIMARY before buildEngineInput — consistent by construction.
+   - Guardrail/spending optimizers still refuse `len(settings.ScenarioChain)>0`
+     at the request boundary (handlers_guardrail_optimizer.go:100-101,
+     handlers_spending_optimizer.go:163-164/210-211) — unreachable when
+     chained, unchanged this attempt.
+   - MCP plan tools (get_analysis/get_months/run_scenario) build
+     `engine.Input{Prepared: prepared}` with NO `Chain` field at all (only
+     handlers.go's buildEngineInput populates it from ScenarioChain) — chains
+     are inert via MCP regardless of guardrails; pre-existing, out of WS3's
+     scope, no divergence possible.
+   - lifestyle-outcomes.html has no guardrail classifier (static caption
+     only).
+
+5. Live empirical probes (temp build, BUDGET_LISTEN_ADDR=127.0.0.1:<port>,
+   cp -rL fixture data, never :8080):
+   - Multi-hop A->B(age75)->Y(age85), primary=A: Year-by-Year multiplier
+     sequence (None x10, 0.90 x13, 0.81 x4, 0.73 x3, 0.70 x9) and chart
+     "Cut trigger" (40 points, min 844030.67) are BYTE-IDENTICAL to an
+     unchained run of A alone on the same binary — governance survives TWO
+     transitions unchanged, confirming the invariant isn't just true for the
+     oracle's single-hop fixtures.
+   - POST /whatif/scenarios/switch to B (making B primary, B's own chain to
+     Y at 85 unchanged): multiplier is `None` for all 32 rendered years and
+     0 chart trigger points — switching the ACTIVE scenario re-derives
+     governance from the newly-viewed primary, not from whichever file was
+     "A" in the fixture.
+   - b-to-a fixture: no "Next cut"/"falls below"/"rises above" text anywhere
+     on the page (buildGuardrailChartSummary/Anchors correctly nil); the
+     no-guardrails overlay JSON has only "Portfolio Balance"/"Key events"
+     traces.
+   - Unchained regression (guardrails on / disabled / missing), base 643fa54
+     vs this snapshot on isolated ports: `/whatif/chart/projection` JSON
+     EQUAL for all 3 variants; results-full's `×`-multiplier text stream
+     IDENTICAL (29 entries for "on", 0 for "off"/"nil"); page/results diffs
+     are only 2-3 added blank lines (D4 template actions, pre-existing from
+     attempts 1-2) plus Monte-Carlo-seed-driven percentage noise (server MC
+     is clock-seeded — expected, not a regression).
+
+6. `go test -count=1 ./internal/services/retirement/... ./internal/handlers/whatif/...`
+   -> all 8 packages ok. `GOFLAGS=-count=1 make check` -> vet, staticcheck,
+   govulncheck (0 vulnerabilities), css-verify, go test ./... (52 packages
+   ok), "✓ all checks passed", exit 0. gofmt clean (no diff needed, matches
+   `go build` succeeding with no formatting tool invoked separately since
+   `make check` already ran it internally per prior attempts' pattern).
+
+No FAIL found. All servers I started were killed; no writes outside my
+snapshot/scratch; :8080 and the repo-root `budget2` binary were never
+touched.

@@ -1,0 +1,148 @@
+VERDICT: FAIL
+CHECKER: checker-tests
+FAMILY: anthropic
+TASK: WS1
+ATTEMPT: 2
+---
+Scratch dir: /tmp/claude-1000/-home-darrell-work-agents2--claude-worktrees-budget2-what-if-review-24ec2e/28920e62-8027-4a38-9437-8967166cd576/scratchpad/checkers/WS1.2-tests
+(S below). base = `git archive 643fa54`; work = cp -a of the snapshot. Servers: temp builds (S/bin/{base,br}), cp -rL fixture copies, random 127.0.0.1 ports. :8080 never contacted. After all mutations, `diff -rq work/{web,internal} snap/...` exit 0.
+
+SUMMARY: criteria 1, 2, 3, 4, 5 and 8 PASS. Criterion 6 PASS on its written kill list, with coverage gaps (G1-G4). Criterion 7 FAILS: formatExact prints float artifacts in a visible field for real cent values (D1, reproduced in Chromium and by the lead's own E2 check). Also D2: the check the lead asked for (no other surface disagrees on .50 values) does not hold.
+
+== C1 Round-trip identity: PASS
+- `TMPDIR=S/tmp accept.sh <snapshot>` -> exit 0, 71 PASS / 0 FAIL, last line "ORACLE PASS" (S/oracle.snap.log); includes "PASS criterion 1: saved plan identical after every untouched submission (0 change(s))".
+- Generic Go test, 7 families, all PASS (`go test -count=1 -v -run TestWS1 ./internal/handlers/whatif/`).
+- Caveat, see D1: when formatExact misprints a value, an untouched submit rewrites the stored float by 1 ulp (388354.59 -> 388354.5900000001). That is under the oracle's 1e-9 "float-equal" tolerance, so C1 holds only in that sense, not bit for bit. The drift is stable: it stays at +1 ulp over 5 re-render/submit cycles.
+
+== C2 No stored value makes a form invalid: PASS
+- Oracle: 14 lines of "PASS FORM ... form valid on the off-grid plan (criterion 2) — invalid: []".
+
+== C3 Touched path saves exactly the dragged value: PASS
+- Probe S/js/drag.js is the predecessor's script. It ran in real Chromium on fixture A (the oracle fixture) and fixture B (phases off, employer person). Output in S/drag.brA.json and S/drag.brB.json. Every drag has saved == range value at release, with exactly one PUT/POST per drag, 0 page errors:
+  - In-card healthcare: cost 1655.3->1850, pre-Medicare inflation 7.25->6.5, Medicare cost 2150->1400, post-Medicare inflation 4.15->5.5, Alex cost 612.4->1000, Alex post-Medicare inflation 4.35->3.5, employer ACA cost 1234.56->1550, ACA inflation 6.35->8, employer cost 433.21->700.
+  - Portfolio: 2437512.34->2650000; after the in-card select is set to $0-1M, 770000.
+  - Other sliders: inflation 3.85->4.7, investment return 6.25->9, phase-1 multiplier 0.93->0.75, spending decline 0.3->2.25.
+  - Quick Adjust mirrors: portfolio 270000 (and 640000 after the QA select is set to $0-1M), inflation 3.3, investment return 6.5, phase-1 0.65, healthcare cost 1400, Medicare cost 800, pre-Medicare inflation 4.5, ACA cost 1300.
+- S/js/kbd.js, 2x ArrowRight: {"hc cost":{"before":["1650","$1,655"],"afterKeys":["1750","$1,750"],"saved":1750},"portfolio":{...,"saved":2550000},"phase1":{...,"saved":1.05}}.
+- Oracle: "PASS criterion 3" x3 (hc 1800, portfolio 2,500,000, QA hc 1900).
+
+== C4 aria-valuetext == its own display; one formatter per value: PASS on the criterion's letter (see D2)
+- S/js/ariaeq.js compares every range carrying aria-valuetext against the display in its own location (card vs Quick Adjust). It ran pre-JS (all scripts aborted) and post-JS, on fixtures A, B, H (.50 values) and Z (investment_return 0).
+  - Result: "aria!=display=0" for all 8 runs; 25-26 ranges with aria per page.
+  - Ranges without aria are only the unconverted named ranges: projection_years, tax_deferred_delay_years, employer_coverage_years, and their QA mirrors.
+- Live during drags: every mid1/mid2 sample in drag.br{A,B}.json has aria == display, on both the in-card range and its mirror. Example: QA investment return mid1 aria 'Fixed 3.0% (overrides allocation)' with display 'Fixed 3.0% (overrides allocation)'.
+- Investment-return slider now has aria at render. Server render: 'Fixed 6.2% (overrides allocation)' for aria and display alike. After JS: 'Fixed 6.3%...' for both. Fixture Z: 'Using asset allocation (~6.2% expected)' for both. This closes attempt-1's C4.
+- Oracle E1: 26 converted sliders + QA mirrors PASS.
+- Formatters: server aria and display use the same Go formatter; client aria and display use the same JS function (computeQuickAdjustDisplayText). The two formatters disagree only across the server->JS handoff, and aria follows display each time (see O2).
+
+== C5 Existing ids and behaviour kept: PASS
+- Ids: `curl /whatif`, base vs branch, on fixtures A and B:
+  - removed=[], count-changed=[], new-dups=[].
+  - Added ids are only *-exact / portfolio-value-exact (12 on A, 14 on B).
+- Rendered-page diff, base vs branch, fixture A (difflib over normalised lines): 81 hunks, all confined to input markup (name/value/step/aria/data-attrs/oninput). No change in the results area.
+- R1: `drag.brA.json`:
+  - On load, qa-portfolio-value max=5000000 step=50000, same as base.
+  - After the in-card select is set to $0-1M: qa max=1000000 step=10000.
+  - After the QA select is set to $0-1M: qa max=1000000 step=10000, and the in-card slider follows.
+  - Oracle "PASS E3 (C5 R1) step 0/1/2".
+- R2: QA investment-return drag, mid1 display 'Fixed 3.0% (overrides allocation)', mid2 'Fixed 6.5% ...'. Oracle "PASS E4".
+- R3: QA portfolio drag, account amounts mid-drag go ['$639K','$4K','$127K'] -> ['$224K','$1K','$44K'] at 270000. Oracle "PASS E5".
+- Spending preview on QA drags: S/js/preview2.js (preview panel opened before each drag), fixture B, base and branch give identical output:
+  - QA inflation: net 3.6% -> 5.8% -> 7.0%.
+  - QA decline: 7.0% -> 6.2% -> 4.2%.
+- Phase labels (% and $/mo) update live on in-card and QA drags. The removed updatePhaseSliderLabel oninput is covered by the sync path.
+- Behaviour change, intended by D1: narrowing the portfolio range select below the saved value now leaves the display and aria at the exact value ($2,650,000), with the thumb pinned at the max. Base displayed the clamped $1,000,000.
+
+== C6 Generic render->submit round-trip test: PASS on the written list (gaps G1-G4 below)
+- Fails on base: ws1_generic_roundtrip_test.go copied onto 643fa54, `go test -count=1 -v -run TestWS1Generic ./internal/handlers/whatif/`. All 7 families FAIL with the right reasons, for example:
+  - "NAMED range current_monthly_cost: value="1655" ... step="50"".
+  - "NAMED number taxable_cost_basis: value="276147" step="1000" is off its grid".
+  - ".guardrails.floor_cut_pct: 10.25 -> 10".
+  - ".social_security.cola_rate: 0.0145 -> 0.015".
+- Mutations: S/mutate.py applies each mutation ALONE and runs `go test -count=1 ./internal/handlers/whatif/`. Log in S/mut_named.log. Every mutation was reverted and checked "OK (== snapshot)". Results, all 14 KILLED:
+  - (a) name= on current_monthly_cost range: Generic_HealthcarePerson + ...MonthlyCostRangeHasNoName.
+  - (b) step=1000 on cost basis: Generic_RateAssumptions + ...CostBasisStepIsAny.
+  - (c) %.0f on tax_deferred_percent: Generic_RateAssumptions (".tax_deferred_percent: 83.037 -> 83") + ...AllocationPercentExactValue.
+  - a2, name= on Medicare cost range: Generic_HealthcarePerson ("value="2150" max="2000"").
+  - a3, name= on both pre-Medicare inflation ranges: Generic_HealthcarePerson.
+  - c2, %.0f on roth_percent: Generic_RateAssumptions ("0.5 -> 0").
+  - c3, %.0f on tax_deferred_stock_percent: Generic_RateAssumptions ("70.5 -> 70").
+  - U1, %.1f on floor_cut_pct: Generic_Guardrails ("10.25 -> 10.2").
+  - U2, step=0.5 on floor_cut_pct: Generic_Guardrails (off grid).
+  - U3, name= on portfolio-slider: Generic_PortfolioSettings.
+  - U4, name= on inflation-rate-slider: Generic_RateAssumptions ("collides with a same-named sibling").
+  - U5, name= on phase multiplier range: Generic_SpendingPhases.
+  - U6, %.0f on fra_benefit: Generic_SocialSecurity ("4114.9 -> 4115").
+  - U7, %.0f on roth annual_amount: Generic_RothConversion ("50000.5 -> 50000").
+- Fresh same-class mutations the worker never saw (S/mut_fresh.log):
+  - The lead's three are all KILLED:
+    - F1, %.1f on property_tax_inflation: Generic_PortfolioSettings ("2.25 -> 2.2").
+    - F2, name= on the post-Medicare inflation range (first occurrence, and both): Generic_HealthcarePerson.
+    - F3, step="100" on the ACA credit: Generic_RateAssumptions ("value="10850" step="100" is off its grid").
+  - Also KILLED: F9 %.2f state tax, F10 name= investment-return-slider, F11 name= spending-decline-slider, F12 name= ACA-cost range, F13 %.0f spouse_fra_benefit, F14 %.1f COLA x100, F16 %.1f dividend yield.
+  - SURVIVED (exit 0, "ok budget2/internal/handlers/whatif"):
+    - G1, the test's browser model treats a number input with no step attribute as step="any". HTML's default step for number inputs is 1.
+      - F4 drops step="any" from fra_benefit. F15 drops it from floor_drop_pct.
+      - Chromium (S/js/nostep.js): `<input type=number min=0 max=10000 value=4114.9>` gives checkValidity false, stepMismatch true, "The two nearest valid values are 4114 and 4115". floor_drop_pct 5.5 gives the same result.
+      - So either mutation blocks the whole form in a browser (the C2 failure mode), and the Go test passes it.
+    - G2, number min/max validity is not modelled. F17 sets max="10" on floor_cut_pct with 10.25 stored. Chromium: rangeOverflow true, form invalid. The test does not catch it.
+    - G3, fixture values that are already whole numbers make %.0f mutations invisible:
+      - F5, %.0f on care_monthly_cost (fixture 4321).
+      - F6, %.0f on aca_premium_credit (fixture 10850).
+      - F7, %.0f on the hidden medicare_monthly_cost (fixture 2150).
+    - G4, the glide-path inputs this diff converted (start/end_stock_pct -> formatExact) never render, because no fixture enables the glide path. F8, %.0f on start_stock_pct, survives.
+  - The oracle would catch G1/G2 (its C2 check). The permanent Go test does not.
+
+== C7 No float artifacts anywhere a user sees or hears: FAIL
+D1 — formatExact (render.go:616, `math.Round(v*1e10) / 1e10`) does not compute "the shortest decimal of the value rounded to 10 places" for real cent values. It prints binary-float noise into visible number fields.
+- Repro in a real server (fixture A with taxable_cost_basis 388354.59, S/fxK):
+  - `curl /whatif`: id="taxable-cost-basis-input" value="388354.5900000001".
+  - Hidden portfolio_value (fixture 262144.03): value="262144.0300000001".
+  - Chromium (S/js/artifact.js): the Cost Basis input's .value is "388354.5900000001". Screenshot S/costbasis.brK.png shows that text in the field.
+  - Firing the form's own change trigger (untouched) POSTed "taxable_cost_basis=388354.5900000001" and "portfolio_value=262144.0300000001". Saved JSON is now 388354.5900000001 / 262144.0300000001 (basisBitEqual false).
+- Lead's own oracle: a scratch copy of .swarm/tier3/WS1 with only the fixture's cost basis changed 276146.86 -> 388354.59 (S/oraclecopy), run against the snapshot, gives:
+  - "FAIL E2 (D4): no float artifacts shown or announced (['taxable_cost_basis=388354.5900000001'])".
+  - Last line "ORACLE FAIL". Criterion 1 still PASSes there, within 1e-9.
+- Mechanism: 388354.59*1e10 is 3883545900000000.5 in float64. math.Round rounds half away from zero to ...001, and /1e10 then lands 1 ulp above the stored value. For |v| >= 1e8 the product is not exact at all.
+- Extent (temporary Go test calling the real formatExact, S/probes/):
+  - Exhaustive by cent over $0-$100,000: 0 of 10,000,000 values affected.
+  - $100,000-$900,000: 1,505,728 of 80,000,000 (1.9%), the smallest being $262,144.03.
+  - Sampled $900K-$100M: 0 of 3,000,000 samples.
+  - Sampled $100M-$1B: 40,683 of 500,000 (8.1%).
+  - Whole dollars 0-20M, 3- and 4-decimal percents 0-100, and COLA x100 (0-0.1 by 0.0001): 0 artifacts.
+  - Exposed fields, all rendered with formatExact:
+    - taxable_cost_basis: visible, max 1e9.
+    - roth annual_amount: visible, max 1e6.
+    - portfolio_value: hidden, but the stored value is rewritten.
+  - The oracle fixture (276146.86) and the Go fixtures are not affected values, so both pass.
+- Attempt-1 D4 values are now clean (`curl`): COLA 0.028->"2.8", 0.029->"2.9", 0.059->"5.9", 0.07->"7", 0.0145->"1.45". Oracle "PASS E2" on its own fixture.
+- Missing: a formatExact whose output is the shortest decimal of the value correctly rounded to 10 places, for every magnitude a WS1 field can hold (at least up to 1e9), plus a test that pins it (e.g. 388354.59, 262144.03, 255122409.87).
+
+== C8 Suites: PASS
+- `GOFLAGS=-count=1 rtk proxy make check` in the work copy: exit 0, "✓ all checks passed", 52 "ok" packages, 0 FAIL lines. Includes "ok budget2/internal/handlers/whatif 12.688s", "ok budget2/internal/templates", "tailwind.css is up to date", "No vulnerabilities found."
+- `go test -count=1 -v -run TestWS1 ./internal/handlers/whatif/`: 18/18 PASS.
+- `node --test web/static/js/*.test.cjs`: tests 28, pass 28, fail 0.
+
+== D2 — the .50 display check the lead asked for: NOT confirmed (dual-formatter class; lead to classify against C4)
+- The 8 switched spans (formatDollars, half-up) agree with their aria and with JS formatWholeDollars (Math.round) on .50 values. S/js/halves.js, fixture H, branch, pre-JS == post-JS:
+  - 1654.50 -> "$1,655"; 1200.50 -> "$1,201"; 612.50 -> "$613"; 2437512.50 -> "$2,437,513".
+  - These show consistently in card, QA and aria.
+- The same healthcare card's Coverage Timeline (healthcare-person.html:259-308, `${{formatNumber ...}}`, %.0f half-even) shows "ACA $1,654" and "Medicare $1,200". The switched display directly above shows "$1,655" / "$1,201".
+- Base, what the user saw after JS: Medicare 1200.50 read "$1,200" in both places, so they agreed. The branch introduces the Medicare disagreement.
+  - For 1654.50, base already disagreed ("$1,650", the snapped value, vs "$1,654").
+- Other surfaces:
+  - present-value.html formatMoney shows "$2,437,512.50". Different precision; consistent with $2,437,513 when rounded half-up.
+  - No other /whatif template renders these four values (grep of web/templates).
+
+== SCOPE
+- The snapshot differs from base 643fa54 in exactly the 14 manifest files: 0 missing, 0 extra, 0 removed.
+- Only other entries: gitignored tmp/ (make check's tailwind artifacts, `.gitignore:4:tmp/`), plus empty internal/config/data/ (`.gitignore:10:data/`) and testdata/uploads/ (0 files).
+- No .swarm/critical.globs path touched.
+
+== Beyond-scope observations (backlog, not FAIL)
+- O1 (carried): named ranges projection_years, tax_deferred_delay_years, employer_coverage_years and steady_state_override_year are still named and carry no aria. min_monthly_spending_real keeps step=0.01 with default {{.}} formatting. Not in the lead's enumeration.
+- O2 (pre-existing, O4 of attempt 1): percent1 values on an exact tie render server-side with Go %.1f (half-even) and then with JS toFixed:
+  - 7.25 shows "7.2%" then "7.3%"; 6.25 shows "Fixed 6.2%" then "Fixed 6.3%"; 2.25 shows "2.2%" then "2.3%".
+  - Aria follows the display each time, so C4 holds, but the user and screen reader see two readings of one saved value.
+- O3: the COLA x100 / ÷100 round trip drifts 1 ulp for 266 of 1001 COLA values (e.g. 0.028 -> 0.027999999999999997). The drift comes from handler arithmetic, not rendering. Same on base, under 1e-9.
+- O4: syncQuickAdjustAriaValueTexts briefly writes the 'raw' format into investment_return and monthly_living_expenses mirror aria. Both are overwritten synchronously in the same syncQuickAdjustKey call, so no observable effect was found.

@@ -1,0 +1,23 @@
+== build /home/darrell/bin/ai/budget2/.worktrees/ws3
+FAIL [a-to-b] GET /whatif 200 (got 500, errors ['Analysis failed', 'analysis computation failed'])
+FAIL [a-to-b] Year-by-Year renders (results-full None, 0 rows)
+FAIL [a-to-b] guardrail cuts still act BEFORE the transition (cut years [])
+PASS [a-to-b] no guardrail multiplier after the transition into the guardrail-less step (D3: multiplier 1.0) — offending years []
+== [a-to-b] 3 check(s) failed
+FAIL [a-to-b] server log contains a panic
+2026/09/23 10:20:13 whatif: fast analysis panicked: runtime error: invalid memory address or nil pointer dereference
+panic({0xc007a0?, 0x19142a0?})
+	/home/darrell/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.26.6.linux-amd64/src/runtime/panic.go:860 +0x13a
+PASS [b-to-a] GET /whatif 200 (got 200)
+PASS [b-to-a] Year-by-Year renders (results-full 200, 32 rows)
+PASS [b-to-a] no guardrail multiplier before/at the transition — offending years []
+FAIL [b-to-a] guardrails start acting after the transition into the guardrail step (D3) — cut years []
+== [b-to-a] 1 check(s) failed
+FAIL [missing] D4: failed analysis still renders the inputs column + Scenario Chain card + results area (rate False, chain False, results False; status 500)
+PASS [missing] D4: the failure reason is shown on the page (found ['Analysis failed', 'failed to load chained scenario'])
+PASS [missing] D4: no projection figures are shown for a plan that failed to analyse (0 year rows)
+FAIL [missing] the chain step's own Remove control works from the failed page (None -> None)
+FAIL [missing] after removing the step the plan analyses normally (status None, links None, rows None)
+== [missing] 3 check(s) failed
+== 4 failure(s)
+ORACLE FAIL

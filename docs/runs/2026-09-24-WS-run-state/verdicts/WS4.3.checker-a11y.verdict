@@ -1,0 +1,174 @@
+VERDICT: PASS
+CHECKER: checker-a11y
+FAMILY: anthropic
+TASK: WS4
+ATTEMPT: 3
+---
+## 0. Scope confirmation
+
+`diff` of WS4.2.diff vs WS4.3.diff (both cumulative vs master 643fa54):
+ONLY `web/static/js/base.test.cjs` differs — attempt 3 adds two new
+mutation-killing unit tests (checker-tests' WS4.2 FAIL: M1/M2 guard
+isolation). Byte-for-byte identical: `handlers.go`, `base.js`, all five
+templates (`bigticket-card.html`, `expense-sources-list.html`,
+`income-sources-list.html`, `onetime-card.html`, `pages/whatif.html`).
+This means the entire rendered DOM/CSS/JS surface a11y audit runs against
+is IDENTICAL to attempt 2 (which I hold a clean PASS for). I still built
+and drove the real attempt-3 snapshot end-to-end rather than trusting the
+diff claim alone.
+
+## Method
+
+Built `go build ./cmd/server` from the WS4.3 snapshot (no `.git`), ran it
+on 127.0.0.1:55895 against a `cp -rL` copy of `/home/darrell/bin/ai/
+budget2/data` (BUDGET2_BACKUP_DIR/IMPORT_DIR under scratch, BUDGET_DEBUG=
+false) — never :8080, never a repo-root binary. Drove it with real
+Playwright (Chromium, NODE_PATH=.../e41f203b7505f1fb/node_modules)
+against the live templates/JS/handlers, corroborated with `axe` (@axe-
+core/cli 4.13.0, `--chrome-options=blink-settings=preferredColorScheme=
+1|2`) and `go test`/`node --test`. Server killed after (confirmed down:
+curl → connection refused).
+
+## 1. Retargeted Add-form rejections, both themes — PASS (ACCESSIBILITY.md
+   point 5 / WCAG 4.1.3)
+
+Income (live, real server, inverted date range via a later start_month,
+avoiding native `min`-attribute blocking): FIRST rejection, SECOND
+identical rejection, and a THIRD *different-message* rejection, light +
+dark — alert-count stayed exactly 1 throughout (no nesting, no
+re-duplication):
+```
+PASS A1 income FIRST (light/dark)   before=0 after=1
+PASS A2 income SECOND identical     count=1 (no re-announce)
+PASS A4 income DIFFERENT message    count=1 (re-announced, not duplicated)
+```
+`ariaSnapshot()` of `#whatif-add-income-error` confirms structure and
+non-nesting directly:
+```
+- alert:
+  - img
+  - text: Error
+  - paragraph: Through month cannot be before the start month
+```
+Expense (live, real server, same inverted-range technique): FIRST
+rejection alert-count=1, both themes.
+
+Bigticket/onetime/healthcare (route-intercepted 400 carrying the real
+`renderError` fragment shape and `HX-Retarget` header, all required
+fields filled first so the client doesn't block submission itself): all
+three, both themes, alert-count=1. This is the same technique the
+attempt-2 verdict used for its synthetic-5xx case, applied here because
+their business-rule rejection triggers are less direct to reach from the
+DOM than a date-range check — it exercises the identical client
+announcement/dedupe logic (`errorHost`/`buildErrorNode`/`findMarked`) as
+a real server 400 would.
+
+## 2. Non-retargeted edit-row rejection (income, Through before Starts) —
+   LIVE, PASS
+
+First attempt at this hit htmx's *native* HTML5 constraint validation
+(`htmx:validation:halted`) because both `start_month`/`end_month` share
+one `min` attribute — pushing `end_month` below it blocks the request
+client-side before it ever reaches the server. Retried with the same
+later-start technique as the Add forms (both fields stay ≥ `min`, only
+start > end triggers the server's 400): real PUT fired, 400 returned,
+single `[data-wf-inline-error]`/`role="alert"` node, both themes:
+```
+PASS D1 edit-row rejection (light/dark)   marked=1 alerts=1
+PASS D2 focus stayed on the edited end_month input (light/dark)
+```
+
+## 3. Synthetic 5xx and text/plain error body — PASS
+
+Route-intercepted `POST /whatif/onetime`: a 500 with a renderError-shaped
+HTML body → single alert (count=1). A second run returning a bare
+`text/plain` panic body → still single alert via the JS's textContent
+fallback path (`buildErrorNode`), no throw, no duplicate.
+
+## 4. Poll sentinel — PASS
+
+Route-intercepted `GET /whatif/poll**` → 500 continuously across two real
+2s poll cycles (4.5s wait): grid child count unchanged (3→3), zero
+`[data-wf-inline-error]` nodes anywhere — the poll never re-announces.
+
+## 5. Page-load silence — PASS
+
+Fresh `/whatif` load: 0 `[role="alert"]` nodes.
+
+## 6. reportValidity path — PASS
+
+Negative property-tax input (`min="0"`): `checkValidity()` false, ZERO
+requests to `/whatif/settings` (route-counted), focus stayed on
+`monthly-property-tax-input` (native browser validation UI keeps focus on
+the invalid field automatically).
+
+## 7. Keyboard reachability / focus indicator — PASS
+
+Focused the income Add submit button via `.focus()` (no mouse), fired
+`Enter`: request sent, single alert appeared. Computed style on the
+focused button: `outline: solid 2px` — visible indicator, not suppressed.
+
+## 8. Landmarks/headings — PASS (point 1)
+
+`h1Count=1, main=1, nav=1, header=1` on `/whatif`.
+
+## 9. Contrast, both themes — PASS (points 7/12)
+
+Fixed a bug in my own probe first: the outer `[role="alert"]` div doesn't
+itself carry the `text-negative` color class (only its nested `<p>`
+does), so my first pass measured inherited black-on-purple in dark mode.
+Corrected to read the inner text node's computed color:
+- Light: text `rgb(190,18,60)` on bg `rgb(255,241,242)` → **5.72:1**.
+- Dark: text `rgb(253,164,175)` on bg `rgb(41,23,42)` → **8.88:1**.
+- Border vs bg ≥3:1 both themes (5.72:1 light, 8.88:1 dark — border and
+  text share the same `text-negative`/`border-negative` token here).
+Matches attempt 2's numbers exactly (unchanged markup/CSS).
+
+## 10. Reflow at 320/375 — PASS for new/changed content; one PRE-EXISTING,
+    out-of-scope defect reconfirmed with identical provenance
+
+- 375px: doc `scrollWidth`=375=`innerWidth`; error fragment `scrollWidth
+  === clientWidth` (297), no internal clipping.
+- 320px: doc `scrollWidth`=344 (24px overflow). Reproduced on a **fresh
+  page load with no error ever triggered** (baseline probe): identical
+  344px, and `document.querySelectorAll('body *')` walk confirms the
+  widest element is the Big-Ticket "Add Item"
+  `<button class="px-3 py-1 bg-accent-strong...">` — same element,
+  same 344px, as WS4.1's and WS4.2's identical findings. Untouched by
+  WS4.2.diff AND WS4.3.diff (that file — `bigticket-card.html` — is
+  byte-identical since master). OBSERVATION, not a FAIL: pre-existing,
+  out of this task's scope.
+
+## 11. Automated audit (axe-core 4.13.0, both themes forced) — PASS
+
+`axe http://127.0.0.1:55895/whatif --tags wcag2a,wcag2aa,wcag21a,
+wcag21aa,wcag22aa` with `preferredColorScheme=1` and `=2`: **0
+violations** in both runs.
+
+## 12. Regression tests — corroborating
+
+`go test ./internal/handlers/whatif/...` → ok (9.6s). `node --test
+web/static/js/base.test.cjs` → **12/12 pass**, including the two new
+attempt-3 tests (`M1`: load-triggered sentinel under a non-forbidden
+parent still gets no inline error; `M2`: an eligible form-less control
+whose only host is forbidden still gets no inline error) — these isolate
+the two guards in `errorHost()` that attempt-2's tests had left
+conflated, closing the mutation-testing gap checker-tests found in WS4.2.
+Not the a11y audit itself, but confirms the traced client behavior isn't
+a fluke of my specific probe inputs.
+
+---
+FINAL: PASS. Attempt 3's only change (`base.test.cjs`, two new unit
+tests) touches no rendered surface; independently re-verified live
+against both themes anyway rather than resting on that claim. Every
+check the brief named passes: retargeted Add rejections (income,
+expense, live; bigticket/onetime/healthcare, route-intercepted) single
+`role="alert"` no nesting (ariaSnapshot-confirmed); non-retargeted
+edit-row rejection single-announced with focus retained; synthetic 5xx
+and text/plain bodies handled safely; poll sentinel never re-announces;
+no page-load noise; reportValidity blocks and keeps focus; contrast
+5.72:1 light / 8.88:1 dark; keyboard-only submission works with a
+visible focus ring; landmarks/heading structure intact. One PRE-EXISTING,
+out-of-scope 320px reflow defect (unrelated Big-Ticket button, present on
+a page with no error ever triggered, byte-identical to WS4.1/WS4.2's
+finding) reconfirmed as an OBSERVATION only.

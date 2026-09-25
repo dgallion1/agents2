@@ -1,0 +1,6 @@
+internal/handlers/whatif/handlers.go
+internal/handlers/whatif/handlers_rates.go
+internal/handlers/whatif/ws5_glide_persons_test.go
+web/static/js/whatif-rate-assumptions.js
+web/static/js/whatif-rate-assumptions.test.cjs
+web/templates/components/whatif/rate-assumptions.html

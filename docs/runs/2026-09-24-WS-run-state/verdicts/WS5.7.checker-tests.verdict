@@ -1,0 +1,121 @@
+VERDICT: PASS
+CHECKER: checker-tests
+FAMILY: anthropic
+TASK: WS5
+ATTEMPT: 7
+---
+Contract: SPEC.md ruling 2026-09-24m, which applies ruling l's contract fix. The underlying
+contract is ruling i (I1-I5) plus ruling k items (1) and (2).
+Snapshot: scratchpad/snap/WS5.7-tests (S). Mutations ran in a cp -a copy, checkers/WS5.7-tests/work.
+Throttle: nice -n 19, GOMAXPROCS=4, GOFLAGS="-count=1 -p=2", one go process at a time.
+Evidence files are in scratchpad/checkers/WS5.7-tests/.
+Tree identity:
+- `diff -rq --exclude=.git S /home/darrell/bin/ai/budget2/.worktrees/ws5` gives rc=0 at the
+  start and after every suite.
+- The same command on work/ gives rc=0 after all mutations.
+
+1. Scope -- PASS
+   - `diff -rq snap/WS5.6-tests snap/WS5.7-tests` lists exactly two files:
+     internal/handlers/whatif/handlers_rates.go and ws5_glide_persons_test.go.
+   - handlers_rates.go changes comments only. Command: tokcmp, which uses go/scanner mode 0 and
+     skips comments, on the a6 and a7 files. Output: "tokens a=3749 b=3749 / NON-COMMENT TOKEN
+     STREAMS IDENTICAL", rc=0.
+   - The comparator is calibrated both ways:
+     - One string literal changed gives "FIRST DIFF at token 660", rc=1.
+     - A comment-only edit gives IDENTICAL, rc=0.
+   - The difflib hunk (a6a7.diff) is @@ -84,13 +84,15 @@ and contains `//` lines only.
+   - `git --no-optional-locks diff HEAD --name-only` in the worker tree lists 9 files, with 0
+     untracked. That equals .swarm/manifests/WS5.7.files, which cmp-equals WS5.6.files.
+   - No .swarm/critical.globs path is touched: no engine/**, settings.go,
+     settings_current_month.go or storage/**.
+
+2. NBSP -- PASS
+   - `grep -c $'\xc2\xa0'` on the test file prints 0.
+   - A python byte count agrees: c2a0=0, a0=0, and 0 occurrences of " " or "\xa0".
+   - The only non-ASCII characters are 144 U+2500 box-drawing characters in divider comments on
+     lines 17, 226, 631 and 632.
+   - `od -c` shows line 658 as ASCII only: `const nbspName = "Ann" + string(rune(0x00A0)) + "Lee"`.
+   - `od -c` shows line 672 as ASCII only: `if !strings.ContainsRune(nbspName, rune(0x00A0)) {`.
+   - The case runs at runtime with a U+00A0 name:
+     - A throwaway print in work/ printed "RUNCASE .../Ann_Lee/empty#01 name=41 6e 6e c2 a0 4c 65 65".
+     - It printed the same bytes for unparseable#01 and after_start#01.
+     - The rendered 400 message starts "41 6e 6e c2 a0 4c 65 65 20 6e 65 65 64 73...", and
+       equal=true.
+     - All 18 subtests pass (6 names x 3).
+     - The print was reverted and the file cmp-matches the worker tree (nbsp_runtime.log).
+   - A separate probe test (removed afterwards; rc=0) printed:
+     - "nbspName runes: [U+0041 U+006E U+006E U+00A0 ...]"
+     - the form body is "person_name%5B%5D=Ann%C2%A0Lee"
+   - The guard is live. Command: `mut.py G_const_0x0020` changes only the const, 0x00A0 -> 0x0020.
+     Result: exit=1, "ws5_glide_persons_test.go:673: nbspName must contain an actual NBSP
+     (U+00A0) character, not a plain space". KILLED; restore cmp IDENTICAL.
+   - The attempt-6 survivor is now killed. Command: `mut.py N_handler_nbsp_to_space` inserts
+     `p.Name = strings.ReplaceAll(p.Name, string(rune(0x00A0)), " ")` into personsSaveErrorMessage
+     in both the birthErr branch and the afterErr branch.
+     - Result: exit=1. The subtests that fail are exactly Ann_Lee/empty#01, unparseable#01 and
+       after_start#01.
+     - Example: `message = "Ann Lee needs a birth month", want "Ann Lee needs a birth month"`.
+     - Each of the three messages is guarded separately. KILLED; restore cmp IDENTICAL.
+     - The whole-file NBSP normalisation (attempt 6's N2) is now vacuous: the file holds 0 NBSP
+       bytes.
+
+3. Comment matches the code -- PASS
+   - handlers_rates.go:88-93 now says:
+     - PersonBirthMonthError and PersonBirthMonthAfterStartError "each carry the failing row's
+       PersonID";
+     - InvalidStartDateError "concerns no row ... and is matched by type alone";
+     - statusForMutationError "has no case for any of the three and falls through to 500".
+   - A reflect probe confirms the fields:
+     - "InvalidStartDateError fields=[Err] hasPersonID=false"
+     - "PersonBirthMonthError fields=[PersonID Name Err] hasPersonID=true"
+     - "PersonBirthMonthAfterStartError fields=[PersonID BirthMonth StartDate] hasPersonID=true"
+   - The probe shows statusForMutationError returns 500 for each of the three types, wrapped
+     with %w (probe.log).
+   - handlers_rates.go:156-158 matches InvalidStartDateError by errors.As only. It does no ID
+     lookup.
+
+4. Regressions -- PASS
+   Each mutation was applied alone with mut.py, which requires an exact-once anchor. Each ran a
+   targeted `go test ./internal/handlers/whatif/ ./internal/services/retirement/prepare/ -run ...`,
+   was restored, and cmp'd IDENTICAL against the worker tree.
+   - M1, identify by Name: KILLED by ..._SameNamePair. Output: `message = "Pat Twin's birth month
+     \"1990-01\"...", want "...\"19711-08\"..."`.
+   - M2 on the name, %q in all three messages: KILLED by TestPersonsSaveErrorMessage, all 18
+     NamesXBirthMonths subtests, BackslashConfusionPair, SameNamePair and
+     UnparseableValueSpecialChars.
+   - M2 on the value, %q in the unparseable message: KILLED by
+     ..._UnparseableValueSpecialChars/1971\08 and /19"71-08. Output: `"1971\\\\08"` versus want
+     `"1971\\08"`.
+   - M3, "invalid birth_month" -> "invalid birth month" in the Error() text: KILLED by
+     TestValidatePersons_ErrorTextPinned/empty_birth_month and /unparseable_birth_month, and by
+     TestFrom_PersonBirthMonthError_ErrorsAsThroughWrap.
+   - M4, swap the empty and unparseable branches: KILLED. The failures include
+     PersonsValidationErrorClasses, NamesXBirthMonths */empty and */unparseable, both pair tests
+     and the SpecialChars test.
+   - M5, after-start untyped (fmt.Errorf with identical text): KILLED by
+     TestValidatePersons_TypedErrors_ErrorsAsAndPersonID/birth_month_after_start...,
+     PersonsValidationErrorClasses/birth_month_after_start_date_(named) and all six
+     */after_start subtests.
+   - Logs are in mut.<name>.log and run.*.txt.
+
+5. Suites -- PASS
+   - `make check` in S (make_check.log):
+     - vet, staticcheck, govulncheck ("No vulnerabilities found.") and css-verify ("tailwind.css
+       is up to date") all ran, followed by test.
+     - 52 "ok", 0 FAIL, 0 "(cached)", "✓ all checks passed", "make check exit=0".
+   - `nice -n 19 node --test web/static/js/whatif-rate-assumptions.test.cjs`: tests 18, pass 18,
+     fail 0, exit 0 (node_test.log).
+   - Oracle: `TMPDIR=<scratch>/tmp nice -n 19 .swarm/tier3/WS5/accept.sh S`:
+     - exit 0, 21 PASS, 0 FAIL;
+     - `od -c` of the last line shows "ORACLE PASS\n";
+     - `ps` shows no leftover server (oracle.checker.log).
+   - The lead's oracle.7.log also ends "ORACLE PASS".
+   - gofmt -l on both changed files prints nothing.
+
+OBSERVATIONS (beyond scope; not grounds for FAIL):
+- The const comment says attempt 5's ASCII-space failure had "the same root cause one layer
+  up". That is consistent with ruling l ("NBSP encoding failed twice"), but it was not
+  independently verified.
+- Go subtest naming still maps both "Ann\tLee" and the NBSP name to "Ann_Lee", with "#01" for
+  the second. This is cosmetic.
+- Siblings S1 and S2 (ruling j) were not re-tested. They are outside attempt 7's scope.

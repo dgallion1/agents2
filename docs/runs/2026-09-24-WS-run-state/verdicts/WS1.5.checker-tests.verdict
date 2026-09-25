@@ -1,0 +1,140 @@
+VERDICT: FAIL
+CHECKER: checker-tests
+FAMILY: anthropic
+TASK: WS1
+ATTEMPT: 5
+---
+Scratch: /tmp/claude-1000/-home-darrell-work-agents2--claude-worktrees-budget2-what-if-review-24ec2e/28920e62-8027-4a38-9437-8967166cd576/scratchpad/checkers/WS1.5-tests (called S below)
+- work = cp -a of snapshot WS1.5-tests. base = git archive 643fa54. mut0-7, mutB and oC1k/oC1e/oC1h are mutation copies. probe and probe2 are instrumented copies.
+- End state: `diff -rq S/work <snapshot> -x tmp` gives "work == snapshot". mut0-7 are equal to work. Every mutation line reads "revert=OK".
+- ps shows no scratch servers. I never contacted :8080, never ran a repo-root binary, used no MCP tools, and made no git state changes.
+
+SUMMARY
+- FAIL on exactly one item: the kill-list entry "the C1 regression (client recompute on a drag to 0)" is killed only on the in-card display.
+  - Mutant C1k is a client recompute of expected return on a drag to 0, applied to the Quick Adjust display only.
+  - It survives the full `go test ./...` plus node, and it also passes oracle v6.
+  - In Chromium on the live-data copy it shows exactly the O1 symptom: "~6.1%" where the server shows "~6.2%".
+- Everything else holds:
+  - The product meets C1 and C2 and every earlier criterion.
+  - 27 of 27 literal kill-list mutations are killed by the full suite.
+  - The fixture rule holds on 43 of 43 sites.
+
+== Suites: PASS
+- `GOFLAGS=-count=1 go test ./internal/handlers/whatif/... ./internal/templates/...` gives "ok budget2/internal/handlers/whatif 9.749s" and "ok budget2/internal/templates 2.044s" (S/suites.log).
+- `node --test web/static/js/*.test.cjs` gives "tests 51 / pass 51 / fail 0".
+- `GOFLAGS=-count=1 rtk proxy make check` gives 52 "ok" packages, "tailwind.css is up to date", "No vulnerabilities found.", "✓ all checks passed" and rc=0 (S/make_check.log).
+
+== Oracle v6: PASS
+- `TMPDIR=S/tmp accept.sh S/work` gives rc=0 with 277 PASS and 0 FAIL. The last line is "ORACLE PASS" (S/oracle.work.log).
+- Includes "PASS coverage: 18 stored-value forms" and "PASS criterion 1: saved plan identical ... (0 change(s))" in both variants.
+- Includes "PASS E8 ... ('Using asset allocation (~6.2% expected)' vs served 'Using asset allocation (~6.2% expected)')".
+
+== Earlier criteria: PASS
+Commands: runprobes.sh with the untouched.js, servedlive.js and ariaeq.js probes (copied from WS1.4), liveinput.js, and zz probes. Fixtures: exact17, ties, decline, phase, and live = `cp -rL /home/darrell/bin/ai/budget2/data`.
+- Identity, EXACT:
+  - exact17: "forms=17 valid=14/14 sent200=17 bit-exact changes: 0".
+  - ties, decline, phase and live: 1 change each, ".social_security.cola_rate_set: added True". That is F-026 bookkeeping; none of these plans carries the flag.
+  - Exponent-valued inputs: [] on all five.
+  - Go probes (zz_checker_exact_test.go copied from WS1.4) report one "saved plan changed": the WS1.4 invalid fixture (taxable 99.99999999999999 + 0.1 cash > 100, pre-existing clamp). The other failures are only the numericArtifact heuristic (O5, see findings).
+- Forms valid:
+  - valid=14/14 or 13/13 on every fixture, including live.
+  - Oracle criterion 2 PASS for every form.
+  - The only invalid fields are the empty Add-form "amount" inputs, which are not stored-value forms.
+- Touched path: liveinput.js reads the server-rendered hidden value after each debounced save:
+  - "H:current_monthly_cost=1850" in-card and "=2950" via Quick Adjust.
+  - "H:medicare_monthly_cost=1250".
+  - "H:portfolio_value=2500000" in-card and "=3100000" via Quick Adjust.
+  - "H:monthly_living_expenses=3700" and "=4100" via Quick Adjust.
+  - Phase 0.35 and 0.95.
+  - Oracle criterion 3 PASS.
+- aria == display (ariaeq.js): ranges with aria, and aria!=display, before and after JS:
+  - exact17 (35, 0), ties (35, 0), decline (24, 0), phase (25, 0), live (25, 0).
+- Quick Adjust behaviours: oracle E3/E4/E5 PASS.
+- R-EXACT':
+  - zz TestZZColaSweep: "mismatches=0 exponent=0" for k/1e4, k/1e5, k/1e6 and random 10- to 15-significant-digit values (211,006 values).
+  - TestZZColaE2E: "COLA E2E mismatches=0/14".
+  - Rendered values include "12923.603942198184", "999999999.9999999", "0.0000001" and "1000000000000000".
+- R-FMT', including no load-time rewrite (servedlive.js):
+  - Every fixture, including live: "load diffs 0 | QA-open diffs 0 | swaps 13-14 with-diffs 0 not-sent 0".
+  - Live input vs the server re-render (fetch /whatif after the save, with an 800 ms wait for the 500 ms debounce): decline 26/26 EQUAL, phase 12/12 EQUAL, live 17/17 EQUAL. On live, 9 decline-slider steps were not rendered on that plan.
+
+== C1 (product): PASS
+S/js/c1.js drags each range, reads the in-card and Quick Adjust displays plus both arias, and compares them with the parsed /whatif after the save.
+- Branch on the live-data copy, all EQUAL, in every case "(~6.2% expected)" = server:
+  - step 1: in-card drag 3->0 after the swap from the 3-save.
+  - step 2: Quick Adjust drag 2.5->0.
+  - step 3: after an unrelated guardrails-form swap, drag 4->0.
+  - steps 4b/4c: after an allocation save, in-card and Quick Adjust drag 5->0 show "(~5.7%)" = server.
+- The live plan has roth_percent 0, and the JS recompute gives 6.1160596, so the fix is load-bearing.
+- base on the same probe: "DIFF ... live=(~6.1% expected) served=(~6.2% expected)" in steps 1, 2 and 3. This reproduces the WS1.4 O1 symptom, so the probe is sensitive.
+- Mutant C1a (the attempt-4 recompute code) on the live copy gives DIFF 6.1 vs 6.2.
+
+== C2 (product): PASS
+- S/sweep: 88,343 values, with real Go output from `go run` of fmt "%.1f".
+  - The values include 12,020 in (-0.05, 0), literal -0, every .25 tie, the .05 grid, and nextafter neighbours of ties.
+- `node js.cjs <branch whatif-quick-adjust.js>`: "mismatches=0 in(-0.05,0)=12020 mismatchesThere=0".
+- The same sweep on the attempt-4 file gives "mismatches=12021", so the sweep is sensitive.
+
+== Fixture rule: PASS
+- S/probe instruments every formatExact / formatExactScaled site and runs `go test -run TestWS1GenericRoundTrip`. Result: "43/43 sites satisfy >=2 decimals or >=16 sig digits" (S/fxprobe.tsv).
+  - Examples: guardrails 5.55/10.55/2.55/0.55/120.55, healthcare 1655.35/2344.65, roth 50000.55, fra 4114.95, COLA "1.0004".
+- A Medicare-coverage person is rendered: healthcare-person.html:211 value "4.35" comes from the hc-c "Morgan" CoverageMedicare fixture.
+
+== Explicit kill list: 27/27 KILLED against the FULL suite
+- `EXACT=explicit.txt python3 mutate5full.py --full` runs `go test ./...` plus node on each mutation alone (S/mutexp.log).
+- KILLED:
+  - F1 %.1f on all 19 sites: guardrails.html:27/47/54/67/73, healthcare-person.html:84/135/211, rate-assumptions.html:117/209/289/320/329/374/383/411/487, roth-conversion.html:51, social-security.html:17.
+  - R5, R6, P5 (now "calculateExpectedReturnFromAllocation().toFixed(1)"), J6, U12 ("would never submit ... PUT /whatif/healthcare/hc-c").
+  - C1a (the attempt-4 client recompute).
+  - C2a and C2c (the attempt-4 sign rule).
+- Also killed (package-scope harness): C1b, C1c, C1l, C1m (recompute variants on both displays or in-card only), C2b (literal -0), C2d, R5b, R6b.
+
+== Full mutation harness: 327 mutations, 231 killed, 96 survived
+- muts5.py = the predecessor's muts4.py, with P5 re-anchored to the new line, plus 19 attempt-5 additions.
+- S/mut5.log: 324 mutations, 229 killed, 95 survived. S/mut5b.log: 3 mutations, 2 killed, 1 survived.
+- All 96 survivors were re-run against the FULL `go test ./...` plus node: 96/96 SURVIVED (S/mutfull.log).
+- Compared with attempt 4 (113 survivors), every named survivor from attempt 4 is now killed.
+
+Survivors, with judgement:
+- FAIL: C1k, a Quick-Adjust-only client recompute on a drag to 0.
+  - The mutation adds this line after the unchanged `detail.textContent = '(~' + expectedReturnText + '% expected)';`:
+    `if (inPanel) detail.textContent = '(~' + roundHalfEvenDecimalString(calculateExpectedReturnFromAllocation(), 1) + '% expected)';`
+  - Result: "SURVIVED ... go=0 node=0" at package scope and on the full suite.
+  - Oracle v6 on the oC1k tree: "ORACLE PASS". E8 drags the Quick Adjust range but reads only #investment-return-display.
+  - Chromium on the live copy with the C1k build: "qa: live=(~6.1% expected) served=(~6.2% expected)" and ariaQa likewise, in steps 1, 2 and 3.
+  - Cause: whatif-rate-assumptions.test.cjs uses a fake DOM whose `closest() { return null; }` is always null. So `inPanel` is never true and the Quick Adjust branch of updateInvestmentReturnDisplay never runs, even though the fixture contains a Quick Adjust display.
+  - Corroboration: C1d (the same Quick-Adjust-only recompute written on the anchored `const expectedReturnText` line) is "killed" only by the P5 self-check's patch-target sanity assert ("sanity: the patch target must exist"). No behaviour assertion catches it.
+  - Missing: a permanent test in which the Quick Adjust display is inside #quick-adjust-panel (so inPanel is true), such that a client recompute on that display alone fails the suite.
+- Note, not named (a template attribute, not a client recompute), but observable: C1e, C1f, C1g, C1h, C1i, C1j.
+  - These are mutations of data-expected-return: %.2f, removed, formatExact, or the wrong figure. No Go test pins the attribute; the node tests hand-write it.
+  - Chromium on the live copy:
+    - C1e: "(~6.24% expected)" vs served "(~6.2%)".
+    - C1g: in-card "(~undefined% expected)".
+    - C1h: Quick Adjust "(~undefined% expected)".
+  - Oracle v6: C1e gives ORACLE FAIL (E8); C1h gives ORACLE PASS.
+- Note, carried from attempt 4 and not in the explicit list (O2/O3): FG 'g',15 per site (42), FV %v per site (40), L2, L3, FE8. The function-level forms FE1, FE2, FE7 and L1 are killed.
+- Note, pre-existing and outside the manifest: GH healthcare-card.html:96 half-up (O4).
+- Note, equivalent: P4 (toFixed on "Fixed X%"). That branch only receives values from step="0.5" ranges (min 0, max 15), where toFixed(1) equals half-even.
+- Note, equivalent or injected (predecessor's judgement; whatif-portfolio-settings.js is unchanged since attempt 4): R4, J7.
+
+== Tests assert what they claim: PASS except C1's Quick Adjust half
+- The C2 table rows match real Go (the sweep above).
+- The J6 test kills J6. The R5 and R6 tests use _writeCount and kill R5, R5b, R6 and R6b.
+- The Go fixture changes are exactly the ≥2-decimal edits plus the Medicare person. No assertions were weakened; the diff against attempt 4 touches only ws1_generic_roundtrip_test.go fixtures.
+
+== SCOPE: PASS
+- Snapshot vs 643fa54: 18 changed and 5 added, which is the 23-path manifest. In diff, not in manifest: []. In manifest, not in diff: []. The only other differences are under tmp/ (tailwind check).
+- Snapshot == .worktrees/ws1 for every manifest path.
+- critical.globs: none touched. All paths are under internal/handlers/whatif, internal/templates and web/.
+- Attempt-5 delta vs attempt 4:
+  - Code: whatif-quick-adjust.js (sign), whatif-rate-assumptions.js (data-expected-return), and the rate-assumptions.html and quick-adjust.html attributes.
+  - Tests: ws1_generic_roundtrip_test.go, whatif-quick-adjust.test.cjs, and the new whatif-rate-assumptions.test.cjs.
+
+== FINDINGS (for the lead; not the FAIL basis)
+- G1 (oracle gap, a lead artifact): E8 reads only the in-card display. C1k and C1h both pass oracle v6 while breaking the Quick Adjust display.
+- G2: data-expected-return has no Go-side pin (C1e-C1j above).
+- G3: stale expected return after an allocation edit.
+  - With investment return 0, typing tax_deferred_stock_percent 70->50 on the live copy leaves the display at "(~6.2%)" until the debounced save's OOB swap brings in the server's "(~5.7%)".
+  - base showed a client recompute, "(~5.6%)", which is itself not the server figure.
+  - This is a consequence of C1's server-provided design. It is transient.
+- G4 (= O5): assertStructuralInvariants' numericArtifact heuristic false-flags legitimately stored 17-digit values (10 hits in zz_checker_exact_test.go, e.g. "14.999999999999998"). This is test brittleness only.

@@ -1,0 +1,104 @@
+VERDICT: PASS
+CHECKER: checker-second
+FAMILY: adversarial
+TASK: WS5
+ATTEMPT: 5
+---
+Scope confirmed first: diffed snap/WS5.4-second vs snap/WS5.5-second directly
+(not just the repo diff) — handlers.go, whatif-rate-assumptions.js,
+rate-assumptions.html are byte-identical between attempts 4 and 5. Only
+internal/handlers/whatif/handlers_rates.go and
+internal/services/retirement/prepare/validate.go(+tests) changed. D6/D7 are
+therefore unregressed by construction; no collateral attack surface there.
+
+Attacks tried against I1-I5 (ruling 2026-09-24i), each with a command:
+
+1. Identification via ID, never Name/text (I1/I2). Read validate.go: three
+   typed errors (InvalidStartDateError, PersonBirthMonthError,
+   PersonBirthMonthAfterStartError) carry PersonID; handlers_rates.go uses
+   errors.As + findPersonByID exclusively for the three typed cases.
+   `regexp`/rePersonsInvalidBirthMonth/rePersonsBirthMonthAfterStart are
+   gone (grep confirmed). The one remaining strings.HasPrefix check only
+   gates the truthful fallback for the OTHER ValidatePersons shapes I2
+   explicitly permits (id/name required, duplicate id, role, primary/spouse
+   count, healthcare link) — it never chooses between the four typed cases.
+   Mutation test: reverted findPersonByID's `persons[i].ID == id` to
+   `persons[i].Name == id`, reran
+   TestHandleWhatIfSettings_PersonsBirthMonthMessage_{BackslashConfusionPair,SameNamePair}
+   -> both FAIL exactly as attempt-4's real defect would predict (message
+   fell back to "Invalid person data: ..."). Restored the file, confirmed
+   `go build ./...` clean again.
+
+2. Duplicate ID ordering (attack list item 1) — live POST with an extra 4th
+   row sharing the primary's ID AND an unparseable birth month: response is
+   `Invalid person data: persons: duplicate id "<uuid>"` — duplicate-ID
+   fires first, never a birth-month message, no panic in server.log.
+
+3. resolveCurrentMonth mutating StartDate before ValidatePersons (attack
+   list item 5) — the sharpest one: saveInternal calls
+   resolveCurrentMonth(settings, now) BEFORE prepare.ValidatePersons, so
+   the date actually compared can differ from the submitted start_date
+   when use_current_month=true. Live POST: submitted start_date=2027-01,
+   use_current_month=true (forces resolve to 2026-09 "today"), primary's
+   birth_month=2026-12 (after the RESOLVED 2026-09, not after the
+   submitted 2027-01). Result: 400 "Alex Primary's birth month (2026-12)
+   is after the plan's start date (2026-09)" — correctly names the date it
+   was ACTUALLY compared against (afterErr.StartDate, populated from
+   s.StartDate post-resolve), not the raw submitted value; settings file
+   confirmed unwritten (start_date stayed 2026-09). No mismatch found.
+
+4. Leading/trailing whitespace — parsePersonsForm (unchanged, handlers.go)
+   already TrimSpaces ID/Name/BirthMonth before ValidatePersons ever runs
+   (live POST of " 2020-01 " saved cleanly as "2020-01", no error), so the
+   %s-verbatim wording in I3 never surfaces stray whitespace; not a live
+   attack surface for this handler.
+
+5. Nil safety / typed-nil: PersonBirthMonthError.Error() and
+   PersonBirthMonthAfterStartError.Error() both nil-guard `e`; Err is
+   always set from a real ParseYearMonth failure before construction;
+   ValidatePersons' success path returns literal `nil`, never a typed nil
+   pointer — no errors.As-on-typed-nil trap.
+
+6. Error()-text consumers (I4): TestValidatePersons_ErrorTextPinned pins
+   all 12 shapes byte-identical to base's fmt.Errorf strings (diffed
+   base validate.go's format strings by hand against the new Error()
+   methods — identical). TestFrom_PersonBirthMonthError_ErrorsAsThroughWrap
+   confirms errors.As sees through prepare.From's "prepare.From: validate:
+   %w" wrap. settings.go:475 (load-time pass, normalizeLoadedWhatIfSettings)
+   only propagates err.Error() unchanged to a generic 500 — not a
+   person-identification consumer. MCP apply_changes never submits Persons
+   (confirmed via overrides.go); any ValidatePersons failure it triggers
+   (through prepare.From inside RunFull) surfaces the same unchanged
+   Error() text, already covered by the pinned-text test.
+
+7. Rendering / XSS (attack list "rendering"): renderError does exactly one
+   html.EscapeString pass on the fmt.Sprintf'd message (unchanged sink).
+   checker-a11y's independent live probe (their verdict, this attempt)
+   posted a name of `<b>x</b>` and confirmed the wire bytes are
+   `&lt;b&gt;x&lt;/b&gt; needs a birth month` with no live `<b>` tag and no
+   double-escaped entities (`&amp;#34;`) anywhere — cross-checked, no
+   disagreement with my own reading of renderError.
+
+8. Wording match to attempt 4's start-date message (I3): attempt 4 built
+   "Invalid projection start date: " + TrimSpace(TrimPrefix(msg,
+   "start_date:")); attempt 5 builds it from startErr.Err.Error() (the
+   inner wrapped ParseYearMonth error, e.g. `invalid month "20266-09"`) —
+   same resulting string, confirmed by construction (TrimPrefix of
+   "start_date: invalid month ..." strips to identical inner text).
+
+Verification commands run (nice -n 19, GOMAXPROCS=4, GOFLAGS="-count=1 -p=2",
+one process at a time): `go build ./...` clean; `go vet
+./internal/handlers/whatif/... ./internal/services/retirement/prepare/...`
+clean; `go test ./internal/handlers/whatif/...` ok (15.6s); `go test
+./internal/services/retirement/...` ok (all subpackages); all servers
+started via ws_build/ws_serve on isolated ports under $WS_TMP, killed via
+ws_stop, never touched :8080 or a repo-root binary.
+
+No defect found inside this attempt's scope (the persons error-message
+path). No collateral change to D6/D7. I5's tests are not tautological —
+verified by an actual mutation kill, not by name.
+
+Observations (not FAILs, out of this attempt's scope, already recorded by
+checker-a11y this attempt): pre-existing dark-mode contrast node on
+guardrails.html's `<summary>`; page-wide axe "incomplete" set; point 5's
+literal aria-describedby link still absent sitewide.

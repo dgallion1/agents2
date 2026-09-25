@@ -1,0 +1,131 @@
+VERDICT: FAIL
+CHECKER: checker-tests
+FAMILY: anthropic
+TASK: WS4
+ATTEMPT: 2
+---
+Scratch dir (SC): /tmp/claude-1000/-home-darrell-work-agents2--claude-worktrees-budget2-what-if-review-24ec2e/28920e62-8027-4a38-9437-8967166cd576/scratchpad/checkers/WS4.2-tests
+Snapshot equals base 643fa54 plus .swarm/diffs/WS4.2.diff. Evidence: `patch -p1` onto `git archive 643fa54`, then cmp on all 10 manifest files printed "same" 10 times.
+Servers: SC/srv (snapshot build), SC/srv-base (643fa54), and SC/srv-att1 (the WS4.1 build, used only to calibrate the fail end). Each ran on a fresh `cp -rL` data copy on a free 127.0.0.1 port via SC/start.sh. All were stopped afterwards ("no scratch servers running"). :8080 was never contacted.
+
+SUMMARY
+Every behaviour criterion passes end-to-end in real Chromium, and attempt 1's failures are gone.
+The task FAILS on AC5 test evidence for R2. Two targeted R2 mutants survive the whole suite (node + Go). One of them breaks R2 in the running app.
+
+GATES
+- `GOFLAGS=-count=1 rtk proxy make check` (SC/make-check.log) passed: vet, staticcheck, govulncheck, "tailwind.css is up to date", 52 packages ok, 0 "(cached)", "ok budget2/internal/handlers/whatif 13.087s", "✓ all checks passed", exit=0.
+- `GOFLAGS=-count=1 go test ./internal/handlers/whatif/...` (SC/go-whatif.log): ok 9.707s.
+- `node --test web/static/js/*.test.cjs` (SC/node.log): tests 38, pass 38, fail 0. This includes the 10 tests in base.test.cjs.
+
+ATTEMPT-1 FAILURE REPRODUCED -- now fixed (SC/e2e-chain.cjs)
+Method: a second client (curl) POSTs /whatif/chain with job-loss at age 70.
+- Branch (SC/chain-br.json):
+  - Every poll afterwards returns 500 ([500 x6]). Body: renderError "Analysis failed: analysis computation failed; please retry".
+  - The user then opens Spending Trajectory. GET /whatif/spending-trajectory returns 500; its elt is <body>.
+  - Results: gridUnchanged=true (grid = [whatif-settings-col, whatif-results, whatif-poll]), htmlUnchanged=true ([HEAD, BODY]), bodyUnchanged=true, resultsUnmoved=true (481,245).
+  - alertInsertionsAfterChain=[]: a MutationObserver saw no role=alert or inline node added in 9 s of polling plus the trajectory call. pageErrors=[].
+- Fail-end calibration: the same harness against the WS4.1 build (SC/chain-att1.json) shows the defect:
+  - grid gains 'DIV.p-4 bg-negative-soft[INLINE]' as its first child
+  - html gains an [INLINE] node before HEAD
+  - 7 alert insertions, one per poll
+  - resultsUnmoved=false
+
+AC1 (rejected Add keeps typed values and shows the server message next to that form; accepted Add clears) -- PASS
+Harness: SC/e2e-ac1.cjs. Output: SC/ac1-br.json.
+- Income, expense, one-time, big-ticket and healthcare all return 400 with HX-Retarget #whatif-add-<kind>-error.
+- Every form: valuesKept=True. The slot is visible and holds the server message (e.g. "Error Through month cannot be before the start month"), and slotDirectlyBeforeForm=True.
+- inlineDupes=0 for every form.
+- Accepted resubmit: 200, clearedToDefaults=True, slotAfterAccept=''.
+- Base calibration (SC/ac1-base.json): kept=False for all 5 forms, because the values are wiped at base.
+
+AC2 (non-retargeted 4xx/5xx shows next to the triggering form with role=alert; a later success clears it; nothing else is replaced) -- PASS
+4xx path. Harness: SC/e2e-ac2.cjs. Output: SC/ac2-br.json. Example: an income entry with Through set before Starts.
+- PUT /whatif/income/<id> returns 400, retarget null.
+- The inline node is the form's firstChild, role=alert, visible. Text: "Error Through month cannot be before the start month".
+- visibleMsgCount=1. The typed value is kept.
+- A valid edit returns 200 and clears it (total inline 0, visibleMsgCount 0).
+- "Nothing else replaced": SC/e2e-results.cjs, with a 5 s settle (SC/results-br.json), shows the rejected PUT gives sameHTML=true on #whatif-results and mutCount=0.
+  - Note: an earlier resultsUntouched=false in ac2-br.json was a settle artifact from the preceding 200 swap.
+Real 5xx. Harness: SC/e2e-5xx.cjs, run after the chain crash. Output: SC/5xx-br.json. Screenshots: SC/5xx-br.png, SC/5xx-mc-br.png.
+- Settings form: POST /whatif/settings returns 500 with no retarget. The inline alert is placed in the settings FORM: visible, role=alert, "Analysis failed: …".
+- Form-less Monte Carlo button (Risk tab open): POST /whatif/montecarlo returns 500. The alert is placed in the button's parent DIV and is visible.
+- nonInlineChanges=[] across the whole document during the failures.
+Real `curl -X PUT` of the same 400: no HX-Retarget header, and the body starts `<div … role="alert">`.
+
+AC3 (browser-invalid value shows the browser's validity message) -- PASS
+Harness: SC/e2e-ac3.cjs.
+- Branch: property tax set to -500 gives rv=[{name:"monthly_property_tax", msg:"Value must be greater than or equal to 0.", ret:false}], sent=[], focus stays on the field, htmx.config.reportValidityOfForms=true.
+- Base: rv=[] and cfg=false (silent).
+Harness gap: headless Chromium does not paint the native bubble. The evidence is the reportValidity() call plus validationMessage.
+
+AC4 (renderError output carries role="alert") -- PASS
+- `go test` TestRenderError passes. The assertion is at handlers_test.go:804.
+- The real 400 body above carries role="alert".
+- Mutation (d) below kills the test.
+
+AC6 (existing behaviour kept) -- PASS
+- Scroll: SC/e2e-ac6.cjs, POST /whatif/settings returning 200 into #whatif-results. scrollY 1500->1500 and 2600->2600. Base behaves the same.
+- Retargeted errors still land in their own slots (AC1).
+- The /, /insights, /major-expenses, /accounts, /explorer, /transfers and /filemanager pages all return 200 with 0 inline nodes and 0 pageerrors.
+- Twin dump of GET /whatif, base vs branch (python difflib): exactly 13 diff lines, all of them expected:
+  - the layout grid gains data-wf-layout-grid, plus one blank line left by the template comment
+  - the four slot wrappers lose role="alert"
+  - nothing else changes
+
+R1 (exactly one alert role per displayed error) -- behaviour PASS
+- Retargeted slots (SC/ac1-br.json), all 5 forms: r1 total=1 (slot itself not live, 1 live descendant, 0 live ancestors), and ariaSnapshot shows 1 "alert".
+- Calibration: the WS4.1 build (SC/ac1-att1.json) gives total=2 and axAlerts=2 for income, expense, one-time and big-ticket.
+- Inline path (SC/ac2-br.json, SC/5xx-br.json): selfLive, 0 live ancestors, 0 live descendants.
+
+R2 (inline display only for user-initiated requests; never html/body/main/grid) -- behaviour PASS
+- Poll and trajectory: shown above.
+- Real hx-trigger="load" sentinel #whatif-async-loader, with GET /whatif/results-full answering 500 (route-intercepted). Harness SC/e2e-loader.cjs gives inline=[].
+- Enumeration of every hx-verb element on /whatif (SC/enum-br.json): 47 total (23 FORM, 5 in-form BUTTONs, 14 form-less BUTTONs, 4 SELECTs, 1 sentinel = #whatif-poll). forbidden=[].
+
+R3 (no re-insert of a displayed message) -- behaviour PASS on the inline path
+- Identical second rejection (SC/ac2-br.json rejection2_same): insertionsSince=[], same node instance.
+- A different message replaces it.
+- Repeated 500 from the settings form: inlineAddsSince=[].
+
+R4 (text/plain body shown via textContent without throwing) -- behaviour PASS
+- 500 text/plain "Internal Server Error\n": role=alert, text "Internal Server Error", pageErrors=[].
+- Empty 500 (the chi Recoverer shape): "Something went wrong.", role=alert.
+
+AC5 / MUTATION PROOF -- FAIL
+Mutations were applied one at a time in SC/mut; the log is SC/mutations-js.log. The copy was restored and `diff -rq` against the snapshot was clean.
+Killed:
+- (a) re-add isError=false: KILLED ("a rejected retargeted 4xx still swaps but reports failure…").
+- (b) early return in the new responseError listener: KILLED (4 tests).
+- (c) drop reportValidityOfForms: KILLED ("enables htmx's native reportValidity()").
+- (d) drop role="alert" from renderError: KILLED. Output: "--- FAIL: TestRenderError … handlers_test.go:804" and "schedule_month_form_test.go:858".
+- R1: wrapper role re-added on the income slot: KILLED (:833). Wrapper role re-added on the OOB big-ticket clear: KILLED (:872/:876). Inline node wrapped in a second role=alert: KILLED. Fallback without a role: KILLED.
+- R2, full revert to the attempt-1 errorHost: KILLED (poll + body tests).
+- R3, drop the __wfText short-circuit: KILLED.
+- R4, drop the nodeType guard: KILLED. Fallback uses innerHTML instead of textContent: KILLED.
+- Also killed: drop clear-on-success, drop the HX-Retarget skip, drop the /whatif path scope.
+SURVIVED (all 10 node tests pass; the Go suite never touches base.js):
+- M1: in errorHost, `if (!host && INTERACTIVE_TAGS[elt.tagName] && hasOwnHxVerb(elt))` changed to `if (!host)`. This drops the user-initiated-only rule and falls back to parentNode for any form-less elt. Result: pass=10 fail=0.
+- M2: `return isForbiddenHost(host) ? null : host;` changed to `return host;`. This drops the html/body/main/grid refusal. Result: pass=10 fail=0.
+Why both survive: tests (ii) and (iii) place their sentinel under a host that BOTH guards reject (the poll inside a data-wf-layout-grid div; body under html). Removing either guard alone therefore changes nothing they can see.
+Test (ii)'s own comment says "Mutation this kills: errorHost() falling back to `elt.parentNode` for ANY form-less elt". That claim is false: it is exactly M1.
+M1 is not an equivalent mutant. SC/e2e-loader.cjs served base.js with M1 (via page.route) against the real branch server on a cold load. The real #whatif-async-loader (hx-trigger="load") got a 500 from /whatif/results-full, and the alert "Analysis failed: loader probe" was inserted into #whatif-results. The unmutated base.js leaves it alone (inline=[]). This is an R2 violation that the suite cannot detect.
+MISSING (the worker adds these):
+1. A test where a sentinel (hx-trigger load/every) sits under a NON-forbidden parent (a plain div, or #whatif-results like the real async loader) and asserts no insertion. This kills M1.
+2. A test where an eligible trigger (e.g. a button with its own hx-verb) sits directly in body, main or a data-wf-layout-grid element and asserts no insertion. This kills M2.
+Each test must pass against the current base.js and fail under its mutant.
+
+SCOPE
+- Changed files equal the 10-file manifest: handlers.go, handlers_test.go, schedule_month_form_test.go, base.js, base.test.cjs, and templates bigticket-card, expense-sources-list, income-sources-list, onetime-card and pages/whatif.
+- Other differences from base are gitignored dirs only (tmp/, internal/config/data/, testdata/uploads).
+- No critical-glob hits, checked against both the budget2 and the run critical.globs files.
+- The worker inverted a pre-existing test contract: ruling 2026-09-16f criterion 7 (wrapper role=alert). This follows the lead's R1 ruling; the lead should record the supersession in SPEC.md Rulings.
+
+OBSERVATIONS (not the basis of the FAIL; for the lead/backlog)
+O1 (R1 coverage). Adding role="alert" to the healthcare slot (#whatif-add-healthcare-error, healthcare-card.html:24) survives the Go suite (ok 9.633s). The nesting test's kinds/OOB lists cover income/expense/onetime/bigticket only. Behaviour today is correct (1 alert).
+O2 (R4 by the letter). buildErrorNode parses every body with innerHTML and never consults Content-Type.
+- A text/plain body that starts with a tag (probe: '<b>plain text…</b>') is inserted as a <b> element with NO role and not via textContent.
+- No current path reaches this: http.Error appears only in /whatif/state and /whatif/apply (API, no htmx caller) and /whatif/poll (sentinel, excluded).
+O3 (R3 on the retargeted path). Two identical rejected Add Income submits insert a fresh role=alert node twice (SC/e2e-r3retarget.cjs: alertNodesInsertedSoFar 1 then 2). This is htmx's own innerHTML swap on an explicit user resubmit. At base the second submit is impossible because the form is wiped. Lead to rule on whether R3 covers this.
+O4. The host for a form-less control is its parent, which is often a flex row. The Monte Carlo error sits beside the "Monte Carlo Simulation" heading and the Re-run button inside `flex items-center justify-between` (SC/5xx-mc-br.png). This is layout, for checker-a11y and the backlog.
+O5. Retargeted 5xx still show nowhere: 4 renderRetargetedError(…500…) sites, e.g. handlers_income_expense.go:53. This is pre-existing (WS4.1 O1).
+O6. WS4.1 O3 (sitewide reportValidityOfForms combined with the WS1 step=1000 cost-basis field) was carried forward. It was not re-run this attempt.
