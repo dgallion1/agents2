@@ -1,0 +1,2 @@
+# task_id	tier	checks	status	attempt	worker	reason
+RB1	2	tests	accepted	2	lead	gate-ok-tier2-attempt-2: attempt 1 FAIL conceded (ruling 2026-09-27c); attempt 2 checker-tests PASS (a-h, m1-m8 killed, real-page replay spouse at 100/450/700/1500 ms); committed 275d0d8; PR #124 MERGED e58598c + DEPLOYED
