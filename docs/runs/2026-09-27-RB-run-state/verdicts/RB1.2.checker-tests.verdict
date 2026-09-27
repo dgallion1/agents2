@@ -1,0 +1,85 @@
+VERDICT: PASS
+CHECKER: checker-tests
+FAMILY: anthropic
+TASK: RB1
+ATTEMPT: 2
+---
+Subject: worktree /home/darrell/bin/ai/budget2/.worktrees/role-basis (HEAD 6bf3839, uncommitted), copied with
+`cp -a` to $SP/rb1-2/tree (SP=/tmp/claude-1000/-home-darrell-work-agents2--claude-worktrees-budget2-review-c6867a/c11bf012-7c79-4add-a8cb-d168e0c93bbf/scratchpad).
+Before writing this verdict: `cmp` of both manifest files, worktree vs copy -> "identical" for both.
+Base files: `git -C <wt> show 6bf3839:<path>` -> $SP/rb1-2/base/.
+
+Composite gate: `cd $SP/rb1-2/tree && GOMAXPROCS=4 GOFLAGS="-count=1 -p=2" nice -n 19 make check`
+  -> vet, staticcheck, govulncheck ("Your code is affected by 0 vulnerabilities"), "tailwind.css is up to date",
+     52 "ok" package lines, 0 FAIL, "ok budget2/internal/handlers/whatif 16.408s", "✓ all checks passed", EXIT=0.
+
+(a) PASS. `node --test web/static/js/*.test.cjs` (in copy) -> "✔ updatePersonRole: flipping a person Spouse -> Other -> Spouse
+    restores the spending-phase basis". Assertions in it: after Other phase=='older' and container hidden; after flipping back on
+    the same elements phase=='spouse' and container shown. Mutation-proven: m1/m5/m6/m7 kill it with
+    "flipping back restores the basis the user had  actual: 'older' expected: 'spouse'".
+(a2) PASS. Same run -> "✔ updatePersonRole: flipping back after the save response replaced the card still restores the basis".
+    The test removes the old form and appends a new roleCard (same IDs, role other, phase older, hidden, no state). m1/m5/m6/m7 kill
+    it with "the re-rendered select gets the basis back  actual: 'older' expected: 'spouse'".
+(b) PASS. "✔ updatePersonRole: flipping back does not overwrite a basis picked in the meantime". m2 (guard -> if (true)) kills it:
+    "the user's newer pick stands  actual: 'spouse' expected: 'younger'".
+(c) PASS. "✔ ... a basis the role change does not coerce is left alone and not recorded" (m3 kills it: "no coercion -> no record
+    actual: false expected: true") and "✔ ... a row without a saved person ID is not recorded" (m8 kills it: "no ID -> nothing to key
+    a record on  actual: [ '' ] expected: []").
+(d) PASS. Consumption asserted in (a), (a2) and (b). m4 (delete `delete records[personID];`) kills all three with "the record is
+    consumed by the restore" / "the stale record is dropped"  actual: false expected: true.
+(e) PASS. "✔ self-check: RB1 is real -- the 6bf3839 updatePersonRole ..." and "✔ self-check: ... a record kept on the row
+    (attempt 1) ...", both asserting runSwapPath(...) === 'older'. `node $SP/rb1-2/embedcheck.cjs <test> <base js> <attempt-1 js>` ->
+    "embedded 6bf3839 version === real 6bf3839 updatePersonRole: true" and "embedded attempt-1 version === attempt-1 updatePersonRole
+    (prior checker copy): true". The attempt-1 source came from the attempt-1 checker's copy $SP/rb1-ct/work. Non-vacuity probe
+    `node --test --test-name-pattern=probe: $SP/rb1-2/selfcheck/probe.test.cjs` -> "✔ probe: runSwapPath with no patch (the fix) gives
+    spouse" and "✔ probe: runSwapPath with the fix itself re-inserted via the patch path gives spouse". So the self-check assertion
+    'older' is not satisfied by a correct version.
+(f) PASS. `node --test web/static/js/*.test.cjs` -> "ℹ tests 84 / ℹ pass 84 / ℹ fail 0" (6 files), exit 0.
+    `go build ./...` -> BUILD_OK; `go vet ./...` -> VET_OK;
+    `go test -count=1 -p 2 ./internal/handlers/whatif/ ./internal/templates/` -> "ok .../whatif 16.081s", "ok .../templates 1.851s".
+(g) PASS. `rtk proxy git -C <wt> status --porcelain --ignored --untracked-files=all` -> only " M" for the two manifest files. There
+    are no untracked, ignored or staged files. `git diff 6bf3839 --name-only` -> the same two files. `python3 $SP/rb1-2/scope.py
+    base.js wt.js` -> "removePersonRow byte-identical: True"; "functions only in new: ['phaseBasisRecords']"; "functions changed:
+    ['updatePersonRole']"; "new top-level const/let/var lines: []". The 3 insert-only hunks are the comment plus helper (new 13-28)
+    and the two insertions inside updatePersonRole. The difflib opcodes for the test file are insert-only:
+    ('insert', 775, 775, 775, 957). No .swarm/critical.globs pattern matches web/static/js/**.
+(h) PASS. Harness: the attempt-1 realpage.cjs, adapted by $SP/rb1-2/adapt.py only to report the page-level map, watch inserted
+    <script> nodes and check map/function identity. Its fixtures were re-rendered from THIS attempt's tree copy by the attempt-1
+    in-process probe: `RB1_OUT=$SP/rb1-2/out go test -count=1 -run TestZZRB1Probe ./internal/handlers/whatif/` -> PASS.
+    `node $SP/rb1-2/realpage.cjs $SP/rb1-2/out <js> <tree>/web/static/vendor/htmx.min.js (htmx 2.0.10) <T>`:
+      branch 100ms  -> request[0] spouse/spouse; RESULT: final save carries phase_age_reference=spouse
+      branch 450ms  -> request[0] spouse/spouse; RESULT: ...=spouse
+      branch 700ms  -> request[0] other/older, request[1] spouse/spouse; same row element? false; RESULT: ...=spouse
+      branch 1500ms -> request[0] other/older, request[1] spouse/spouse; same row element? false; RESULT: ...=spouse
+      base 100/450/700/1500ms -> RESULT: final save carries phase_age_reference=older (all four; the harness sees the defect)
+    Re-execution: the rendered save responses contain 0 references to whatif-rate-assumptions.js, and the rate-assumptions card
+    fragment has 0 <script> elements. The replay's MutationObserver saw only "/static/js/whatif-income-chart.js" inserted: "rate-assumptions
+    script re-inserted? false", "updatePersonRole same fn object? true". So the script does NOT re-execute on the OOB swap.
+    The map survives the swap: "page-level map is the SAME object as after Spouse->Other? true;
+    contents={"p2":{"before":"spouse","coerced":"older"}}" at 700/1500 ms after swaps=1. A forced re-execution in a vm probe also keeps
+    the map ("✔ probe: re-executing the script mid-flow ... keeps the page-level map").
+    Harness gaps: card-only page (other OOB targets absent, so there are 22/44 htmx:oobErrorNoTarget lines); base.js and the other
+    page scripts are not loaded; FakeXHR has a 50 ms latency and non-settings GETs get 204; shims are CSS.escape, the XPath result-type
+    default, and re-setting inline onchange attributes after each card swap.
+
+Mutations (each in its own copy of web/static/js; `node --test $SP/rb1-2/mut/mN/whatif-rate-assumptions.test.cjs`). All 8 were KILLED:
+  m1 delete restore            -> 2 fail: (a), (a2)  "actual: 'older' expected: 'spouse'"
+  m2 guard -> if (true)        -> 1 fail: (b)        "actual: 'spouse' expected: 'younger'"
+  m3 record w/o coercion       -> 1 fail: (c)        "no coercion -> no record  actual: false expected: true"
+  m4 delete record deletion    -> 3 fail: (a),(a2),(b) "the record is consumed by the restore" / "the stale record is dropped"
+  m5 phaseBefore after toggle  -> 2 fail: (a), (a2)  "actual: 'older' expected: 'spouse'"
+  m6 !== -> === 'spouse'       -> 2 fail: (a), (a2)  "actual: 'older' expected: 'spouse'"
+  m7 phaseBasisRecords -> {}   -> 2 fail: (a), (a2)  "actual: 'older' expected: 'spouse'"
+  m8 drop `!personID ||`       -> 1 fail: (c2)       "actual: [ '' ] expected: []"
+
+FINDINGS (beyond the written criteria, for the lead's backlog; not FAILs):
+ F1. In-flight window. If the flip back lands while the first save is in flight (tested: 520 ms, fake latency 50 ms; real width =
+     server round-trip), the save response's OOB swap wipes out the flip back. The debounced second save never goes out: 1 settings
+     request, and the card ends with role=other, phase=older. This happens on base 6bf3839 too. It is the pre-existing whole-card
+     swap race, and it loses the role change itself. The RB1-specific part: the record was already consumed on the old elements
+     (map={}). A user who sees "Other" and flips to Spouse again gets older. Evidence:
+     `node $SP/rb1-2/realpage-inflight2.cjs ... 520ms`: branch -> "request[1] body: person_role[1]=spouse phase_age_reference=older";
+     base -> identical.
+ F2. Spec "Facts" wording. The `whatif-spending-preview-scripts` define is in rate-assumptions.html, but it is invoked only from
+     pages/whatif.html:164 at page level, outside the OOB card. Save responses do not carry the script (see (h)). The lazy map is
+     harmless either way.

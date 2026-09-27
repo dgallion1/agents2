@@ -1,0 +1,119 @@
+VERDICT: FAIL
+CHECKER: checker-tests
+FAMILY: anthropic
+TASK: RB1
+ATTEMPT: 1
+---
+SUMMARY: Criteria (a)-(g) are each met as written: tests, mutations and scope all check out.
+The FAIL is on the SPEC Problem requirement, which the lead asked me to test (item 4):
+"A flip-and-flip-back should leave the saved plan as it was." In the real page the fix
+does nothing on the normal path. The first flip's save response OOB-replaces
+#whatif-rate-assumptions-card, and that replaces the row element that carries the
+data-phase-basis-* record. When the flip back comes after that response lands, the
+branch saves "older", exactly as 6bf3839 does. The fix only helps when the user flips
+back inside the 500 ms debounce window. The SPEC's own Facts say "each flip is saved",
+so the save between flips is the normal case.
+
+SCRATCH = /tmp/claude-1000/-home-darrell-work-agents2--claude-worktrees-budget2-review-c6867a/c11bf012-7c79-4add-a8cb-d168e0c93bbf/scratchpad/rb1-ct
+All work ran in cp -a copies (SCRATCH/work, SCRATCH/probe, SCRATCH/basejs, SCRATCH/mut/*).
+Real worktree unchanged afterwards: `git status --porcelain` still shows only the 2 manifest
+files, HEAD is 6bf3839, and the sha256 of both files equals the copy's (73a8dcff..., b060e09a...).
+
+(a) MET (in the fake DOM). `node --test web/static/js/*.test.cjs` (SCRATCH/work) printed
+    "✔ updatePersonRole: flipping a person Spouse -> Other -> Spouse restores the spending-phase basis".
+    The test asserts older + hidden after Spouse->Other, then spouse + shown after the flip back.
+(b) MET. Same run: "✔ updatePersonRole: flipping back does not overwrite a basis picked in the meantime".
+    It asserts 'younger' stands and the record is dropped. Mutation m2 kills it (below).
+(c) MET. Same run: "✔ updatePersonRole: a basis the role change does not coerce is left alone and not recorded".
+    It asserts 'primary' and no data-phase-basis-* attribute after each flip. Mutation m3 kills it.
+(d) MET. Test (a) asserts hasPhaseBasisRecord(spouseRow) === false after the restore. Mutation m4 kills it
+    ("the record is consumed by the restore": actual true, expected false).
+(e) MET. The self-check passes on the branch. A node check showed the self-check's oldVersion
+    string === the 6bf3839 updatePersonRole (true, 255/255 bytes). With the patch applied, the branch
+    JS === the 6bf3839 JS apart from the added comment (true). Independent run of the NEW test file
+    against the real 6bf3839 JS (SCRATCH/basejs, full js dir, base file cmp-verified):
+    "✖ updatePersonRole: flipping a person Spouse -> Other -> Spouse ..."
+    "AssertionError [ERR_ASSERTION]: flipping back restores the basis the user had", actual: 'older',
+    expected: 'spouse'. That is the right reason, not a harness error. On base, (b) and (c) pass
+    trivially, as guards should. The self-check fails on base with its own "sanity: the patch target
+    must exist" assertion, which is expected because it is meaningful only against the fixed file.
+(f) MET. `node --test web/static/js/*.test.cjs` gave "ℹ tests 81 / ℹ pass 81 / ℹ fail 0".
+    `go build ./... && go vet ./...` printed BUILD_OK and VET_OK.
+    `go test -count=1 ./internal/handlers/whatif/ ./internal/templates/` gave
+    "ok budget2/internal/handlers/whatif 16.036s" and "ok budget2/internal/templates 1.772s".
+    Composite target `GOFLAGS="-p=2 -count=1" make check` (vet, staticcheck, govulncheck, css-verify,
+    full test) ended "tailwind.css is up to date", "✓ all checks passed", EXIT=0 (SCRATCH/make-check.log).
+(g) MET. `rtk proxy git -C <wt> status --porcelain --untracked-files=all` lists only the 2 manifest files.
+    `diff 6bf3839 --stat` gave 25 insertions in the .js and 90 in the .test.cjs, with 0 deletions.
+    `python3 SCRATCH/scope.py`: "removePersonRow identical: True 2322 2322"; everything outside
+    updatePersonRole plus its comment is identical (True). The changed hunks are at branch lines
+    13-18 (the comment) and 25-26 and 28-44, all inside updatePersonRole (lines 19-45). In the test
+    file, difflib found a single opcode, ('insert', 775,775, 775,865): a pure insertion.
+    Nothing matches .swarm/critical.globs.
+
+MUTATIONS (SCRATCH/mutate.py). Each mutation ran alone in its own copy, each replacement
+asserted unique, and all 6 were killed:
+  m1 (drop the restore assignment): killed by "flipping a person Spouse -> Other -> Spouse restores...",
+     actual 'older', expected 'spouse'.
+  m2 (guard -> if (true)): killed by "flipping back does not overwrite a basis picked in the meantime",
+     actual 'spouse', expected 'younger'.
+  m3 (record without coercion): killed by "a basis the role change does not coerce is left alone and not recorded",
+     "no coercion -> no record", actual true, expected false.
+  m4 (keep the record after restore): killed by the (a) test ("the record is consumed by the restore") and
+     the (b) test ("the stale record is dropped"), actual true, expected false.
+  m5 (capture phaseBefore after the toggle): killed by the (a) test, actual 'older', expected 'spouse'.
+  m6 (invert the role test): killed by the (a) test, actual 'older', expected 'spouse'.
+
+FAIL -- SPEC Problem / lead item 4 (real page).
+ 1. The save response replaces the card. Probe: a scratch Go test (SCRATCH/probe, never in the
+    real tree) posts to the real handleWhatIfSettings with the real renderer. Every POST
+    /whatif/settings response (resp_other_older/spouse_older/spouse_spouse) contains
+    `<div id="whatif-rate-assumptions-card" hx-swap-oob="true">` wrapping both person rows.
+    The path is handlers_rates.go:107 renderRecalc -> handlers.go:195 "whatif-results-with-oob"
+    -> whatif.html:286. The rendered card carries 0 data-phase-basis attributes.
+ 2. Replay (SCRATCH/realpage.cjs). jsdom runs the vendored htmx 2.0.10 plus the real
+    whatif-rate-assumptions.js on the real server-rendered card. A fake XHR serves the step-1
+    Go-rendered responses, chosen by the posted role and phase. Command:
+    `node realpage.cjs out <js> htmx.min.js <delay>`. Results:
+      branch, flip back after 100ms: 0 saves and 0 swaps before the flip back; final save phase_age_reference=spouse
+      branch, flip back after 450ms: final save phase_age_reference=spouse
+      branch, flip back after 700ms: "at flip-back: settings requests so far=1; card swaps=1; same row element? false"
+                                     -> "final save carries phase_age_reference=older"
+      branch, flip back after 1500ms: final save phase_age_reference=older
+      base 6bf3839, every delay: final save phase_age_reference=older
+    Slow-path detail (branch): after save #1 (role=other, phase=older), the new row's
+    record is {"before":null,"coerced":null}. The flip back then leaves phase=older, and
+    request[1] carries person_role[1]=spouse phase_age_reference=older.
+    The fix is not inert everywhere: within the debounce window it sends spouse where base
+    sends older. On the normal path it matches base.
+ 3. What is missing: the coercion record has to survive the save-response OOB swap of
+    #whatif-rate-assumptions-card, or the design has to change. The current fixture never
+    runs a save and swap between the flips, so none of (a)-(d) can see this. The design's
+    premise ("per-row state lives on the row element" survives a re-execution) does not hold,
+    because the swap replaces the row element itself.
+ Harness gaps (disclosed): jsdom needed three shims.
+   - A default XPath result type, which htmx omits.
+   - A CSS.escape polyfill.
+   - Re-setting each onchange attribute after the OOB swap. jsdom does not compile inline
+     handlers on nodes adopted from htmx's <template> fragment, and browsers do.
+   The page is minimal (#whatif-results plus the card), so the other OOB targets log
+   oobErrorNoTarget. GET /whatif/results-full is answered 204. Fake latency is 50 ms; real
+   latency only widens the slow path. No other hook preserves the card: the only
+   beforeSwap/oobBeforeSwap listeners are base.js (4xx/scroll), income-toast (focus),
+   roth-conversion and guardrail_optimizer. There is no hx-preserve in web/templates.
+
+OTHER ITEM-4 FACTS
+ - updatePersonRole callers: rate-assumptions.html:63 (server-rendered Role select, onchange) and
+   whatif-rate-assumptions.js:160 (addPersonRow's JS-added select, onchange). Both fire on change.
+ - togglePhaseReferenceDropdown callers: rate-assumptions.html:14 (use_current_month) and :20 (start_date).
+   In whatif-rate-assumptions.js: :27 (updatePersonRole), :68 and :90 (removePersonRow),
+   :176 (addPersonRow) and :297 (DOMContentLoaded).
+ - Ordering: the inline onchange runs before the form-level `change delay:500ms` request serialises
+   the form. The replay shows the restored 'spouse' is in the request when no swap intervenes
+   (100 and 450 ms runs).
+
+OBSERVATION (beyond scope, not a FAIL reason): SPEC Fact 3 is only partly borne out. The
+POST response for person_role[1]=other with phase_age_reference=spouse renders
+phase-age-reference-select=spouse, not older (resp_other_spouse). saveInternal normalises
+(settings.go:987), but the rendered response did not reflect it. I did not investigate further.
+The client never posts that combination, because the toggle coerces first.
