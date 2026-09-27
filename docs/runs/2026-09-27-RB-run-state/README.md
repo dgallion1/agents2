@@ -71,7 +71,13 @@ first-attempt clean: 0/1 (no-evidence rows: 0)
 - **F2:** the new code comment says the map is created lazily because
   "this file can be re-executed when its component is swapped"; it is
   not (loaded once per page). Harmless; not worth the hard-stop attempt.
-- `/explorer` has no `<footer>` landmark (pre-existing, ACCESSIBILITY.md
-  point 1).
+- ~~`/explorer` has no `<footer>` landmark (pre-existing, ACCESSIBILITY.md
+  point 1).~~ **Corrected 2026-09-27 (run RN): not a defect.** Point 1
+  requires `<main>`, `<nav>` and `<header>`, not `<footer>`, and WCAG 2.2
+  AA requires no contentinfo landmark. The footer is hidden on explorer
+  by design (`base.html` "Footer (hidden on explorer page)"; explorer's
+  `<main>` is viewport-height), as runs BL/BK/RF already recorded. The
+  sweep's "point-1 gap" label was a checker misreading the lead copied
+  without checking. Dropped by user decision.
 - Known limit: if another spouse appeared meanwhile and the user
   deliberately chose "Older Person", the flip back still restores.
