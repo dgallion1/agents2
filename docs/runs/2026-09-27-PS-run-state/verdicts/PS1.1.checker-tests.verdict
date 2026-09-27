@@ -1,0 +1,63 @@
+VERDICT: PASS
+CHECKER: checker-tests
+FAMILY: anthropic
+TASK: PS1
+ATTEMPT: 1
+---
+Work product: /home/darrell/bin/ai/budget2/.worktrees/phase-select-restore (HEAD = origin/master = 888999a, uncommitted).
+All runs in a cp -a copy (scratchpad/wp); `cmp` confirmed the tested copy == real tree for both files
+(sha256 js 8cc81c83..., test 96b0cfd0...). Base files extracted via `git show 888999a:<path>`.
+
+(a) Refusal test: PASS.
+  Test `removePersonRow: a refused removal restores the spending-phase basis it coerced` (test.cjs:733) builds
+  personRowsFixture + #phase-age-reference-container > #phase-age-reference-select (value 'spouse') inside the
+  same form; asserts after removal select=='older' + container hidden; after refused htmx:afterRequest
+  select=='spouse', container not hidden, container.children[1]===spouseRow, removeBtn.__focused.
+  `node --test web/static/js/*.test.cjs` -> "✔ removePersonRow: a refused removal restores the spending-phase basis it coerced".
+  Independent base run (new test file + 888999a JS, copy basejs/js):
+  `node --test --test-name-pattern="spending-phase|PS1" whatif-rate-assumptions.test.cjs` -> exit=1,
+  "AssertionError: a refusal restores the phase basis the user had / 'older' !== 'spouse'" at test.cjs:744:12
+  (the removal-time asserts at :739/:740 passed on base -> removal behavior unchanged; failure is the right reason,
+  not a harness error).
+(b) Success test: PASS. `removePersonRow: a successful removal leaves the spending-phase basis at "older"` passes on
+  work product and on base; mutation m3 (restore also on success path) -> "'spouse' !== 'older'" -> killed.
+(c) Self-check: PASS. `self-check: PS1 is real -- the 888999a refusal branch (no phase restore) ...` uses the file's
+  patch/sanity-assert style, strips the restore block, asserts the mutant leaves 'older'; passes on the work product.
+  Independently corroborated by the base run in (a).
+(d) Node suites: PASS. `node --test web/static/js/*.test.cjs` -> "ℹ tests 77 / ℹ pass 77 / ℹ fail 0", exit 0.
+  `node web/static/js/whatif-rate-assumptions.test.cjs` -> exit 0, "ℹ tests 21 / ℹ pass 21 / ℹ fail 0", the 3 PS1 tests ✔.
+(e) Go: PASS. `GOMAXPROCS=4 GOFLAGS=-p=2 nice go build ./... && go vet ./...` -> BUILD-OK VET-OK.
+  `go test -count=1 -p 2 ./internal/handlers/whatif/ ./internal/templates/` -> "ok budget2/internal/handlers/whatif 15.397s",
+  "ok budget2/internal/templates 1.739s". Composite `make check` legs also run (throttled, uncached):
+  `make css-verify` -> "tailwind.css is up to date"; `staticcheck ./...` exit 0; `govulncheck ./...` exit 0
+  ("affected by 0 vulnerabilities"); `go test -count=1 -p 2 ./...` exit 0 (51 ok, no FAIL lines) +
+  `go test -count=1 ./internal/handlers/accounts` ok.
+(f) Scope: PASS. `rtk proxy git -C <wt> status --porcelain --ignored` -> only " M web/static/js/whatif-rate-assumptions.js",
+  " M web/static/js/whatif-rate-assumptions.test.cjs" (no untracked/ignored). `git diff 888999a --stat` -> same 2 files,
+  68+/2-. python difflib opcodes on the JS: insert new 37-41, replace 57-58 (comment), insert 61-63 — all inside
+  removePersonRow (new lines 29-80). Test file: single pure insert at 718-775 (no existing test modified).
+  Matches manifest PS1.1.files exactly; no .swarm/critical.globs path touched.
+
+Mutations (each in its own copy, whole test file run):
+  m1 delete restore block -> KILLED: refusal test "'older' !== 'spouse'" (self-check also fails: patch target gone).
+  m2 restore moved AFTER togglePhaseReferenceDropdown() -> SURVIVED (21/21). Behaviorally equivalent in every reachable
+     state: the row is re-inserted before either ordering, so toggle sees the spouse row and does not coerce. Probe
+     (fix vs m2, same harness): S1 remove spouse/phase=spouse -> both 'spouse' shown; S2 phase=younger -> both 'younger';
+     S3 remove other w/ spouse remaining -> both 'spouse'. Only S4 (pre-state 'spouse' with NO spouse row) differs:
+     fix 'older' hidden, m2 'spouse' hidden. S4 is unreachable from served markup (settings normalized at
+     settings.go:423/469/987 + DOMContentLoaded toggle) and even under m2 the server's NormalizePhaseAgeReference
+     would coerce it. Observation, not a FAIL.
+  m3 restore on success path too -> KILLED: success test "'spouse' !== 'older'".
+  m4 capture phaseBefore after row.remove()+toggle -> KILLED: refusal test "'older' !== 'spouse'".
+
+Real-page claim ("a refused removal no longer changes the phase basis"):
+  togglePhaseReferenceDropdown callers (grep -rn web/): updatePersonRole (js:19), removePersonRow (js:43, js:65),
+  addPersonRow (js:151), DOMContentLoaded (js:272), rate-assumptions.html:14 (use_current_month onchange) and :20
+  (start_date onchange). During the in-flight window those can only coerce spouse->older (already 'older'); the refusal
+  branch then restores the captured value, so none defeats the fix. Refusal is renderError 400 without HX-Retarget
+  (handlers.go:1112, handlers_rates.go:56); base.js beforeSwap only forces a swap when HX-Retarget is present, and its
+  responseError handler only inserts an alert node into the form — no swap/re-render of the select. Restore sets
+  .value programmatically (no change event), so the refusal itself triggers no save.
+Harness gaps (disclosed): fake DOM (rpEl), not jsdom/browser — select.value is a plain property (real <select> rejects
+  values without an <option>; 'spouse'/'older' both exist in rate-assumptions.html:96-99), no real htmx, afterRequest
+  dispatched synthetically. htmx 2.0.10 no-swap-on-4xx behavior established by reading base.js/handlers, not executed.

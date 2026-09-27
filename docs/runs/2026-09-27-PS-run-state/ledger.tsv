@@ -1,0 +1,2 @@
+# task_id	tier	checks	status	attempt	worker	reason
+PS1	2	tests	accepted	1	lead	gate-ok-tier2-attempt-1: checker-tests PASS (a-f; m1/m3/m4 killed, m2 equivalent); committed 2907838 on fix/phase-select-restore; PR #123 MERGED 6bf3839 + DEPLOYED
