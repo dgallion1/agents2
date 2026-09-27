@@ -1,0 +1,49 @@
+VERDICT: PASS
+CHECKER: checker-tests
+FAMILY: anthropic
+TASK: RN1
+ATTEMPT: 1
+---
+Work product: /home/darrell/bin/ai/budget2/.worktrees/rn-comment (HEAD e58598c, uncommitted).
+Verification ran in a cp -a scratch copy; the only write to the real tree is this file.
+Base file came from `rtk proxy git -C <wt> show e58598c:web/static/js/whatif-rate-assumptions.js`.
+
+(a) PASS. The change touches comment lines only.
+  - Raw line diff (python3 difflib, n=0): `@@ -16,2 +16,2 @@`. Two lines were removed:
+      "// the rows or the select is gone before the user flips a role back. Made"
+      "// lazily -- this file can be re-executed when its component is swapped."
+    Two lines were added:
+      "// the rows or the select is gone before the user flips a role back. The"
+      "// script itself loads once per page (pages/whatif.html), outside that card."
+    Both files are 526 lines.
+  - Token streams, comments excluded, compared with two real tokenizers (node $S/tok.cjs base.js new.js; both files also acorn.parse cleanly):
+      acorn: tokens base=2734 new=2734 identical=true; comments base=106 new=106
+      esprima: tokens base=2709 new=2709 identical=true; comments base=106 new=106
+    The only differing comments are indices 6 and 7, which are exactly the two lines above. Exit 0.
+  - Comparator sanity check: a code mutant (`= {} ;x;` inserted after the window.whatifPhaseBasisBeforeRoleChange init) gave identical=false with exit 1 under both tokenizers. So the comparison can detect real code changes.
+
+(b) PASS. The new comment makes no re-execution claim, and each claim it makes is true.
+  - `grep -rn "whatif-spending-preview-scripts\|whatif-rate-assumptions.js" web/templates internal` finds:
+      web/templates/pages/whatif.html:164:{{template "whatif-spending-preview-scripts" .}}
+      web/templates/components/whatif/rate-assumptions.html:591:{{define "whatif-spending-preview-scripts"}}
+      web/templates/components/whatif/rate-assumptions.html:592:<script src="/static/js/whatif-rate-assumptions.js" defer></script>
+    The remaining hits are Go test/handler comments and a ReadFile call. No other template emits this script tag. The "whatif-rate-assumptions" define runs from rate-assumptions.html:3 to :588, so line 592 lies outside the card template.
+  - whatif.html:108 `<div id="whatif-rate-assumptions-card">{{template "whatif-rate-assumptions" .}}</div>` opens and closes on one line. Line 164 sits at the end of "whatif-content" (lines 4-169), outside the card.
+  - The OOB block at whatif.html:286-288 is `<div id="whatif-rate-assumptions-card" hx-swap-oob="true">{{template "whatif-rate-assumptions" .}}</div>` and contains no script include.
+  - "Once per page": "whatif-content" is referenced only by layouts/base.html:191. The only whatif "base" render is internal/handlers/whatif/handlers.go:1450 (full page). All scenario create/switch/delete handlers set `HX-Redirect: /whatif`, which forces a full reload (handlers_scenarios.go:45/65/85). Error paths render a small alert div (handlers.go:1112). No hx-boost exists in web/templates or web/static/js.
+  - The removed false claim ("can be re-executed when its component is swapped") is gone. `grep -rn "re-executed\|Made lazily"` finds no remaining hit in the code.
+
+(c) PASS. No other file changed.
+  - `rtk proxy git -C <wt> status --porcelain` shows ` M web/static/js/whatif-rate-assumptions.js` and nothing else. With --ignored, the only other entries are under tmp/.
+  - `rtk proxy git -C <wt> diff e58598c --stat` shows `1 file changed, 2 insertions(+), 2 deletions(-)`, all in that file.
+  - This matches manifest RN1.1.files. No path in .swarm/critical.globs is touched.
+
+(d) PASS. The node suite passes and the RB1 self-checks still find their target.
+  - `nice -n 19 node --test --test-concurrency=1 web/static/js/*.test.cjs` (scratch copy) exited 0: `tests 84, pass 84, fail 0, cancelled 0, skipped 0`. It includes:
+      ✔ self-check: RB1 is real -- the 6bf3839 updatePersonRole (no restore) is caught by the swap-path test
+      ✔ self-check: RB1 is real -- a record kept on the row (attempt 1) is lost to the swap and caught by the swap-path test
+  - The RB1 patch regex `/function updatePersonRole\(select\) \{[\s\S]*?\n\}\n/` (test.cjs:909, guarded by assert.notEqual "sanity: the patch target must exist") matches both files at start line 29 (length 981). `matched text identical: true`.
+  - Same suite against the base file: 84/84 pass, and the test-name lists are identical between base and new.
+  - Repo composite `make check` in the scratch copy (GOFLAGS='-count=1 -p=4', nice 19) exited 0. It ran vet, staticcheck and govulncheck ("Your code is affected by 0 vulnerabilities"), printed "tailwind.css is up to date", and reported 52 packages ok with 0 "(cached)" lines. Among them are budget2/internal/templates and budget2/internal/handlers/whatif. It ended with "✓ all checks passed".
+
+Findings outside scope: none.
