@@ -1,0 +1,8 @@
+# GH2 oracle: TREE=/home/darrell/work/agents2/.claude/worktrees/unifi-camera-streaming-7be695
+ok   - S0 of GH1's 39 files only parse.mjs / parse.test.mjs changed (gate.sh and render.mjs untouched)
+ok   - S0 no file outside GH1's set changed
+ok   - D differential: 14/14 ok
+ok   - C1 smoketest/gate/run_tests.sh passes
+ok   - C2 dashboard tests pass (ℹ tests 66)
+ok   - C3 the shipped dashboard tests fail against GH1's un-mirrored parse.mjs (9 failing)
+ORACLE PASS

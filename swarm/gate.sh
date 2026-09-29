@@ -6,6 +6,10 @@
 set -u
 
 SWARM_DIR="${SWARM_DIR:-.swarm}"
+# The tree the manifests' paths are relative to (the target repo root).
+# `check` re-hashes manifest paths against it; `done` does not (see
+# check_fingerprint).
+SWARM_TREE="${SWARM_TREE:-.}"
 LEDGER="$SWARM_DIR/ledger.tsv"
 VERDICTS="$SWARM_DIR/verdicts"
 MANIFESTS="$SWARM_DIR/manifests"
@@ -71,7 +75,12 @@ verdict_files() {                                                    # task atte
 # judge-panel quorum (>=3 judge verdicts, unique identity AND unique lane,
 # strict OVERRULE majority).
 #
-# On success sets: _vv _vc _vf _vt _va  and returns 0.
+# Fingerprint header (2026-09-18): MANIFEST_SHA256 is the sha256 of the
+# manifest's .sha256 sidecar — the hash of the fingerprint set the checker
+# verified. Optional at parse time (judges never carry it); check_fingerprint
+# requires it on every checker-* PASS.
+#
+# On success sets: _vv _vc _vf _vt _va _vm  and returns 0.
 # On failure sets: _verr and returns 1. Never use command-substitution around
 # this function — globals must land in the caller's shell.
 load_verdict() {                                                     # file [expected_task] [expected_attempt]
@@ -79,7 +88,7 @@ load_verdict() {                                                     # file [exp
   local base prefix checker_from_name
   local verdict checker family task attempt
 
-  _verr=""; _vv=""; _vc=""; _vf=""; _vt=""; _va=""
+  _verr=""; _vv=""; _vc=""; _vf=""; _vt=""; _va=""; _vm=""
 
   [[ -f "$f" ]] || { _verr="missing file $f"; return 1; }
   base=$(basename "$f")
@@ -140,13 +149,17 @@ load_verdict() {                                                     # file [exp
   }
 
   _vv=$verdict; _vc=$checker; _vf=$family; _vt=$task; _va=$attempt
+  _vm=$(field_of "$f" MANIFEST_SHA256)
   return 0
 }
 
 # --- per-tier acceptance ----------------------------------------------------
+# A blank checks column hard-fails at every tier (2026-09-18; it used to
+# accept a tier-1 row with zero verdicts).
 check_tier1() {                                                      # task attempt checks
   local task="$1" attempt="$2" checks="$3" c f
-  [[ "$checks" == "-" || -z "$checks" ]] && return 0
+  [[ "$checks" == "-" || -z "$checks" ]] && \
+    fail "$task: tier 1 requires named checkers in the ledger checks column"
   IFS=',' read -ra req <<<"$checks"
   for c in "${req[@]}"; do
     f="$VERDICTS/$task.$attempt.checker-$c.verdict"
@@ -231,11 +244,27 @@ check_tier2() {                                                      # task atte
   fi
   judge_quorum_or_fail "$task"
 }
-# Unconditional dual-lane quorum — tier 3 only. This is the pre-2026-08-31
-# tier-2 rule, kept at full strength for irreversible work: PASSes must span
-# two independence lanes regardless of what the checks column names.
-check_dual_lane() {                                                  # task attempt
-  local task="$1" attempt="$2" has_fail=0
+# Tier 3 (2026-09-18): oracle contract, then EVERY checker named in the
+# ledger checks column must PASS, AND the PASSes must span two lanes. The
+# legacy blind-arm report.md contract is gone — a report.md in the dir is a
+# hard failure, so a reused pre-2026-08-26 directory cannot bypass the oracle.
+check_tier3() {                                                     # task attempt checks
+  local task="$1" attempt="$2" checks="${3:-}" dir="$SWARM_DIR/tier3/$1" c
+  local oracle="$dir/accept.sh" olog="$dir/oracle.$attempt.log"
+  [[ "$checks" == "-" || -z "$checks" ]] && \
+    fail "$task: tier 3 requires named checkers in the ledger checks column"
+  [[ -f "$dir/report.md" ]] && \
+    fail "$task: stale blind-arm report.md in $dir — the legacy contract was removed 2026-09-18; delete it (never reuse a tier3 dir)"
+  # Oracle-first contract (user decision 2026-08-26, CLAUDE.md Tier 3):
+  # an executable acceptance oracle, plus a logged passing run at THIS
+  # attempt. The lead runs the oracle and tees the log; the log's last
+  # line must be the oracle's own ORACLE PASS marker.
+  [[ -f "$oracle" ]] || fail "$task: no tier-3 oracle at $oracle"
+  [[ -x "$oracle" ]] || fail "$task: tier-3 oracle $oracle is not executable"
+  [[ -f "$olog" ]]   || fail "$task: no oracle run log at $olog (run accept.sh and tee the log)"
+  [[ "$(tail -n1 "$olog")" == "ORACLE PASS" ]] || fail "$task: $olog does not end with ORACLE PASS"
+
+  local has_fail=0
   declare -A passfam=()
   declare -A passchecker=()
   declare -A judgefam=()
@@ -243,29 +272,16 @@ check_dual_lane() {                                                  # task atte
   local up=0 ov=0
   walk_verdicts "$task" "$attempt"
   if (( has_fail == 0 )); then
+    local -a req
+    IFS=',' read -ra req <<<"$checks"
+    for c in "${req[@]}"; do
+      [[ -n "${passchecker[checker-$c]:-}" ]] || \
+        fail "$task: missing PASS from checker-$c (attempt $attempt)"
+    done
     (( ${#passfam[@]} >= 2 )) || fail "$task: need PASS from 2 families, have ${#passfam[@]}"
     return 0
   fi
   judge_quorum_or_fail "$task"
-}
-check_tier3() {                                                     # task attempt
-  local task="$1" attempt="$2" dir="$SWARM_DIR/tier3/$1"
-  local rep="$dir/report.md" oracle="$dir/accept.sh" olog="$dir/oracle.$attempt.log"
-  if [[ -f "$rep" ]]; then
-    # Legacy blind-arm contract (runs recorded before 2026-08-26): a
-    # divergence report with a RESOLUTION line.
-    grep -q '^RESOLUTION:' "$rep" || fail "$task: report has no RESOLUTION line"
-  else
-    # Oracle-first contract (user decision 2026-08-26, CLAUDE.md Tier 3):
-    # an executable acceptance oracle, plus a logged passing run at THIS
-    # attempt. The lead runs the oracle and tees the log; the log's last
-    # line must be the oracle's own ORACLE PASS marker.
-    [[ -f "$oracle" ]] || fail "$task: no tier-3 oracle at $oracle (and no legacy report.md)"
-    [[ -x "$oracle" ]] || fail "$task: tier-3 oracle $oracle is not executable"
-    [[ -f "$olog" ]]   || fail "$task: no oracle run log at $olog (run accept.sh and tee the log)"
-    [[ "$(tail -n1 "$olog")" == "ORACLE PASS" ]] || fail "$task: $olog does not end with ORACLE PASS"
-  fi
-  check_dual_lane "$task" "$attempt"                                # result still needs dual-lane PASS
 }
 
 # --- escalation helpers -----------------------------------------------------
@@ -363,6 +379,78 @@ PY
   return $rc
 }
 
+# escalation_reasons — prints the live escalation triggers for a row
+# ("two-consecutive-fails checker-overruled critical-glob", space-separated,
+# possibly empty). ONE definition shared by escalate-scan (which writes the
+# flag) and check_task (which refuses a row the scan has not seen), so the
+# two cannot disagree about what counts as a trigger.
+escalation_reasons() {                                             # task attempt
+  local task="$1" attempt="$2" reasons=""
+  if (( attempt >= 1 )) && unresolved_fail_at "$task" "$attempt" && unresolved_fail_at "$task" "$((attempt-1))"; then
+    reasons+="two-consecutive-fails "
+  fi
+  overrule_exists "$task"    && reasons+="checker-overruled "
+  manifest_hits_glob "$task" && reasons+="critical-glob "
+  printf '%s' "${reasons% }"
+}
+escalation_target() { local t=$(( $1 + 1 )); (( t > 3 )) && t=3; echo "$t"; }   # tier
+
+# --- manifest fingerprints (2026-09-18) --------------------------------------
+# Every non-terminal row needs, at its current attempt:
+#   manifests/<task>.<attempt>.files   — one repo-relative path per line
+#   manifests/<task>.<attempt>.sha256  — sha256sum-format lines, one per
+#                                        manifest path (`deleted  <path>` for
+#                                        a removed file)
+# and every checker-* PASS verdict at that attempt must carry
+#   MANIFEST_SHA256: <sha256 of the .sha256 file>
+# i.e. the hash of the fingerprint set the checker verified. `check`
+# additionally re-hashes every path against SWARM_TREE (rehash=1): the tree
+# being accepted must be the tree that was fingerprinted and verified. `done`
+# skips the re-hash (rehash=0): in a multi-run ledger a later task may have
+# legitimately edited an earlier row's files. Evidence consistency is checked
+# both times. This is the mechanical form of the TC snapshot rule.
+sha256_of() { sha256sum "$1" | cut -d' ' -f1; }
+check_fingerprint() {                                              # task attempt rehash
+  local task="$1" attempt="$2" rehash="$3"
+  local man="$MANIFESTS/$task.$attempt.files" side="$MANIFESTS/$task.$attempt.sha256"
+  [[ -f "$man" ]] || fail "$task: no manifest at $man (worker must write it)"
+  grep -q '[^[:space:]]' "$man" || fail "$task: manifest $man is empty (a task that changed nothing is no-change)"
+  [[ -f "$side" ]] || fail "$task: no fingerprint sidecar at $side — generate it from the manifest: sha256sum \$(cat $man) > $side"
+
+  local path hash line
+  declare -A want=()
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    [[ -z "$line" ]] && continue
+    [[ "$line" =~ ^([0-9a-f]{64}|deleted)\ [\ *](.+)$ ]] || \
+      fail "$task: unparseable fingerprint line in $side: '$line' (need sha256sum format)"
+    want["${BASH_REMATCH[2]}"]="${BASH_REMATCH[1]}"
+  done < "$side"
+  while IFS= read -r path || [[ -n "$path" ]]; do
+    [[ -z "$path" ]] && continue
+    [[ -n "${want[$path]:-}" ]] || fail "$task: manifest path '$path' has no fingerprint line in $side"
+    (( rehash )) || continue
+    if [[ "${want[$path]}" == deleted ]]; then
+      [[ ! -e "$SWARM_TREE/$path" ]] || fail "$task: '$path' is fingerprinted as deleted but exists in $SWARM_TREE"
+    else
+      [[ -f "$SWARM_TREE/$path" ]] || fail "$task: manifest path '$path' missing from $SWARM_TREE (fingerprinted at manifest time)"
+      hash=$(sha256_of "$SWARM_TREE/$path")
+      [[ "$hash" == "${want[$path]}" ]] || \
+        fail "$task: '$path' changed since the manifest was fingerprinted (tree drift) — re-verify at a new attempt"
+    fi
+  done < "$man"
+
+  local expect f
+  expect=$(sha256_of "$side")
+  local files; mapfile -t files < <(verdict_files "$task" "$attempt")
+  for f in "${files[@]}"; do
+    load_verdict "$f" "$task" "$attempt" || continue      # tier checks already reported malformed files
+    [[ "$_vv" == PASS && "$_vc" == checker-* ]] || continue
+    [[ -n "$_vm" ]] || fail "$task: $(basename "$f") has no MANIFEST_SHA256 header (checker must record the fingerprint set it verified)"
+    [[ "$_vm" == "$expect" ]] || \
+      fail "$task: $(basename "$f") verified fingerprint set $_vm but the sidecar hashes to $expect (checker saw a different tree)"
+  done
+}
+
 # --- no-change terminal status ----------------------------------------------
 # no-change is terminal ONLY when the reason is audit-traceable (points at a
 # written SPEC.md note or a dated ruling, matched as a hyphen-delimited TOKEN
@@ -420,9 +508,11 @@ check_no_change() {                                                  # task atte
 }
 
 # --- subcommands ------------------------------------------------------------
-# Core per-task validation used by both `check` and `done`.
-check_task() {
-  local task="${1:-}"; [[ -n "$task" ]] || die "usage: gate.sh check <task-id>"
+# Core per-task validation used by both `check` and `done`. $2 is 1 when the
+# tree must currently match the fingerprints (check), 0 when only evidence
+# consistency is required (done).
+check_task() {                                                       # task rehash
+  local task="${1:-}" rehash="${2:-1}"; [[ -n "$task" ]] || die "usage: gate.sh check <task-id>"
   local row; row=$(row_for "$task"); [[ -n "$row" ]] || fail "$task: not in ledger"
   local tier checks status attempt reason
   tier=$(col "$row" 2); checks=$(col "$row" 3); status=$(col "$row" 4)
@@ -436,6 +526,15 @@ check_task() {
   if [[ -f "$FLAGS/$task.flag" ]]; then
     local target; target=$(field_of "$FLAGS/$task.flag" TARGET_TIER)
     (( tier < target )) && fail "$task: escalation pending — bump tier to $target then re-verify"
+  else
+    # No flag on disk: recompute the triggers inline (2026-09-18). A live
+    # trigger below its target tier means escalate-scan was never run for
+    # this evidence; the row cannot be accepted until it is. Same target
+    # rule as the scan, so a tier-3 row is never blocked here.
+    local reasons; reasons=$(escalation_reasons "$task" "$attempt")
+    if [[ -n "$reasons" ]] && (( tier < $(escalation_target "$tier") )); then
+      fail "$task: escalation trigger (${reasons}) but no flag — run gate.sh escalate-scan, bump the tier, re-verify"
+    fi
   fi
   if [[ "$status" == no-change ]]; then
     # Terminal status: never runs through check_tier1/2/3, which demand
@@ -446,14 +545,15 @@ check_task() {
   case "$tier" in
     1) check_tier1 "$task" "$attempt" "$checks" ;;
     2) check_tier2 "$task" "$attempt" "$checks" ;;
-    3) check_tier3 "$task" "$attempt" ;;
+    3) check_tier3 "$task" "$attempt" "$checks" ;;
   esac
+  check_fingerprint "$task" "$attempt" "$rehash"
   echo "OK: $task accepted at tier $tier (attempt $attempt)"
 }
 
 cmd_check() {
   validate_ledger
-  check_task "$@"
+  check_task "${1:-}" 1
 }
 
 cmd_escalate_scan() {
@@ -463,17 +563,12 @@ cmd_escalate_scan() {
   while IFS= read -r row || [[ -n "$row" ]]; do
     [[ -z "$row" || "$row" == \#* ]] && continue
     task=$(col "$row" 1); tier=$(col "$row" 2); attempt=$(col "$row" 5)
-    reasons=""
-    if (( attempt >= 1 )) && unresolved_fail_at "$task" "$attempt" && unresolved_fail_at "$task" "$((attempt-1))"; then
-      reasons+="two-consecutive-fails "
-    fi
-    overrule_exists "$task"    && reasons+="checker-overruled "
-    manifest_hits_glob "$task" && reasons+="critical-glob "
-    flag="$FLAGS/$task.flag"; target=$(( tier + 1 )); (( target > 3 )) && target=3
+    reasons=$(escalation_reasons "$task" "$attempt")
+    flag="$FLAGS/$task.flag"; target=$(escalation_target "$tier")
     if [[ -n "$reasons" ]]; then
       if [[ ! -f "$flag" ]] && (( tier < target )); then
-        printf 'TARGET_TIER: %s\nREASON: %s\n' "$target" "${reasons% }" > "$flag"
-        echo "flag: $task -> tier $target (${reasons% })"
+        printf 'TARGET_TIER: %s\nREASON: %s\n' "$target" "$reasons" > "$flag"
+        echo "flag: $task -> tier $target ($reasons)"
       fi
     elif [[ -f "$flag" ]]; then
       ft=$(field_of "$flag" TARGET_TIER)
@@ -489,10 +584,36 @@ cmd_escalate_scan() {
 # ends in ORACLE PASS) or failed. This measures the question the experiment
 # asks: how often does the worker get it right the first time. Never gates
 # anything; exit 0 unless the ledger is corrupt.
+#
+# 2026-09-18: a first-attempt FAIL that a judge panel OVERRULED is a checker
+# false alarm, not a worker miss — it counts as clean (labelled
+# fail-overruled). Also reported: escalations (a flag file on disk) and
+# elapsed time per task from evidence mtimes (earliest manifest or oracle log
+# to latest verdict or oracle log) — a cheap wall-clock proxy, not cost.
+mtime()  { stat -c %Y "$1" 2>/dev/null; }
+fmt_dur() { local s=$1; printf '%dh%02dm' $(( s / 3600 )) $(( (s % 3600) / 60 )); }
+task_elapsed() {                                                   # task -> seconds or ""
+  local task="$1" f t lo="" hi=""
+  for f in "$MANIFESTS/$task."*.files "$SWARM_DIR/tier3/$task"/oracle.*.log; do
+    [[ -f "$f" ]] || continue
+    # "$task."* is a prefix match: skip a dotted sibling's manifest (A.1.2.files
+    # is task A.1, not task A).
+    [[ "$f" == *.files && ! "$(basename "$f")" =~ ^"$task"\.[0-9]+\.files$ ]] && continue
+    t=$(mtime "$f")
+    [[ -z "$lo" || "$t" -lt "$lo" ]] && lo=$t
+  done
+  for f in "$VERDICTS/$task."*.verdict "$SWARM_DIR/tier3/$task"/oracle.*.log; do
+    [[ -f "$f" ]] || continue
+    if [[ "$f" == *.verdict ]]; then load_verdict "$f" || continue; [[ "$_vt" == "$task" ]] || continue; fi
+    t=$(mtime "$f")
+    [[ -z "$hi" || "$t" -gt "$hi" ]] && hi=$t
+  done
+  [[ -n "$lo" && -n "$hi" && "$hi" -ge "$lo" ]] && echo $(( hi - lo ))
+}
 cmd_stats() {
   validate_ledger
-  local row task tier status attempt f n first fa
-  local total=0 clean=0 nfailed=0 noev=0
+  local row task tier status attempt f n first fa el
+  local total=0 clean=0 nfailed=0 noev=0 nesc=0 eltotal=0
   while IFS= read -r row || [[ -n "$row" ]]; do
     [[ -z "$row" || "$row" == \#* ]] && continue
     task=$(col "$row" 1); tier=$(col "$row" 2)
@@ -519,14 +640,20 @@ cmd_stats() {
       noev=$((noev+1)); continue
     fi
     fa=clean
-    has_fail_at "$task" "$first" && fa=failed
+    if has_fail_at "$task" "$first"; then
+      if judges_overruled_at "$task" "$first"; then fa="clean (fail-overruled)"; else fa=failed; fi
+    fi
     f="$SWARM_DIR/tier3/$task/oracle.$first.log"
     if [[ -f "$f" && "$(tail -n1 "$f")" != "ORACLE PASS" ]]; then fa=failed; fi
-    echo "stats: $task tier=$tier first-attempt=$first $fa (now: status=$status attempt=$attempt)"
-    total=$((total+1))
-    if [[ "$fa" == clean ]]; then clean=$((clean+1)); else nfailed=$((nfailed+1)); fi
+    [[ -f "$FLAGS/$task.flag" ]] && nesc=$((nesc+1))
+    el=$(task_elapsed "$task")
+    echo "stats: $task tier=$tier first-attempt=$first $fa (now: status=$status attempt=$attempt) elapsed=$( [[ -n "$el" ]] && fmt_dur "$el" || echo n/a )"
+    total=$((total+1)); [[ -n "$el" ]] && eltotal=$((eltotal+el))
+    if [[ "$fa" == clean* ]]; then clean=$((clean+1)); else nfailed=$((nfailed+1)); fi
   done < "$LEDGER"
   echo "first-attempt clean: $clean/$total (no-evidence rows: $noev)"
+  echo "escalated: $nesc/$total"
+  echo "elapsed total: $(fmt_dur "$eltotal") (sum of per-task evidence spans)"
 }
 
 cmd_done() {
@@ -543,7 +670,7 @@ cmd_done() {
     # Re-run the same per-task quorum/schema/flag/no-change validation as
     # `check`, so the two subcommands cannot disagree about a row's fate.
     # Subshell so fail()/exit does not abort the remaining ledger walk.
-    out=$(check_task "$task" 2>&1)
+    out=$(check_task "$task" 0 2>&1)
     rc=$?
     if (( rc != 0 )); then
       echo "$out"

@@ -123,7 +123,7 @@ run_gate "$sd" check t11; assert_rc "unique judges 3x overrule accepts" 0 $?
 # runs through check_tier1/2/3 (no verdict files exist and yet it still passes)
 sd=$(newswarm)
 mkledger "$sd" 'R9\t1\tcontent\tno-change\t0\tworker-coder\tno-defect-found-root-cause-was-lead-shared-tree-see-SPEC\n'
-out=$(SWARM_DIR="$sd" bash "$GATE" check R9 2>&1); rc=$?
+out=$(gate_out "$sd" check R9); rc=$?
 assert_rc "no-change (see-SPEC) -> check accepts" 0 $rc
 echo "$out" | grep -qF "no-change: R9 (no-defect-found-root-cause-was-lead-shared-tree-see-SPEC)" \
   && echo "ok   - check prints explicit no-change line" \
@@ -243,7 +243,7 @@ mkledger "$sd" 'tA\t2\tcontent\taccepted\t0\tworker-coder\t-\ntB\t2\tcontent\tac
 mkverdict "$sd" tA 0 checker-content PASS anthropic
 mkverdict "$sd" tB 0 checker-content FAIL anthropic
 mkverdict "$sd" tB 1 checker-content PASS anthropic
-out=$(SWARM_DIR="$sd" bash "$GATE" stats 2>&1); rc=$?
+out=$(gate_out "$sd" stats); rc=$?
 assert_rc "stats exits 0" 0 $rc
 echo "$out" | grep -q "stats: tA tier=2 first-attempt=0 clean" \
   && echo "ok   - stats reports tA clean" \
@@ -254,5 +254,207 @@ echo "$out" | grep -q "stats: tB tier=2 first-attempt=0 failed" \
 echo "$out" | grep -q "first-attempt clean: 1/2" \
   && echo "ok   - stats summary line correct" \
   || { echo "FAIL - stats summary line correct"; FAILN=$((FAILN+1)); }
+
+# ---------------------------------------------------------------------------
+# 2026-09-18 gate hardening (docs/superpowers/specs/2026-09-18-gate-hardening-design.md)
+# ---------------------------------------------------------------------------
+
+# H3a: Tier 1 with a BLANK checks column must reject — the "accepts with zero
+# verdicts" footgun is closed at tier 1 the same way it was at tier 2.
+sd=$(newswarm)
+mkledger "$sd" 'h3a\t1\t-\tverifying\t0\tworker-coder\t-\n'
+mkmanifest "$sd" h3a 0
+run_gate "$sd" check h3a; assert_rc "tier1 blank checks column rejects" 1 $?
+
+# H1a: Tier 3 must require EVERY named checker, not just two lanes. checks
+# names tests,a11y,second; tests+second PASS in two lanes; a11y never ran.
+sd=$(newswarm)
+mkledger "$sd" 'h1a\t3\ttests,a11y,second\tverifying\t1\tworker-coder\t-\n'
+mktier3 "$sd" h1a 1
+mkverdict "$sd" h1a 1 checker-tests  PASS anthropic
+mkverdict "$sd" h1a 1 checker-second PASS adversarial
+run_gate "$sd" check h1a; assert_rc "tier3 missing a named checker rejects despite two lanes" 1 $?
+mkverdict "$sd" h1a 1 checker-a11y PASS anthropic
+run_gate "$sd" check h1a; assert_rc "tier3 all named checkers + two lanes accepts" 0 $?
+
+# H1b: Tier 3 with an EMPTY checks column rejects (same rule as tier 2).
+sd=$(newswarm)
+mkledger "$sd" 'h1b\t3\t-\tverifying\t1\tworker-coder\t-\n'
+mktier3 "$sd" h1b 1
+mkverdict "$sd" h1b 1 checker-tests  PASS anthropic
+mkverdict "$sd" h1b 1 checker-second PASS adversarial
+run_gate "$sd" check h1b; assert_rc "tier3 empty checks column rejects" 1 $?
+
+# H4a: a stray legacy report.md in the tier-3 dir is a hard FAIL even with a
+# valid oracle + log + dual-lane PASS — it can no longer flip the contract.
+sd=$(newswarm)
+mkledger "$sd" 'h4a\t3\ttests,second\tverifying\t1\tworker-coder\t-\n'
+mktier3 "$sd" h4a 1
+printf '# old blind-arm report\nRESOLUTION: merged\n' > "$sd/tier3/h4a/report.md"
+mkverdict "$sd" h4a 1 checker-tests  PASS anthropic
+mkverdict "$sd" h4a 1 checker-second PASS adversarial
+out=$(gate_out "$sd" check h4a); rc=$?
+assert_rc "tier3 stray report.md rejects" 1 $rc
+assert_grep "tier3 stray report.md names the file" "$out" "report.md"
+
+# H4b: report.md with a RESOLUTION line and NO oracle rejects (legacy
+# contract gone).
+sd=$(newswarm)
+mkledger "$sd" 'h4b\t3\ttests,second\tverifying\t1\tworker-coder\t-\n'
+mkdir -p "$sd/tier3/h4b"; printf 'RESOLUTION: merged\n' > "$sd/tier3/h4b/report.md"
+mkverdict "$sd" h4b 1 checker-tests  PASS anthropic
+mkverdict "$sd" h4b 1 checker-second PASS adversarial
+run_gate "$sd" check h4b; assert_rc "tier3 legacy report without oracle rejects" 1 $?
+
+# H2a: critical-glob manifest with a PASS but NO flag (lead never ran
+# escalate-scan) must reject at check, and the message must say so.
+sd=$(newswarm)
+mkledger "$sd" 'h2a\t1\tcontent\tverifying\t0\tworker-coder\t-\n'
+printf 'src/payments/**\n' > "$sd/critical.globs"
+mkmanifest "$sd" h2a 0 src/payments/checkout.js
+mkverdict "$sd" h2a 0 checker-content PASS anthropic
+out=$(gate_out "$sd" check h2a); rc=$?
+assert_rc "critical-glob manifest without flag rejects at check" 1 $rc
+assert_grep "critical-glob rejection tells the lead to run escalate-scan" "$out" "escalate-scan"
+# After the scan writes the flag and the lead bumps the tier, check accepts.
+run_gate "$sd" escalate-scan
+assert_file "escalate-scan wrote the flag" "$sd/flags/h2a.flag"
+mkledger "$sd" 'h2a\t2\tcontent\tverifying\t0\tworker-coder\t-\n'
+run_gate "$sd" check h2a; assert_rc "critical-glob row accepts once flagged and bumped" 0 $?
+
+# H2b: a boss OVERRULE with no flag rejects at check the same way.
+sd=$(newswarm)
+mkledger "$sd" 'h2b\t1\tcontent\tverifying\t1\tworker-coder\t-\n'
+mkverdict "$sd" h2b 1 checker-content PASS anthropic
+mkverdict "$sd" h2b 0 boss OVERRULE anthropic
+run_gate "$sd" check h2b; assert_rc "boss overrule without flag rejects at check" 1 $?
+
+# H2c: a tier-3 row cannot escalate further, so a critical-glob hit with no
+# flag does not block it (mirrors escalate-scan, which writes no flag at 3).
+sd=$(newswarm)
+mkledger "$sd" 'h2c\t3\ttests,second\tverifying\t1\tworker-coder\t-\n'
+printf 'src/payments/**\n' > "$sd/critical.globs"
+mktier3 "$sd" h2c 1
+mkmanifest "$sd" h2c 1 src/payments/checkout.js
+mkverdict "$sd" h2c 1 checker-tests  PASS anthropic
+mkverdict "$sd" h2c 1 checker-second PASS adversarial
+run_gate "$sd" check h2c; assert_rc "critical-glob at tier 3 needs no flag" 0 $?
+
+# H5a: no manifest at (task, attempt) -> reject. The worker contract requires
+# it; the gate now does too.
+sd=$(newswarm)
+mkledger "$sd" 'h5a\t1\tcontent\tverifying\t0\tworker-coder\t-\n'
+mkverdict "$sd" h5a 0 checker-content PASS anthropic
+rm -f "$sd/manifests/h5a.0.files"
+run_gate "$sd" check h5a; assert_rc "missing manifest rejects" 1 $?
+
+# H5b: manifest present but no .sha256 fingerprint sidecar -> reject.
+sd=$(newswarm)
+mkledger "$sd" 'h5b\t1\tcontent\tverifying\t0\tworker-coder\t-\n'
+mkverdict "$sd" h5b 0 checker-content PASS anthropic
+rm -f "$sd/manifests/h5b.0.sha256"
+out=$(gate_out "$sd" check h5b); rc=$?
+assert_rc "missing fingerprint sidecar rejects" 1 $rc
+assert_grep "missing-sidecar message names the sidecar" "$out" "sha256"
+
+# H5c: a manifest path edited AFTER the fingerprint was taken -> reject at
+# check (tree drift: the TC incident, mechanically).
+sd=$(newswarm)
+mkledger "$sd" 'h5c\t1\tcontent\tverifying\t0\tworker-coder\t-\n'
+mkmanifest "$sd" h5c 0 web/page.html web/app.js
+mkverdict "$sd" h5c 0 checker-content PASS anthropic
+run_gate "$sd" check h5c; assert_rc "fingerprinted tree accepts" 0 $?
+echo "clobbered" > "$sd/tree/web/app.js"
+out=$(gate_out "$sd" check h5c); rc=$?
+assert_rc "manifest path changed since fingerprint rejects" 1 $rc
+assert_grep "drift message names the drifted path" "$out" "web/app.js"
+
+# H5d: a checker PASS without a MANIFEST_SHA256 header -> reject.
+sd=$(newswarm)
+mkledger "$sd" 'h5d\t1\tcontent\tverifying\t0\tworker-coder\t-\n'
+mkmanifest "$sd" h5d 0
+mkverdict_nofp "$sd" h5d 0 checker-content PASS anthropic
+out=$(gate_out "$sd" check h5d); rc=$?
+assert_rc "PASS verdict without MANIFEST_SHA256 rejects" 1 $rc
+assert_grep "missing-header message names MANIFEST_SHA256" "$out" "MANIFEST_SHA256"
+
+# H5e: a checker PASS whose MANIFEST_SHA256 does not match the sidecar ->
+# reject (the checker verified a different tree).
+sd=$(newswarm)
+mkledger "$sd" 'h5e\t1\tcontent\tverifying\t0\tworker-coder\t-\n'
+mkmanifest "$sd" h5e 0
+printf 'VERDICT: PASS\nCHECKER: checker-content\nFAMILY: anthropic\nTASK: h5e\nATTEMPT: 0\nMANIFEST_SHA256: %s\n---\nevidence\n' \
+  "$(printf 'x%.0s' {1..64})" > "$sd/verdicts/h5e.0.checker-content.verdict"
+run_gate "$sd" check h5e; assert_rc "PASS verdict with wrong MANIFEST_SHA256 rejects" 1 $?
+
+# H5f: a `deleted  <path>` fingerprint entry: accepted while the path is
+# absent, rejected once it reappears.
+sd=$(newswarm)
+mkledger "$sd" 'h5f\t1\tcontent\tverifying\t0\tworker-coder\t-\n'
+mkmanifest "$sd" h5f 0 src/keep.go
+printf 'src/gone.go\n' >> "$sd/manifests/h5f.0.files"
+printf 'deleted  src/gone.go\n' >> "$sd/manifests/h5f.0.sha256"
+mkverdict "$sd" h5f 0 checker-content PASS anthropic
+run_gate "$sd" check h5f; assert_rc "deleted fingerprint entry with path absent accepts" 0 $?
+echo back > "$sd/tree/src/gone.go"
+run_gate "$sd" check h5f; assert_rc "deleted fingerprint entry with path present rejects" 1 $?
+
+# H5g: a manifest path with NO fingerprint line -> reject.
+sd=$(newswarm)
+mkledger "$sd" 'h5g\t1\tcontent\tverifying\t0\tworker-coder\t-\n'
+mkmanifest "$sd" h5g 0 src/a.go src/b.go
+sed -i '/src\/b.go/d' "$sd/manifests/h5g.0.sha256"
+mkverdict "$sd" h5g 0 checker-content PASS anthropic
+run_gate "$sd" check h5g; assert_rc "manifest path without fingerprint line rejects" 1 $?
+
+# H5h: an EMPTY manifest -> reject (a task that changed nothing is no-change).
+sd=$(newswarm)
+mkledger "$sd" 'h5h\t1\tcontent\tverifying\t0\tworker-coder\t-\n'
+mkmanifest "$sd" h5h 0
+: > "$sd/manifests/h5h.0.files"; : > "$sd/manifests/h5h.0.sha256"
+mkverdict "$sd" h5h 0 checker-content PASS anthropic
+run_gate "$sd" check h5h; assert_rc "empty manifest rejects" 1 $?
+
+# H5i: judges are exempt from the header — a dispute overruled by three
+# header-less judge verdicts still accepts.
+sd=$(newswarm)
+mkledger "$sd" 'h5i\t2\tcontent\tverifying\t0\tworker-coder\t-\n'
+mkverdict "$sd" h5i 0 checker-content PASS anthropic
+mkverdict "$sd" h5i 0 checker-second  FAIL adversarial
+mkverdict_nofp "$sd" h5i 0 judge-claude    OVERRULE anthropic
+mkverdict_nofp "$sd" h5i 0 judge-standards OVERRULE adversarial
+mkverdict_nofp "$sd" h5i 0 judge-impact    OVERRULE impact
+run_gate "$sd" check h5i; assert_rc "judge verdicts need no MANIFEST_SHA256" 0 $?
+
+# H5j: a FAIL verdict without the header does not add a second failure mode
+# (the FAIL itself is the finding). Uphold path -> rc 1 for the FAIL, which
+# is the existing behaviour; just make sure the gate does not die (rc 2).
+sd=$(newswarm)
+mkledger "$sd" 'h5j\t2\tcontent\tverifying\t0\tworker-coder\t-\n'
+mkverdict "$sd" h5j 0 checker-content PASS anthropic
+mkverdict_nofp "$sd" h5j 0 checker-second FAIL adversarial
+run_gate "$sd" check h5j; assert_rc "header-less FAIL is still an ordinary FAIL" 1 $?
+
+# H7a: stats — a first-attempt FAIL the judge panel OVERRULED counts as clean
+# (labelled fail-overruled), so a false alarm does not score against the
+# worker.
+sd=$(newswarm)
+mkledger "$sd" 'sA\t2\tcontent,second\taccepted\t0\tworker-coder\t-\nsB\t2\tcontent\taccepted\t1\tworker-coder\t-\n'
+mkverdict "$sd" sA 0 checker-content PASS anthropic
+mkverdict "$sd" sA 0 checker-second  FAIL adversarial
+mkverdict "$sd" sA 0 judge-claude    OVERRULE anthropic
+mkverdict "$sd" sA 0 judge-standards OVERRULE adversarial
+mkverdict "$sd" sA 0 judge-impact    UPHOLD   impact
+mkverdict "$sd" sB 0 checker-content FAIL anthropic
+mkverdict "$sd" sB 1 checker-content PASS anthropic
+printf 'TARGET_TIER: 2\nREASON: two-consecutive-fails\n' > "$sd/flags/sB.flag"
+out=$(gate_out "$sd" stats); rc=$?
+assert_rc "stats exits 0 (hardening)" 0 $rc
+assert_grep "stats calls an overruled first-attempt FAIL clean" "$out" "stats: sA tier=2 first-attempt=0 clean (fail-overruled)"
+assert_grep "stats still calls an upheld FAIL failed" "$out" "stats: sB tier=2 first-attempt=0 failed"
+assert_grep "stats summary counts the overruled row as clean" "$out" "first-attempt clean: 1/2"
+assert_grep "stats reports escalations" "$out" "escalated: 1/2"
+assert_grep "stats reports per-task elapsed" "$out" "stats: sA .*elapsed="
+assert_grep "stats reports total elapsed" "$out" "elapsed total:"
 
 finish

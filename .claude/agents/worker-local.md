@@ -24,6 +24,8 @@ STATUS: DONE, record every file you created or changed:
 ```bash
 mkdir -p .swarm/manifests
 printf '%s\n' path/one path/two ... > .swarm/manifests/<task-id>.<attempt>.files
+sha256sum $(cat .swarm/manifests/<task-id>.<attempt>.files) \
+  > .swarm/manifests/<task-id>.<attempt>.sha256
 ```
 
 - Paths are repo-relative, one per line, nothing else in the file.
@@ -31,3 +33,8 @@ printf '%s\n' path/one path/two ... > .swarm/manifests/<task-id>.<attempt>.files
   missing, return BLOCKED and ask — do not invent them.
 - The manifest is how the gate detects critical-path changes. An omitted
   file can let a change skip escalation, so the manifest must be complete.
+- The `.sha256` sidecar fingerprints every manifest path as you leave it
+  (`sha256sum` format, one line per path). Write it LAST, after your final
+  edit — the gate re-hashes the tree at acceptance and rejects any drift.
+  For a file you deleted, `sha256sum` cannot hash it: append the line
+  `deleted  <path>` (two spaces) by hand.

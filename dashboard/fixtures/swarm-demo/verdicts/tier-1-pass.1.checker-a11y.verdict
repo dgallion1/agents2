@@ -3,6 +3,7 @@ CHECKER: checker-a11y
 FAMILY: anthropic
 TASK: tier-1-pass
 ATTEMPT: 1
+MANIFEST_SHA256: b732a6f8e4b3258264ef7acd7b9e280786971b9fdf603f18f22d18d2391127d2
 ---
 axe: 0 violations in both light and dark mode.
 Contrast AA verified for all text and interactive elements.

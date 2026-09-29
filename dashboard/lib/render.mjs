@@ -262,48 +262,24 @@ function renderDisputePanel(task) {
   </section>`;
 }
 
-function renderTier3Diff(tier3) {
-  const matrix = Array.isArray(tier3.matrix) ? tier3.matrix : [];
-  const rows = matrix.length
-    ? matrix
-        .map((row) => {
-          const diverges = row && row.agree === false;
-          const tag = diverges
-            ? '<span class="tag tag-diverge"><span aria-hidden="true">⚠</span> diverges</span>'
-            : '<span class="tag tag-agree"><span aria-hidden="true">✓</span> agrees</span>';
-          return `<tr class="${diverges ? 'row-diverge' : ''}">
-            <td>${esc(row && row.check)}</td>
-            <td>${esc(row && row.a)}</td>
-            <td>${esc(row && row.b)}</td>
-            <td>${tag}</td>
-          </tr>`;
-        })
-        .join('')
+function renderTier3Oracle(tier3) {
+  const o = tier3.oracle || {};
+  const line = (ok, text) =>
+    `<li>${ok
+      ? '<span class="tag tag-agree"><span aria-hidden="true">✓</span> ok</span>'
+      : '<span class="tag tag-diverge"><span aria-hidden="true">⚠</span> missing</span>'} ${esc(text)}</li>`;
+  const staleHtml = tier3.hasReport
+    ? warningState('stale blind-arm report.md in the tier-3 dir — the legacy contract was removed 2026-09-18; the gate rejects this row until it is deleted.')
     : '';
-  const tableHtml = matrix.length
-    ? `<div class="table-scroll" role="region" aria-label="Tier-3 comparison matrix" tabindex="0">
-        <table class="tier3-table">
-          <thead>
-            <tr>
-              <th scope="col">check</th>
-              <th scope="col">worktree A</th>
-              <th scope="col">worktree B</th>
-              <th scope="col">status</th>
-            </tr>
-          </thead>
-          <tbody>${rows}</tbody>
-        </table>
-      </div>`
-    : emptyState('no comparison matrix recorded yet.');
-
-  const resolutionHtml = tier3.hasResolution
-    ? `<h4>Resolution</h4><div class="evidence" tabindex="0" role="region" aria-label="tier-3 resolution"><pre>${esc(tier3.resolution)}</pre></div>`
-    : warningState('no RESOLUTION recorded.');
-
   return `<section class="tier3-panel" aria-labelledby="tier3-heading">
-    <h3 id="tier3-heading">Tier-3 diff</h3>
-    ${tableHtml}
-    ${resolutionHtml}
+    <h3 id="tier3-heading">Tier-3 oracle</h3>
+    ${staleHtml}
+    <ul class="tier3-oracle">
+      ${line(o.scriptExists, 'accept.sh present')}
+      ${line(o.scriptExecutable, 'accept.sh executable')}
+      ${line(o.logExists, 'oracle log at the current attempt')}
+      ${line(o.oraclePass, 'log ends with ORACLE PASS')}
+    </ul>
   </section>`;
 }
 
@@ -338,7 +314,7 @@ function renderDrawer(tasks, openTask) {
     ${isDispute
       ? renderDisputePanel(task)
       : `<h3>Verdicts</h3>${renderVerdicts(task.verdicts)}`}
-    ${task.tier3 ? renderTier3Diff(task.tier3) : ''}
+    ${task.tier3 ? renderTier3Oracle(task.tier3) : ''}
   </section>`;
 }
 
@@ -826,8 +802,8 @@ function renderStyles() {
     }
     .tag-diverge { background: var(--red-fill); color: var(--red-text); }
     .tag-agree { background: var(--green-fill); color: var(--green-text); }
-    tr.row-diverge { background: var(--red-fill); }
-    tr.row-diverge td { color: var(--red-text); }
+    .tier3-oracle { list-style: none; padding: 0; margin: 0; }
+    .tier3-oracle li { padding: 0.15rem 0; }
 
     .share-bar-wrap {
       position: relative;

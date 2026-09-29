@@ -32,6 +32,15 @@ A worker may dispute your verdict; the lead adjudicates. Report facts only.
 
 ## Evidence — write your verdict before returning
 
+Before you verify anything, confirm the tree you are reading is the tree the
+worker fingerprinted: `sha256sum -c .swarm/manifests/<task-id>.<attempt>.sha256`
+must report every path OK (a `deleted  <path>` line means the path must be
+absent). If it does not, return `VERDICT: FAIL` with the drifted paths — you
+cannot verify a tree the manifest does not describe. Your PASS carries the
+hash of that sidecar in `MANIFEST_SHA256`; the gate rejects a PASS whose
+hash does not match the sidecar on disk, so never copy it from another
+verdict.
+
 Write your verdict to a file the gate reads; keep returning the same summary
 to the lead. You may use Bash to write the file — you still never edit
 project files.
@@ -44,6 +53,7 @@ CHECKER: checker-content
 FAMILY: anthropic
 TASK: <task-id>
 ATTEMPT: <attempt>
+MANIFEST_SHA256: <output of: sha256sum .swarm/manifests/<task-id>.<attempt>.sha256 | cut -d' ' -f1>
 ---
 <your evidence: per-block result, unified diffs for any FAIL>
 EOF

@@ -1,0 +1,51 @@
+# GH1 oracle: TREE=/home/darrell/work/agents2/.claude/worktrees/unifi-camera-streaming-7be695 BASE=cae89ff
+ok   - P0 source snapshot matches source.sha256
+FAIL - P1 tier-3 row whose named checker-a11y never ran is refused (want exit 1 naming 'checker-a11y', got 0: OK: T3 accepted at tier 3 (attempt 1))
+ok   - P1 control: every named tier-3 checker PASS across two lanes accepts
+FAIL - P2 critical-glob manifest with no flag is refused until escalate-scan (want exit 1 naming 'escalate-scan', got 0: OK: T2 accepted at tier 2 (attempt 1))
+ok   - P2 control: same row without a critical-glob hit accepts
+FAIL - P3 tier-1 row with a blank checks column is refused (want exit 1 naming 'requires named checkers', got 0: OK: T1 accepted at tier 1 (attempt 1))
+ok   - P3 control: tier-1 row with a named checker PASS accepts
+FAIL - P4 stale blind-arm report.md cannot stand in for the oracle (want exit 1 naming 'report.md', got 0: OK: T4 accepted at tier 3 (attempt 1))
+ok   - P4 control: the oracle contract accepts
+FAIL - P4 swarm/tier3-setup.sh still ships
+FAIL - P4 swarm/tier3-compare.sh still ships
+FAIL - P4 smoketest/gate/tier3_test.sh still ships
+FAIL - P4 blind-arm scripts still referenced: swarm/tier3-compare.sh swarm/tier3-setup.sh smoketest/gate/run_tests.sh smoketest/gate/tier3_test.sh 
+ok   - P5 control: fingerprinted, verified, untouched tree accepts
+FAIL - P5a tree drift after fingerprinting is refused (want exit 1 naming 'drift', got 0: OK: T5 accepted at tier 2 (attempt 1))
+FAIL - P5b PASS whose MANIFEST_SHA256 names another fingerprint set is refused (want exit 1 naming 'sidecar hashes', got 0: OK: T5 accepted at tier 2 (attempt 1))
+FAIL - P5c missing fingerprint sidecar is refused (want exit 1 naming 'sidecar', got 0: OK: T5 accepted at tier 2 (attempt 1))
+ok   - P5d control: a path fingerprinted as deleted and absent accepts
+FAIL - P5d a path fingerprinted as deleted but present is refused (want exit 1 naming 'deleted', got 0: OK: T5 accepted at tier 2 (attempt 1))
+FAIL - P5e checker PASS without MANIFEST_SHA256 is refused (want exit 1 naming 'MANIFEST_SHA256', got 0: OK: T5 accepted at tier 2 (attempt 1))
+FAIL - P5f row with no manifest is refused (want exit 1 naming 'manifest', got 0: OK: T5 accepted at tier 2 (attempt 1))
+ok   - P7 stats exits 0
+FAIL - P7 T7 line lacks fail-overruled: stats: T7 tier=2 first-attempt=1 failed (now: status=checking attempt=1)
+ok   - P7 control: an upheld first-attempt FAIL stays failed
+FAIL - P7 summary: first-attempt clean: 0/2 (no-evidence rows: 0)
+FAIL - P7 no 'escalated: n/m' line
+ok   - C1 smoketest/gate/run_tests.sh passes
+ok   - C2 dashboard tests pass (ℹ tests 49)
+FAIL - C3 worker-coder brief never mentions the .sha256 sidecar
+FAIL - C3 worker-local brief never mentions the .sha256 sidecar
+FAIL - C3 checker-a11y brief never mentions MANIFEST_SHA256
+FAIL - C3 checker-content brief never mentions MANIFEST_SHA256
+FAIL - C3 checker-second brief never mentions MANIFEST_SHA256
+FAIL - C3 checker-tests brief never mentions MANIFEST_SHA256
+ok   - E1 master's Superpowers section kept verbatim
+ok   - E2 master's Resume, don't re-dispatch paragraph kept verbatim
+FAIL - E3 every source-added CLAUDE.md line present (66 lines)
+FAIL - E4 no source-removed CLAUDE.md line survives (30 lines)
+       missing:   the user verbatim (since 2026-09-18 a first-attempt FAIL the judge panel
+       missing:   overruled counts as clean — a checker false alarm is not a worker miss —
+       missing:   and the report includes escalations and an mtime-based elapsed span).
+       missing:   Decision rule agreed with the user: if first attempts
+       missing: Before any build work, write the contract and get user sign-off. The
+       stale:     the user verbatim. Decision rule agreed with the user: if first attempts
+       stale:   Before any build work, produce two documents and get user sign-off:
+       stale:   - `SPEC.md` — architecture, page inventory, brand voice/palette, task
+       stale:     breakdown with acceptance criteria per task.
+       stale:   - `ACCESSIBILITY.md` — a numbered standard (WCAG 2.2 AA baseline plus
+FAIL - F changed-file set differs: < .claude/agents/checker-a11y.md < .claude/agents/checker-content.md < .claude/agents/checker-second.md < .claude/agents/checker-tests.md < .claude/agents/worker-coder.md < .claude/agents/worker-local.md < CLAUDE.md < dashboard/fixtures/swarm-demo/ledger.tsv < dashboard/fixtures/swarm-demo/manifests/tier-1-pass.1.sha256 < dashboard/fixtures/swarm-demo/manifests/tier-2-checking.1.sha256 < dashboard/fixtures/swarm-demo/manifests/tier-2-dispute.1.sha256 < dashboard/fixtures/swarm-demo/manifests/tier-3-resolved.1.sha256 < dashboard/fixtures/swarm-demo/manifests/tier-3-unresolved.1.sha256 < dashboard/fixtures/swarm-demo/tier3/tier-3-resolved/accept.sh < dashboard/fixtures/swarm-demo/tier3/tier-3-resolved/oracle.1.log < dashboard/fixtures/swarm-demo/tier3/tier-3-resolved/report.md < dashboard/fixtures/swarm-demo/tier3/tier-3-unresolved/accept.sh < dashboard/fixtures/swarm-demo/tier3/tier-3-unresolved/report.md < dashboard/fixtures/swarm-demo/verdicts/tier-1-pass.1.checker-a11y.verdict < dashboard/fixtures/swarm-demo/verdicts/tier-2-checking.1.checker-a11y.verdict < dashboard/fixtures/swarm-demo/verdicts/tier-2-dispute.1.checker-a11y.verdict < dashboard/fixtures/swarm-demo/verdicts/tier-2-dispute.1.checker-second.verdict < dashboard/fixtures/swarm-demo/verdicts/tier-3-resolved.1.checker-second.verdict < dashboard/fixtures/swarm-demo/verdicts/tier-3-resolved.1.checker-tests.verdict < dashboard/lib/parse.mjs < dashboard/lib/render.mjs < dashboard/test/parse.test.mjs < README.md < smoketest/doc_test.sh < smoketest/gate/agents_test.sh < smoketest/gate/_lib.sh < smoketest/gate/run_check.sh < smoketest/gate/run_done.sh < smoketest/gate/run_tests.sh < smoketest/gate/tier3_test.sh < swarm/gate.sh < swarm/tier3-compare.sh < swarm/tier3-setup.sh < TIERS.md >  
+ORACLE FAIL: 26 check(s) failed

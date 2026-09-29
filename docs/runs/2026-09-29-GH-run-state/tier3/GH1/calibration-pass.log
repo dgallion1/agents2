@@ -1,0 +1,41 @@
+# GH1 oracle: TREE=/tmp/claude-1000/-home-darrell-work-agents2--claude-worktrees-unifi-camera-streaming-7be695/480338d9-8e6c-42d1-8681-c9e4d1acdcaf/scratchpad/proto BASE=1707a6e
+ok   - P0 source snapshot matches source.sha256
+ok   - P1 tier-3 row whose named checker-a11y never ran is refused
+ok   - P1 control: every named tier-3 checker PASS across two lanes accepts
+ok   - P2 critical-glob manifest with no flag is refused until escalate-scan
+ok   - P2 control: same row without a critical-glob hit accepts
+ok   - P3 tier-1 row with a blank checks column is refused
+ok   - P3 control: tier-1 row with a named checker PASS accepts
+ok   - P4 stale blind-arm report.md cannot stand in for the oracle
+ok   - P4 control: the oracle contract accepts
+ok   - P4 swarm/tier3-setup.sh deleted
+ok   - P4 swarm/tier3-compare.sh deleted
+ok   - P4 smoketest/gate/tier3_test.sh deleted
+ok   - P4 nothing outside docs/runs and docs/superpowers (history) references the blind-arm scripts
+ok   - P5 control: fingerprinted, verified, untouched tree accepts
+ok   - P5a tree drift after fingerprinting is refused
+ok   - P5b PASS whose MANIFEST_SHA256 names another fingerprint set is refused
+ok   - P5c missing fingerprint sidecar is refused
+ok   - P5d control: a path fingerprinted as deleted and absent accepts
+ok   - P5d a path fingerprinted as deleted but present is refused
+ok   - P5e checker PASS without MANIFEST_SHA256 is refused
+ok   - P5f row with no manifest is refused
+ok   - P7 stats exits 0
+ok   - P7 overruled first-attempt FAIL is labelled fail-overruled
+ok   - P7 control: an upheld first-attempt FAIL stays failed
+ok   - P7 summary counts the overruled FAIL as clean (1/2)
+ok   - P7 stats reports escalated: n/m
+ok   - C1 smoketest/gate/run_tests.sh passes
+ok   - C2 dashboard tests pass (ℹ tests 55)
+ok   - C3 worker-coder brief tells the worker to write the .sha256 sidecar
+ok   - C3 worker-local brief tells the worker to write the .sha256 sidecar
+ok   - C3 checker-a11y brief requires MANIFEST_SHA256
+ok   - C3 checker-content brief requires MANIFEST_SHA256
+ok   - C3 checker-second brief requires MANIFEST_SHA256
+ok   - C3 checker-tests brief requires MANIFEST_SHA256
+ok   - E1 master's Superpowers section kept verbatim
+ok   - E2 master's Resume, don't re-dispatch paragraph kept verbatim
+ok   - E3 every source-added CLAUDE.md line present (66 lines)
+ok   - E4 no source-removed CLAUDE.md line survives (30 lines)
+ok   - F changed-file set equals the source's (39 files; SPEC.md is the lead's)
+ORACLE PASS

@@ -21,7 +21,10 @@ verification machinery redundant. What changed and why:
   errors and the lead's own optimism — failure modes no model strength fixes.
 - **Measurement:** the gate now has a `stats` subcommand. At the end of the
   run, run `swarm/gate.sh stats` and report the first-attempt clean rate to
-  the user verbatim. Decision rule agreed with the user: if first attempts
+  the user verbatim (since 2026-09-18 a first-attempt FAIL the judge panel
+  overruled counts as clean — a checker false alarm is not a worker miss —
+  and the report includes escalations and an mtime-based elapsed span).
+  Decision rule agreed with the user: if first attempts
   are ~all clean over ~10 tasks, the process shrinks further next run; if
   oracle/checker failures persist on first attempts, the catches were never
   about model strength and the machinery stays.
@@ -30,14 +33,21 @@ verification machinery redundant. What changed and why:
   that attribution is the experiment's real output.
 
 ## Phase 0 — Constitution before code
-Before any build work, produce two documents and get user sign-off:
-- `SPEC.md` — architecture, page inventory, brand voice/palette, task
-  breakdown with acceptance criteria per task.
-- `ACCESSIBILITY.md` — a numbered standard (WCAG 2.2 AA baseline plus
-  project-specific points). Every later check is run against this document,
-  not against vibes.
-If content is being migrated, also produce `SOURCES.md` mapping every content
-block to its canonical source.
+Before any build work, write the contract and get user sign-off. The
+ceremony scales with the run; the sign-off gate does not.
+- `SPEC.md` — always. For a one-task run that is a task block: the change,
+  numbered acceptance criteria, the tier with its one-line justification,
+  the named checkers, and the oracle (executable at Tier 3). For a multi-task
+  run add the task table and any shared design decisions. This is what the
+  runs since 2026-09 actually produce; a page inventory or brand section
+  belongs only in a site build.
+- `ACCESSIBILITY.md` — only when a task can touch markup, styles, or
+  interactive behaviour. It is the numbered standard (WCAG 2.2 AA baseline
+  plus project points) that `checker-a11y` audits against, so a Go-only or
+  data-only run does not need one (TX/TY precedent). If the target repo
+  already carries one, reuse it — do not write a per-run copy.
+- `SOURCES.md` — only when content is migrated or quoted, mapping every
+  content block to its canonical source.
 
 ## Superpowers skills — front half only (2026-09-18)
 The `superpowers` plugin stays enabled and yields to this document (its
@@ -110,25 +120,39 @@ Add a `Tier` column to SPEC.md's task table and draft `.swarm/critical.globs`.
 
 - A task's status may become `accepted` **only after `swarm/gate.sh check
   <task>` exits 0.** Paste the gate's output into the accepting message.
+- Every attempt carries evidence the gate re-derives (2026-09-18): the
+  worker's manifest AND its `.sha256` fingerprint sidecar (one `sha256sum`
+  line per manifest path, written after the last edit), and every checker
+  PASS records `MANIFEST_SHA256` — the hash of the sidecar it verified.
+  `check` re-hashes the tree against the sidecar (run it from the target
+  repo root, or set `SWARM_TREE`), so nobody (a checker included) may
+  mutate the tree between the worker's fingerprint and acceptance; that is
+  the mechanical form of the TC snapshot rule. `done`
+  re-checks the evidence set but not the tree. Consequence: start a fresh
+  ledger per run — rows accepted before 2026-09-18 have no fingerprints and
+  will not pass `done`.
 - The run may be declared complete **only after `swarm/gate.sh done` exits 0.**
 - After every verdict lands, run `swarm/gate.sh escalate-scan`. If it writes a
   flag, bump that task's `tier` in the ledger to the flag's `TARGET_TIER`,
   record the reason, and re-verify at the new tier. The gate refuses
-  acceptance at the old tier while a flag is unresolved. Mechanics worth
-  knowing: the two-consecutive-fails trigger reads the ledger's `attempt`
-  column (bump it on every re-dispatch or the trigger stays silent), and the
-  next scan clears a flag automatically once the tier is raised — no manual
-  deletion.
+  acceptance at the old tier while a flag is unresolved — and since
+  2026-09-18 `check`/`done` recompute the triggers inline, so a row with a
+  live trigger (critical-glob manifest, boss overrule, two consecutive
+  fails) and no flag is refused with "run escalate-scan" rather than
+  accepted. Mechanics worth knowing: the two-consecutive-fails trigger reads
+  the ledger's `attempt` column (bump it on every re-dispatch or the trigger
+  stays silent), and the next scan clears a flag automatically once the
+  tier is raised — no manual deletion.
 
 You never transcribe a verdict. Workers write manifests; checkers and judges
 write verdict files. You read evidence and update ledger status only.
 
 ### Tier 1 — one checker
 Worker → the mechanical checker(s) named in the ledger `checks` column
-(`checker-content` and/or `checker-a11y`) → `gate.sh check` → accept.
-The `checks` column is load-bearing: at Tier 1 a `-` or blank there makes
-`gate.sh check` accept the row with zero verdicts — never leave it empty.
-(At Tier 2 the gate now hard-rejects an empty `checks` column instead.)
+(`checker-content`, `checker-a11y` or `checker-tests`) → `gate.sh check` →
+accept. The `checks` column is load-bearing at every tier: a `-` or blank
+column hard-fails (since 2026-09-18 at Tier 1 too — it used to accept the
+row with zero verdicts).
 
 ### Tier 2 — named verifier(s) + judge panel on disputes (LEAN, 2026-08-31)
 Worker builds once. Then the checker(s) named in the ledger `checks` column
@@ -184,13 +208,15 @@ replication can never audit the lead. What remains is the oracle discipline:
    log exists at THIS attempt number, and the log's final line is exactly
    `ORACLE PASS` — so the script must emit that marker only on the all-pass
    path. Any failure goes back to the worker as a failed attempt.
-   ⚠ A `report.md` in the task's tier3 dir flips the gate to the legacy
-   blind-arm contract and bypasses the oracle entirely — never reuse a
-   pre-2026-08-26 tier3 directory for a new task.
+   The legacy blind-arm `report.md` contract was removed 2026-09-18: a
+   `report.md` in the task's tier3 dir is now a hard gate failure, so never
+   reuse a pre-2026-08-26 tier3 directory for a new task.
 4. Run the full dual-checker verification — primary verifier AND
    `checker-second`, judge panel on disputes. Tier 3 is exempt from the lean
-   experiment: `gate.sh check` requires PASSes spanning both lanes at the
-   current attempt regardless of what the `checks` column names. Irreversible
+   experiment: name every checker in the `checks` column (at least the
+   primary and `second`), and `gate.sh check` requires a PASS from EVERY
+   named checker AND PASSes spanning both lanes at the current attempt (a
+   named checker that never ran fails the row, 2026-09-18). Irreversible
    work keeps the pre-2026-08-31 rigor.
 
 ### Disputes in practice (2026-08-29, first panel use)
@@ -276,13 +302,23 @@ contract before spending the last attempt (T18 precedent — the fix was a
 contract change to dormant validation, not a third try at the same design).
 
 ## Final pass — review your own work too
-Before declaring done: run `checker-a11y` across the full site, then do your
-own review pass of every file you personally authored or modified. Your code
-gets checked by the same standard as worker code. Also run
-`bash smoketest/gate/run_tests.sh` (in this repo) and require ALL PASS —
-doc and agent-contract drift is detected only there; the gate never checks
-that the constitution still matches the code, and four failures once sat
-red across two doc commits because nothing consulted the suite.
+Before declaring done, in this order:
+1. If any accepted manifest in the run touched markup, styles, or
+   interactive behaviour, run one `checker-a11y` sweep over the pages those
+   manifests reach (both themes, tabs and modals opened) — the per-task
+   checks see one change each; the sweep sees their interaction. A run with
+   no UI manifests skips this step and says so in the run record.
+2. Review every file you personally authored or modified (specs, oracles,
+   ledger, rulings, lead-direct code). Your work is checked by the same
+   standard as worker work, and the run records show the lead's own
+   artifacts are where catches land.
+3. Run `bash smoketest/gate/run_tests.sh` (in this repo) and require ALL
+   PASS — doc and agent-contract drift is detected only there; the gate
+   never checks that the constitution still matches the code, and four
+   failures once sat red across two doc commits because nothing consulted
+   the suite.
+4. Run `swarm/gate.sh done`, then `swarm/gate.sh stats`, and report both
+   verbatim.
 
 ## Cost discipline
 - Lead session: judgment tier only (planning, specs, review, adjudication).

@@ -1,0 +1,72 @@
+VERDICT: PASS
+CHECKER: checker-second
+FAMILY: adversarial
+TASK: GH2
+ATTEMPT: 1
+MANIFEST_SHA256: f23cc96d0df8b6a479f414a6c4da76356c5c6efe60c8fbe3a89052cda890ad23
+---
+Tree confirmed: sha256sum -c .swarm/manifests/GH2.1.sha256 -> parse.mjs OK, parse.test.mjs OK (before and again immediately before writing this verdict).
+All probes ran in a private cp of the tree without .git (uid 1000, nice 10, own scratch dir); TREE untouched except this file.
+Attack scripts (fixture fuzzer, glob fuzzers, mutation runner, hand fixtures) live in the scratch dir gh2-second.lx9bGi; the numbers below are their outputs.
+
+(a) ORACLE PASS.  Attack: a scenario that passes for the wrong reason.
+  - TREE oracle.1.log last line = ORACLE PASS; accept.sh is -rwxrwxr-x.
+  - Re-ran accept.sh on my copy: S0 ok, D 14/14, C1 ok, C2 66 pass, C3 9 failing against gh1-parse -> ORACLE PASS.
+  - Re-ran differential.mjs with the GATE's message printed per scenario: every rejecting scenario is rejected by the gate FOR THE PINNED REASON
+    (S1/S4b/S5/S6/S11 "escalation trigger (critical-glob) but no flag", S9 "(checker-overruled)", S13 "(two-consecutive-fails)"), every accepting scenario returns "OK: ... accepted"
+    (S2/S3/S4a/S7/S8/S10/S12). The dashboard side is additionally pinned by mismatch fragments. Pairs S3/S4b and S12/S13 pin opposite outcomes, so a
+    "never triggers" or "always triggers" parse.mjs cannot pass. No wrong-reason pass found.  PASS
+(b) run_tests.sh.  Ran bash smoketest/gate/run_tests.sh in the copy: exit 0, 208 "ok" lines, ALL PASS in run_check/run_escalate/run_done/agents_test/doc_test/checker-evals/e2e, no FAIL/not ok.  PASS
+(c) node --test dashboard/test/*.test.mjs in the copy: exit 0, tests 66, pass 66, fail 0.  PASS
+(d) Scope.  sha256sum -c GH1.1.sha256 in TREE: exactly dashboard/lib/parse.mjs and dashboard/test/parse.test.mjs FAILED (expected); swarm/gate.sh
+  (889300...e93) and dashboard/lib/render.mjs (1bbc20...613) equal GH1's recorded hashes. git name-only vs cae89ff plus untracked, minus GH1's 39-path set:
+  only SPEC.md (the lead's §2b/§4 text, not in GH2's manifest). Static grep of parse.mjs for writeFile/mkdir/rm/unlink/rename/spawn/exec: none.  PASS
+(e) Mirror fidelity.  Attacks and results, gate = TREE/swarm/gate.sh with SWARM_DIR/SWARM_TREE set:
+  1. Glob matcher vs the gate's own embedded python (extracted verbatim from gate.sh): 80,000 random (pattern,path) pairs (25k positives) + 180,000 narrow-alphabet
+     pairs + 2,050,000 exhaustive short-path pairs over "[]!-\\abc/" incl. **/X and /** candidates, astral/accented chars: 0 mismatches.
+  2. File-level: 9,000 random critical/test/manifest files (BOM, CR-only, CRLF, \x0b \x0c \x1c-\x1f \x85 \xa0 U+2028 U+3000 U+FEFF U+200B U+180E NUL, invalid UTF-8,
+     indented '#', absent/present test.globs) run through the gate's python vs manifestHitsGlob: 0 mismatches (~1,180 positive hits).
+  3. Fixture-level fuzz, 1-3 tier-1/2/3 rows per dir (attempt 0-3, all verdict modes incl. FAIL+2 judges, tie, same-family x3, judges-only, PASS+FAIL mix; boss OVERRULE/UPHOLD/PASS
+     at random attempts incl. future; judge-claude OVERRULE non-boss; sibling ids k / k.1 / k.1.x, t / t1 / t.2; odd manifest names t..files t.files t.x.files t.1.x.1.files;
+     closed/open/empty/no-TARGET_TIER/high flags; test.globs absent/present/comments-only): 10 seeds, ~3,000 gate runs, 0 disagreements attributable to trigger/precedence
+     code (the run cross-classifies each disagreement against GH1's parse.mjs). Trigger rejects exercised in every reason combination at tiers 1 and 2; tier-3 rows with live triggers accepted by both.
+     Also compared the reason strings: gate "(reasons)" == dashboard mismatch "(reasons)" in every trigger reject.
+  4. Hand fixtures, all agree: t..files and t.abc.files and t.1.x.1.files (sibling manifests) trigger in both, t.files and t.9.files.bak do not; critical.globs comments-only/empty,
+     " # swarm/**" (a real glob), "swarm/", "swarm/**/x.sh", "**/swarm/x.sh", "[s]warm/x.sh"; critical.globs/test.globs as DIRECTORY (gate -f false -> defaults), symlinked critical.globs,
+     dangling-symlink manifest, unreadable (chmod 000) critical.globs / test.globs / old-attempt manifest (gate: python dies -> no hit; dashboard mirrors: no hit), attempt 0 with boss OVERRULE at 0,
+     tier-3 row with hit + old boss OVERRULE, closed/empty/no-TARGET_TIER/TARGET_TIER 1 flag files suppress the inline check in both.
+  5. parse() read-only: mtime/size/mode snapshots of 300 fixtures before/after parse() identical; no write API in parse.mjs. render() over 60 fixtures incl. 17 inline-flagged rows with task.flag===null: no throw.
+  Disagreements found (ALL outside the trigger/precedence code; GH1's parse.mjs shows the same or a same-root-cause state; reported as OBSERVATIONS, not FAIL):
+   O1. Verdict header validity (parseHeaderAndEvidence/validateVerdictRecord are lenient vs gate field_of: first "^KEY:" match anywhere in the file, only leading whitespace stripped from the value,
+       key not trimmed, filename attempt compared as a raw string). Confirmed the known duplicate-VERDICT case (FAIL-then-PASS: gate exit 1, dashboard accepted, GH1 and GH2 alike) and extended it:
+       trailing space "VERDICT: PASS " and " VERDICT: PASS" (quorum level, gate rejects, GH1 and GH2 accepted); filename t.00.boss with ATTEMPT: 0 / 00. On the trigger side the same root cause gives
+       gate accepts / GH2 flagged (trailing-space boss OVERRULE, indented key, PASS-then-OVERRULE duplicate, t.00 filename) and gate rejects / GH2 accepted (OVERRULE-then-PASS duplicate, VERDICT only in
+       the evidence section for boss OVERRULE and for FAILs at attempts 0+1). Fix would be in the header parser shared with quorum, outside §2b.
+   O2. Flag TARGET_TIER value parsing (parseFlag, unchanged from GH1): "abc" (gate arithmetic unbound-variable exit 1, dashboard accepted), "0x3" (gate reads 3, JS parseInt 0), "3x"/CRLF (gate arithmetic error
+       but accepts, JS reads 3 -> flagged). Machine-written flags are always "TARGET_TIER: N"; hand-corrupted only.
+   O3. parse() throws EISDIR when flags/<id>.flag (or a current-attempt manifest/verdict entry) is a directory; gate treats a directory flag as no flag. Pre-existing (parseFlag/readFileIfExists, same in gh1-parse.mjs).
+   O4. Two judge-type verdicts sharing a FAMILY at the current attempt with NO FAIL (e.g. boss OVERRULE + judge-claude, both anthropic): gate walk_verdicts fails "duplicate judge family"; dashboard applies
+       identityError only when hasFail, so accepts. Found twice by the fuzzer; identical state in GH1 (quorum path, not the trigger path).
+   O5. Ledger duplicates/leading-zero attempts and locale-dependent python open() were not pursued (same class as O1: evidence lookup by raw string vs parsed int).
+(f) Shipped tests.  Attack: tests that assert less than they appear to; partial mirrors.
+  - Copied the TREE test file, replaced the differential loop with a per-scenario report and ran it against gh1-parse.mjs: 15 of 44 DIFFERENTIAL_SCENARIOS disagree with the gate under GH1's parse
+    (e1 e5 e5b e6 e7 e10 e12 e15 e15s e15t e16 e17.1.x e18 glob-battery(gb1) e21); the two "must not over-trigger" scenarios (e19 invalid UTF-8, e20 BOM) correctly agree under both.
+  - Mutation run of the shipped parse.test.mjs against one-edit mutants of TREE's parse.mjs (each ran the full file; killed = suite fails):
+    KILLED: no two-consecutive-fails; no checker-overruled; no critical-glob; inline check despite ANY flag file; closed flag not suppressing (flag!==null instead of file); tier cap dropped; uncapped target;
+    boss only current attempt; manifests only current attempt; sibling manifests excluded; test.globs merged with defaults; no **/X candidate; any-checker OVERRULE; only-fail-at-N; only-fail-at-N-1;
+    any FAIL counts; panel without >=3; non-strict majority; judges de-duplicated by family; sibling overrule by prefix; python-strip->trim(); '#' tested on stripped line; BOM stripped; CR-only not a
+    line break; lenient UTF-8; manifest hit needs ALL paths; case-insensitive fnmatch; [!seq] negation dropped; * not crossing /; reasons order swapped; message hint dropped; open-flag branch reordered.
+    SURVIVED: (i) '/**'->'/*' candidate removed and (ii) inline check computed for non-accepted rows: both EQUIVALENT (fuzzed: `**`==`*` in fnmatch, 2.1M pairs 0 mismatches; `escalation` is only read for accepted rows);
+    (iii) dropping default test glob `tests/**`, (iv) `smoketest/**`, (v) `**/test_*.py`; (vi) "test glob exempts the WHOLE manifest" (paths.some(critical) && !paths.some(test)) — real code exempts per path,
+    which the fuzz confirms matches the gate (gate.sh comment: "a test glob only exempts the test path itself"), but no shipped test uses a mixed manifest or those three defaults.
+    parse.mjs DEFAULT_TEST_GLOBS is byte-for-byte the gate's list (compared programmatically).
+  - Every named trigger or precedence partial mirror is caught. Survivors iii-vi are finer-grained test gaps, reported as backlog, not a criterion (f) miss (f asks for scenarios that fail against GH1: 15 do).  PASS
+
+Other observations for the lead's backlog (gate/other code, not GH2):
+  B1. gate.sh manifest_hits_glob is fail-open: an unreadable or non-UTF-8 critical.globs, test.globs or ANY manifest of the task (even an old attempt) makes the embedded python die and the gate reports NO critical-glob
+      hit (probes P1-P3: gate exit 0 with a traceback on stderr). The dashboard mirrors this exactly, so parity holds, but the gate itself swallows the error.
+  B2. Suggested follow-up test-only task: a mixed test+production manifest and one path per remaining default test glob (survivors iii-vi above).
+  B3. SPEC.md differs from base and is outside GH1's fingerprint set: lead-authored §2b/§4, not a worker path.
+
+Verdict basis: (a)-(d),(f) verified with commands; (e) attacked from four angles (differential glob fuzz, file-level fuzz, fixture fuzz with gate-vs-dashboard classification against GH1, hand fixtures for every
+hunt-list item) with no disagreement whose cause is the trigger/precedence code; every disagreement found traces to verdict-header validity or flag-value parsing that GH2 did not touch and §2b does not ask it to change.

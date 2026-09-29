@@ -1,0 +1,8 @@
+# GH2 oracle: TREE=/tmp/claude-1000/-home-darrell-work-agents2--claude-worktrees-unifi-camera-streaming-7be695/480338d9-8e6c-42d1-8681-c9e4d1acdcaf/scratchpad/lead-gh2-proto
+ok   - S0 of GH1's 39 files only parse.mjs / parse.test.mjs changed (gate.sh and render.mjs untouched)
+#   (no git base in TREE — outside-set check skipped; prototype run)
+ok   - D differential: 14/14 ok
+ok   - C1 smoketest/gate/run_tests.sh passes
+ok   - C2 dashboard tests pass (ℹ tests 55)
+ok   - C3 the shipped dashboard tests fail against GH1's un-mirrored parse.mjs (1 failing)
+ORACLE PASS

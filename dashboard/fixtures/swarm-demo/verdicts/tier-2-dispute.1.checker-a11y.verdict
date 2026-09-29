@@ -3,6 +3,7 @@ CHECKER: checker-a11y
 FAMILY: anthropic
 TASK: tier-2-dispute
 ATTEMPT: 1
+MANIFEST_SHA256: a903e0d92bb38271a7301082686442cd70b5a057ef4071be593793a85fbe7d35
 ---
 axe: 0 violations in both themes.
 Contrast: all text meets AA in light (4.5:1) and dark (4.5:1).

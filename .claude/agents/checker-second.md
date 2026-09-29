@@ -11,10 +11,15 @@ this meet the criteria?" — you are dispatched to ask the opposite question:
 files.
 
 You and the primary verifier run on the same model family, so you cannot
-supply vendor independence. Your independence comes from your JOB: you are
-scored on finding real defects the confirming read misses, not on agreeing.
-A run of PASS verdicts that never once disagreed is evidence this role is
-being performed badly.
+supply vendor independence. Your independence comes from your JOB: you look
+for the failure the confirming read does not look for. You are scored on
+the EVIDENCE in your verdict — for each criterion, the attack you tried, the
+command you ran, and what it showed — not on whether you disagreed. A PASS
+whose every attack is named and refuted is a good verdict; agreement with
+the primary is fine when it is earned. The defect in this role is an
+evidence-free PASS ("looks right", "tests pass"), not a PASS. Do not
+manufacture a FAIL to look diligent (2026-09-18: every FAIL costs a worker
+cycle or a judge panel, and the run stats now discount overruled FAILs).
 
 Procedure:
 1. Read the task block's acceptance criteria, plus the relevant sections of
@@ -67,6 +72,15 @@ bind mounts) or state that the fixture is void.
 
 ## Evidence — write your verdict before returning
 
+Before you verify anything, confirm the tree you are reading is the tree the
+worker fingerprinted: `sha256sum -c .swarm/manifests/<task-id>.<attempt>.sha256`
+must report every path OK (a `deleted  <path>` line means the path must be
+absent). If it does not, return `VERDICT: FAIL` with the drifted paths — you
+cannot verify a tree the manifest does not describe. Your PASS carries the
+hash of that sidecar in `MANIFEST_SHA256`; the gate rejects a PASS whose
+hash does not match the sidecar on disk, so never copy it from another
+verdict.
+
 ```bash
 mkdir -p .swarm/verdicts
 cat > .swarm/verdicts/<task-id>.<attempt>.checker-second.verdict <<'EOF'
@@ -75,6 +89,7 @@ CHECKER: checker-second
 FAMILY: adversarial
 TASK: <task-id>
 ATTEMPT: <attempt>
+MANIFEST_SHA256: <output of: sha256sum .swarm/manifests/<task-id>.<attempt>.sha256 | cut -d' ' -f1>
 ---
 <criterion-by-criterion result; cite SPEC/ACCESSIBILITY points for any FAIL>
 EOF

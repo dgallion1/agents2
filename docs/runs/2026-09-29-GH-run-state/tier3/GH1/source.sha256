@@ -1,0 +1,12 @@
+76d479eb424d7e7d3ce4150a7aaaedd69ca400386dd89a2597b58c91ef62d538  source.patch
+a07f023cdfff2f7aa8075a252d84815bfc5b91877522e1b43b058d65c91074bf  master-CLAUDE.md
+b732a6f8e4b3258264ef7acd7b9e280786971b9fdf603f18f22d18d2391127d2  source-untracked/dashboard/fixtures/swarm-demo/manifests/tier-1-pass.1.sha256
+ac2c7f1cfdb41f9c1a4375db8a3df2b2569d995911e9c0235f5b4d2402e40cf7  source-untracked/dashboard/fixtures/swarm-demo/manifests/tier-2-checking.1.sha256
+a903e0d92bb38271a7301082686442cd70b5a057ef4071be593793a85fbe7d35  source-untracked/dashboard/fixtures/swarm-demo/manifests/tier-2-dispute.1.sha256
+8abbf355b76d2695ed10f70f78e80e8b64987e81b68a72dcea65ec3407bb283a  source-untracked/dashboard/fixtures/swarm-demo/manifests/tier-3-resolved.1.sha256
+0b71cafc81375313f3393bba984f15e107e70ca2f870d47990a18c57ba6f88c4  source-untracked/dashboard/fixtures/swarm-demo/manifests/tier-3-unresolved.1.sha256
+69d8260ca8ab39f3bcf6b1101e3e5c67e15c9d488874aa9589a4b44ea2f558c2  source-untracked/dashboard/fixtures/swarm-demo/tier3/tier-3-resolved/accept.sh
+1d3e8a610064f8cccfe7b5f4a5290070866a9f2a8601b79a14ce5231a9574037  source-untracked/dashboard/fixtures/swarm-demo/tier3/tier-3-resolved/oracle.1.log
+69d8260ca8ab39f3bcf6b1101e3e5c67e15c9d488874aa9589a4b44ea2f558c2  source-untracked/dashboard/fixtures/swarm-demo/tier3/tier-3-unresolved/accept.sh
+85163df7d67ce960dd3fb99faf03298935ca16370afe501313f8276af087674d  source-untracked/dashboard/fixtures/swarm-demo/verdicts/tier-3-resolved.1.checker-second.verdict
+d633e0e8675b698de17e653dba4490f91a6e7b77bf0314772e8835e015392e2e  source-untracked/dashboard/fixtures/swarm-demo/verdicts/tier-3-resolved.1.checker-tests.verdict

@@ -1,0 +1,127 @@
+VERDICT: PASS
+CHECKER: checker-tests
+FAMILY: anthropic
+TASK: GH2
+ATTEMPT: 1
+MANIFEST_SHA256: f23cc96d0df8b6a479f414a6c4da76356c5c6efe60c8fbe3a89052cda890ad23
+---
+Tree: /home/darrell/work/agents2/.claude/worktrees/unifi-camera-streaming-7be695 (branch claude/gate-hardening, uncommitted).
+Fingerprint: `sha256sum -c .swarm/manifests/GH2.1.sha256` -> parse.mjs: OK, parse.test.mjs: OK (checked at start and again just before writing this).
+The sidecar hashes to f23cc96d...ad23. I ran everything with TMPDIR set to a private scratch dir, niced. Mutations were done only in rsync copies without .git.
+TREE was not modified: `find . -newer <start-marker>` (excluding .git) is empty and `git status --porcelain` still has 40 lines.
+Env: Node v24.12.0, Python 3.12.3.
+
+(a) PASS
+  Command: `TMPDIR=$D bash .swarm/tier3/GH2/accept.sh $TREE` -> rc=0. Output:
+    S0 ok (x2); D differential 14/14 ok; C1 ok; C2 ok (tests 66); C3 ok (9 failing against gh1-parse.mjs).
+    The last line is `ORACLE PASS`. The lead's oracle.1.log also ends `ORACLE PASS`.
+  Non-vacuity: I made 13 single-point mutants of parse.mjs in a copy. For each I ran `node differential.mjs <copy>` and the shipped parse.test.mjs.
+    Caught by the D scenarios:
+      M1 drop two-consecutive-fails: D 13/14, S13 fails.
+      M2 drop checker-overruled: D 13/14, S9.
+      M3 drop critical-glob: D 9/14, S1 S4b S5 S6 S11.
+      M4 drop the flag-FILE suppression (compute inline even when a flag file exists): D 13/14, S8.
+      M5 drop the tier<target cap: D 12/14, S7 S10.
+      M6 read only the current attempt's manifest: D 12/14, S6 S11.
+      M7 no DEFAULT_TEST_GLOBS fallback: D 13/14, S3.
+      M8 drop the `**/X`->`X` candidate: D 13/14, S5.
+      M11 put the trigger branch after the quorum test: D 7/14.
+    Survived D but killed by the shipped suite (the oracle's C2 step):
+      M9 judge de-dup in unresolvedFailAt: shipped fail 2.
+      M10 non-strict majority: shipped fail 2.
+      M13 JS trim() instead of python strip: shipped fail 1 (the BOM scenario e20).
+    Full accept.sh on two mutants:
+      M4 -> `ORACLE FAIL: 2 check(s) failed` (D + C2).
+      M9 -> `ORACLE FAIL: 1 check(s) failed` (C2).
+    M12 (drop the `/**`->`/*` candidate) survives everything. It is an equivalent mutant: across 380,000 fuzz cases that candidate never changes a python fnmatch result (see (e)).
+
+(b) PASS
+  Command: `bash smoketest/gate/run_tests.sh` -> rc=0.
+  run_check, run_escalate, run_done, agents_test, doc_test, checker-evals and e2e each print `ALL PASS`.
+  verify_layout prints 15 `ok` lines and no FAIL. It prints no ALL PASS line by design (script unchanged vs cae89ff).
+
+(c) PASS
+  Command: `node --test dashboard/test/*.test.mjs` -> rc=0: tests 66, pass 66, fail 0.
+
+(d) PASS
+  Command: `sha256sum -c .swarm/manifests/GH1.1.sha256` -> only dashboard/lib/parse.mjs and dashboard/test/parse.test.mjs are FAILED.
+    `swarm/gate.sh: OK` and `dashboard/lib/render.mjs: OK`. All other GH1 paths are OK, and the 5 `deleted` paths are still absent.
+  Independent check: I rebuilt GH1's tree (git archive cae89ff + GH1 source.patch + source-untracked). It re-hashes 100% against GH1.1.sha256.
+    `diff -rq` of that tree vs TREE shows only parse.mjs, parse.test.mjs and SPEC.md (lead-owned) differ. The only extra file is gitignored .claude/settings.local.json.
+  The oracle's S0 git check ("no file outside GH1's set changed") passes.
+  GH2.1.files lists exactly those two paths, and GH2.1.sha256 re-hashes OK.
+  dashboard/lib/** is critical-globbed, which Tier 3 permits.
+  The frozen gh1-parse.mjs hashes to c45abc49..., which is GH1's fingerprint for parse.mjs.
+
+(e) PASS
+  Harness: my own script, independent of the oracle and the worker's tests. It builds fixtures, runs TREE's `SWARM_DIR=<fx> SWARM_TREE=<fx>/tree bash swarm/gate.sh check <id>` and TREE's parse() on each, and compares:
+    accept/reject (gate rc 0 <=> derived.state==='accepted');
+    the gate's `escalation trigger (R)` against the dashboard's `escalation trigger (R) and no flag`, which must be the same string in the same order;
+    a pinned expectation per task.
+  Result: agree=84, disagree=1, pin-miss=0, reason-mismatch=1. The one disagreement (T1m) is a pre-existing filename-parse ambiguity (Observation 1).
+  Trigger 1 (two-consecutive-fails), all agree:
+    FAILs at N and N-1 with an earlier FAIL at N-2 (reject);
+    an invalid N-1 FAIL (TASK mismatch) is ignored (accept);
+    an N-1 panel of 3 OVERRULE with one invalid FAMILY leaves only 2 valid, so the FAIL stays unresolved (reject);
+    boss + 2 judge OVERRULEs resolve N-1, so only checker-overruled is named (reject);
+    a 4 OVERRULE / 3 UPHOLD panel resolves it (accept); a 3/3 tie does not (reject);
+    judge verdicts without a FAIL (accept);
+    tier 2 with N resolved by a panel and N-1 unresolved (accept);
+    tier 2 with N and N-1 unresolved: the trigger is named before the quorum failure (reject);
+    FAILs at attempts 0 and 1 (reject); the attempt-0 guard (accept);
+    a dot-prefix sibling q.1.z's FAIL inside q's glob (both accept).
+  Trigger 2 (checker-overruled), all agree:
+    boss OVERRULE at a future attempt 5 (reject); at attempt 0 in the adversarial lane (reject);
+    boss UPHOLD (accept); `Boss` (accept);
+    invalid boss verdicts (ATTEMPT mismatch; missing ---) are ignored (accept);
+    dotted ids a/a.b and x/x.2/x.2.1: only the owner is flagged.
+  Trigger 3 (critical-glob, odd content placed in an OLDER manifest so only the trigger decides), all agree:
+    \x1c, NEL and U+3000 are stripped; U+FEFF is not stripped; NEL and U+2028 are not line breaks; lone CR is a line break;
+    a non-UTF-8 older manifest or test.globs kills python, so no hit;
+    critical.globs as a directory gives no hit; as a symlink it is followed;
+    c.junk.files and e..files are in the glob; c.files, a directory c.7.files and a dangling link c.8.files are not;
+    a custom test glob **/x.sh exempts root and nested x.sh;
+    `?` matches a single code point (precomposed umlaut hits, decomposed does not);
+    the tier-1 target is 2; `*` against default smoketest/**, tests/** and **/*.test.ts;
+    one exempt path does not exempt the manifest; indented `#` is a glob; matching is case-sensitive;
+    16 class-edge globs ([]]x, [!]]x, [a-]x, [\]x, [^a]x, [&~|]x, [z-a-c]x, [[:alpha:]]x, a[, a[!, [!-/]x, [--0]x) with python-pinned outcomes.
+  Precedence (4), all agree:
+    an empty flag file suppresses inline (both accept);
+    a closed flag, directly or via a symlink, suppresses inline;
+    an open flag uses the flag logic (`escalation pending` / `flag open`);
+    a dangling-symlink flag or another task's flag does not suppress;
+    the trigger outranks an invalid current-attempt verdict and a blank checks column with a missing manifest;
+    the reason order holds: `two-consecutive-fails checker-overruled critical-glob`, `checker-overruled critical-glob`, `two-consecutive-fails critical-glob`;
+    a tier-3 row with boss + critical is never inline-blocked;
+    no-change and checking rows are never shown as accepted.
+  Matcher proof: I exported compileFnmatch/globMatcher from a copy of TREE's parse.mjs and compared them with python fnmatch and the gate's `matches`.
+    320,000 targeted cases (79,202 true matches) plus 60,000 random cases: 0 differences.
+    pyStrip against python str.isspace over every code point: 0 differences.
+    readPyLines against python open() on 12 valid/invalid UTF-8 sequences: 0 differences.
+  Mismatch text: `task <id>: ledger says accepted but escalation trigger (<r>) and no flag — run gate.sh escalate-scan` (parse.mjs:958). It is identical to §2b and the worker's tests assert it with deepEqual.
+  Consumer: render.mjs on an inline-flagged row does not throw. It shows status-flagged and the mismatch text, with no "Open flags" entry. The swarm-demo fixture and this run's .swarm give identical JSON under GH1 and GH2 parse.
+
+(f) PASS
+  In a copy I ran every DIFFERENTIAL_SCENARIOS task with no early stop.
+    TREE's parse: agree=80, disagree=0 (44 scenarios).
+    GH1's frozen gh1-parse.mjs: 35 disagreements, all in the new trigger scenarios:
+      e1 e5 e5b e6 e7 e10 e12 e15 e15s e15t e16 e17(sibling) e18 e18.1.x, 19 glob-battery tasks, e21 e21b.
+  Unmodified shipped suite against gh1-parse.mjs: 9 failing, including `differential: gate.sh check agrees with derived.state for every fixture` ("tier-2 manifest path in critical.globs, no flag file: gate.sh check e1 rejects but derived.state is 'accepted'").
+  Every non-equivalent mutant (M1-M11, M13) is killed by the shipped suite.
+
+OBSERVATIONS (outside GH2's written scope; none of them makes a GH2 criterion fail)
+ 1. Verdict filename ambiguity. `r.1.2.x.verdict` with CHECKER `2.x` is valid for the gate's expected-prefix load_verdict(r,1). parse.mjs's greedy VERDICT_FILENAME_RE reads it as task r.1, attempt 2 and rejects it.
+    This is pre-existing at the current attempt: under GH1 and GH2 parse the gate accepts and the dashboard shows blocked.
+    GH2 inherits it into the N-1 lookup: the gate rejects two-consecutive-fails while the dashboard shows accepted.
+    It needs a checker id starting with `<digits>.`, which no real checker, judge or boss id does.
+ 2. Header whitespace (same header-parser class as the known first-vs-last item). A trailing space in `VERDICT: OVERRULE ` makes the verdict invalid to the gate, but parse.mjs trims it and treats it as valid.
+    Pre-existing at the current attempt under GH1 and GH2: `VERDICT: PASS ` makes the gate fail with "invalid VERDICT 'PASS '" while the dashboard shows accepted.
+    GH2 carries it into the boss and N-1 triggers in the conservative direction: the dashboard shows flagged while the gate accepts.
+ 3. Known item confirmed: `VERDICT: FAIL` followed by `VERDICT: PASS` makes the gate FAIL ("dispute needs >=3 judge verdicts") while the dashboard shows accepted. Same under GH1 and GH2.
+ 4. Flag TARGET_TIER parsing, pre-existing and identical under GH1 and GH2:
+    `x` -> the gate dies at line 528 with "x: unbound variable" (rc 1) while the dashboard shows accepted;
+    `3abc` -> the gate accepts while the dashboard shows flagged;
+    duplicate lines (2 then 3) -> the gate reads the first (accepts) while the dashboard reads the last (flagged).
+ 5. A flags/<id>.flag that is a directory makes parse() throw EISDIR in parseFlag, which breaks its never-throw contract. Pre-existing in GH1. The gate treats it as no flag and refuses inline.
+ 6. The oracle's D battery alone misses M9, M10 and M13. The shipped suite, and therefore C2, catches them.
+ 7. Harness gap: the gate's python open() decodes by locale. I verified only under this environment's UTF-8 locale.

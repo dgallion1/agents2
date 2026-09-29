@@ -3,6 +3,7 @@ CHECKER: checker-second
 FAMILY: glm
 TASK: tier-2-dispute
 ATTEMPT: 1
+MANIFEST_SHA256: a903e0d92bb38271a7301082686442cd70b5a057ef4071be593793a85fbe7d35
 ---
 render.mjs: evidence block overflow not scrollable in all viewport sizes.
 Monospace font stack unavailable on test system; fallback needed.
