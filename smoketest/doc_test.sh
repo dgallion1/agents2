@@ -20,8 +20,11 @@ has CLAUDE.md "tier 3 oracle pass marker" "ORACLE PASS"
 has CLAUDE.md "points at the smoketest suite" "smoketest/gate/run_tests.sh"
 has CLAUDE.md "lean experiment stats hook" "gate.sh stats"
 has CLAUDE.md "lean dispute default"       "CONCEDE"
+has CLAUDE.md "surface census before dispatch" "surface-census"
+has CLAUDE.md "census kept from checkers"  "Never hand the census report to checkers"
 
 has README.md "documents tiers"          "Verification tiers"
 has README.md "points at gate tests"     "run_tests.sh"
+has README.md "documents the census"     "surface-census"
 
 (( FAILN==0 )) && { echo "ALL PASS"; exit 0; } || { echo "$FAILN FAILED"; exit 1; }

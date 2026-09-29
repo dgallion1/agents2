@@ -71,6 +71,13 @@ Rigor is chosen per task, not applied uniformly (see `TIERS.md`):
   log an `ORACLE PASS`, then the result still goes through the same Tier-2
   dual-lane check.
 
+Before dispatch, every Tier-3 task and every Tier-2 task that names `second`
+gets a read-only `surface-census` pass: it reads the whole affected area and
+reports every consumer of the touched data, every brief claim the code
+contradicts, and every consumer the draft oracle misses — auditing the lead's
+brief before a worker spends an attempt on it. It is advisory; the gate never
+reads it.
+
 A pure-bash gate enforces it: a task is accepted only when `swarm/gate.sh check
 <task>` exits 0, and the run completes only when `swarm/gate.sh done` does.
 `swarm/gate.sh escalate-scan` raises a task's tier on evidence (two consecutive

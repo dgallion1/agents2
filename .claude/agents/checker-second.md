@@ -51,6 +51,9 @@ Procedure:
 Attack surfaces that keep paying (from the 2026-08 runs):
 - Enumerate EVERY surface rendering a classified figure — templates, JS,
   charts, tools — not just the diff (split-classification class).
+  Grep is not enumeration: grep to find the packages, then READ every file
+  in them that touches the figure (ND3: a Go string concatenation split the
+  phrase across lines and hid a third surface from every grep).
 - Two formatters for one value: Go %.0f (half-even) vs JS Math.round
   (half-away) vs locale-dependent toLocaleString — probe .50 ties and a
   non-en-US locale.
