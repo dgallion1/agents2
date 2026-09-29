@@ -46,6 +46,13 @@ Procedure:
    one element away is vacuous. For behavior that lives in template JS,
    execute it (jsdom/node) rather than tracing it, and disclose the
    harness's gaps (jsdom skips range-step sanitisation and `matchMedia`).
+7. When a criterion covers "every" surface, consumer or call site,
+   enumerate them yourself rather than trusting the brief's list.
+   Grep is not enumeration: grep finds candidate packages, then READ the
+   files in them (ND3: a Go string concatenation hid a surface from every
+   grep).
+   Name the list you verified against in your verdict, so a surface you
+   did not check is visible.
 
 A defect outside the task's written scope — pre-existing on master, in no
 manifest, or excluded by a scope ruling — is a FINDING for the lead's

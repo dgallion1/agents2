@@ -29,8 +29,13 @@ verification machinery redundant. What changed and why:
   oracle/checker failures persist on first attempts, the catches were never
   about model strength and the machinery stays.
 - Record every catch this run in SPEC.md "Rulings" with WHICH mechanism
-  caught it (oracle / primary checker / second checker / judge / gate) —
-  that attribution is the experiment's real output.
+  caught it (census / oracle / primary checker / second checker / judge /
+  gate) — that attribution is the experiment's real output.
+- Record in the run record the model IDs the subagents actually ran on (the
+  `model` field in their transcripts), not the frontmatter alias. `sonnet`
+  ran `claude-sonnet-5` through 2026-09-27 and `claude-sonnet-5-5` first
+  appears 2026-09-29; a before/after comparison must not mix a model change
+  with a process change.
 
 ## Phase 0 — Constitution before code
 Before any build work, write the contract and get user sign-off. The
@@ -109,7 +114,7 @@ by the user. Tier decides how it is verified; a mechanical gate decides when it
 is accepted. In Phase 0, also create the run directory and ledger:
 
 ```bash
-mkdir -p .swarm/verdicts .swarm/manifests .swarm/flags .swarm/tier3
+mkdir -p .swarm/verdicts .swarm/manifests .swarm/flags .swarm/tier3 .swarm/census
 # ledger.tsv columns (TAB-separated):
 #   task_id  tier  checks  status  attempt  worker  reason
 ```
@@ -146,6 +151,27 @@ Add a `Tier` column to SPEC.md's task table and draft `.swarm/critical.globs`.
 
 You never transcribe a verdict. Workers write manifests; checkers and judges
 write verdict files. You read evidence and update ledger status only.
+
+### Surface census — audit the brief before dispatch (2026-09-29)
+Every lean-era catch landed on a lead artifact, and the commonest was a
+surface the brief never listed, found after dispatch at the cost of an
+attempt (ND3, GV, RC). Before dispatching any Tier-3 task, and any Tier-2
+task whose `checks` names `second`, dispatch `surface-census` with the draft
+brief (and, at Tier 3, the draft `accept.sh`). It reads the whole affected
+area and writes `.swarm/census/<task>.<attempt>.md`: every consumer of the
+touched data, every brief claim the code contradicts, and every consumer the
+oracle does not assert on. Then:
+- Reconcile before dispatch. Each CONTRADICTED claim is fixed in the brief
+  or ruled on in SPEC.md "Rulings"; each unlisted consumer is added to the
+  brief (and to `accept.sh`, which then re-validates at both ends) or
+  excluded in writing. Attribute each such fix to mechanism `census`.
+- It is advisory input, not a verdict: the gate never reads it, and it never
+  substitutes for the oracle or a checker.
+- Never hand the census report to checkers. They enumerate independently; a
+  checker anchored on the list stops being a second search, and a surface
+  both miss is a finding about the method.
+- A contract/spec rewrite gets a fresh census at its new attempt; a resumed
+  worker on an unchanged brief needs none.
 
 ### Tier 1 — one checker
 Worker → the mechanical checker(s) named in the ledger `checks` column
@@ -199,7 +225,8 @@ replication can never audit the lead. What remains is the oracle discipline:
 1. Write **executable acceptance checks** as `.swarm/tier3/<task>/accept.sh`
    before dispatch — commands plus expected observations. This is the oracle.
    It must assert on the observable output of **every existing consumer** of
-   any data the task touches, and be validated at both ends before dispatch
+   any data the task touches (reconciled against the surface census), and be
+   validated at both ends before dispatch
    (a featureless tree must fail it; the spec's own examples must pass it).
 2. Dispatch a single `worker-coder` with the task block.
 3. Run `accept.sh` against the result and tee the output to
@@ -240,7 +267,9 @@ Three classes produced most of the last week's real catches:
    ONE source consumed by every surface rendering that figure; the checker's
    job is to ENUMERATE the surfaces (templates, JS, charts, tools), not
    trust the diff (ruling 2026-08-29a; W4 found three independent
-   classifiers ring by ring).
+   classifiers ring by ring). Grep finds candidates; enumeration means
+   reading the packages that render the figure (ND3: a Go string
+   concatenation hid a surface from every grep).
 2. **Rendered-string arithmetic** — "the displayed figures must sum" is a
    claim about the RENDERED strings, not the floats; assert on rendered
    output with a fractional-cent fixture, and derive every displayed figure

@@ -25,6 +25,8 @@ has CLAUDE.md "inline escalation triggers"  "recompute the triggers inline"
 has CLAUDE.md "tier 3 named checkers"       "PASS from EVERY"
 has CLAUDE.md "phase 0 scales with scope"   "only when a task can touch markup"
 has TIERS.md  "blank checks fails at every tier" "hard-fails at every tier"
+has CLAUDE.md "surface census before dispatch" "surface-census"
+has CLAUDE.md "census kept from checkers"  "Never hand the census report to checkers"
 hasnot() { if grep -qi "$3" "$root/$1"; then echo "FAIL - $1: $2"; FAILN=$((FAILN+1)); else echo "ok   - $1: $2"; fi; }
 hasnot CLAUDE.md "no blank-column-accepts footgun text" "accept the row with zero verdicts"
 hasnot CLAUDE.md "no legacy report.md bypass text"      "flips the gate"
@@ -32,5 +34,6 @@ hasnot README.md "no legacy divergence-report text"     "legacy divergence-repor
 
 has README.md "documents tiers"          "Verification tiers"
 has README.md "points at gate tests"     "run_tests.sh"
+has README.md "documents the census"     "surface-census"
 
 (( FAILN==0 )) && { echo "ALL PASS"; exit 0; } || { echo "$FAILN FAILED"; exit 1; }

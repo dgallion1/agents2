@@ -32,8 +32,14 @@ has judge-standards.md 'FAMILY: adversarial' "judge-standards family"
 has judge-impact.md    'FAMILY: impact'      "judge-impact family"
 has judge-claude.md    'UPHOLD'              "judge writes verdict"
 
+has surface-census.md  '.swarm/census/'      "census writes its report"
+hasnot surface-census.md 'VERDICT:'          "census is advisory, never a verdict"
+has checker-second.md  '[Gg]rep is not enumeration' "second reads, not just greps (ND3)"
+has checker-tests.md   '[Gg]rep is not enumeration' "primary reads, not just greps (ND3)"
+
 for f in checker-a11y.md checker-content.md checker-second.md checker-tests.md \
-         judge-claude.md judge-impact.md judge-standards.md worker-coder.md worker-local.md; do
+         judge-claude.md judge-impact.md judge-standards.md worker-coder.md worker-local.md \
+         surface-census.md; do
   has "$f" '^model:' "frontmatter carries a model: key"
 done
 
