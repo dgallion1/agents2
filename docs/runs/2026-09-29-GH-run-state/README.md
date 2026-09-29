@@ -54,6 +54,17 @@ Every catch was against a lead artifact (spec wording, oracle coverage) or a
 pre-existing design gap — none against worker output. Both workers were
 clean on the first attempt.
 
+## Integration and models
+
+#39 (surface census) landed on master mid-run and conflicted with six GH1
+files; merged into the branch before PR #40 merged (ruling 29h). Only
+`smoketest/doc_test.sh` needed hand resolution (union). On the merged tree
+every oracle probe and consumer check still passes; only the scope checks
+fail, listing exactly #39's files and this record. Models actually run
+(transcript `model` field): lead and both checker-tests on
+`claude-opus-5-5`; workers, checker-second and checker-a11y on
+`claude-sonnet-5-5`.
+
 ## Backlog
 
 See SPEC.md §7 (29f, backlog lists after 29d and 29g). Highest priority:

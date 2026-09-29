@@ -303,3 +303,23 @@ After merge: the de0532 worktree is removed only on the user's say-so.
   - Lead oracle nit: `differential.mjs` uses `TMPDIR ?? os.tmpdir()`; an
     EMPTY `TMPDIR` would put scratch in the cwd (`||` is the fix). Unset
     here, so no effect this run.
+
+- **2026-09-29h — integration with #39 before merge (mechanism: GitHub
+  mergeability, lead).** PR #40 reported CONFLICTING: #39 (surface census,
+  read-not-grep, judge-impact on sonnet) landed on master mid-run and edits
+  six GH1 files. Merged origin/master into the branch; the one textual
+  conflict (`smoketest/doc_test.sh`, both sides appended CLAUDE.md checks)
+  resolved as the union. #39's text reviewed against the new contract: no
+  contradiction (the census is advisory and writes no verdict, so
+  `MANIFEST_SHA256` does not apply to it). On the merged tree:
+  `run_tests.sh` ALL PASS; dashboard 66/66; GH1 oracle — every probe and
+  consumer check passes, only F (changed-file set vs cae89ff) fails, listing
+  exactly #39's two new agents and this run record; GH2 oracle — D 14/14,
+  C1–C3 pass, only the two S0 scope checks fail, listing exactly #39's files
+  and this run record. The run predates the census rule (it arrived with
+  #39), so no census was run; no retroactive census.
+- **Models (new #39 rule — from the subagent transcripts' `model` field):**
+  lead `claude-opus-5-5`; GH1 worker `claude-sonnet-5-5`, checker-tests
+  `claude-opus-5-5`, checker-second `claude-sonnet-5-5`, checker-a11y
+  `claude-sonnet-5-5`; GH2 worker `claude-sonnet-5-5`, checker-tests
+  `claude-opus-5-5`, checker-second `claude-sonnet-5-5`.
