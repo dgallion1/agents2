@@ -3,6 +3,7 @@ CHECKER: checker-a11y
 FAMILY: anthropic
 TASK: tier-2-checking
 ATTEMPT: 1
+MANIFEST_SHA256: ac2c7f1cfdb41f9c1a4375db8a3df2b2569d995911e9c0235f5b4d2402e40cf7
 ---
 axe core audit: 0 violations in dark mode, 0 in light mode.
 Keyboard navigation: all interactive elements reachable and operable.

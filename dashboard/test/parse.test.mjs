@@ -6,6 +6,8 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
+import { createHash } from 'node:crypto';
+
 import { parse } from '../lib/parse.mjs';
 
 // ---------------------------------------------------------------------------
@@ -30,22 +32,56 @@ function writeLedger(swarmDir, rows) {
   writeFile(swarmDir, 'ledger.tsv', lines.join('\n') + '\n');
 }
 
-function verdictBody({ verdict, checker, family, task, attempt, evidence = 'ok' }) {
+const sha256 = (buf) => createHash('sha256').update(buf).digest('hex');
+
+// writeManifest — the worker contract (2026-09-18): tree files under
+// <swarmDir>/tree, the .files manifest and the .sha256 fingerprint sidecar in
+// sha256sum format. gate.sh is pointed at the tree via SWARM_TREE.
+function writeManifest(swarmDir, task, attempt, paths = [`src/${task}.txt`]) {
+  const lines = [];
+  for (const p of paths) {
+    const full = path.join(swarmDir, 'tree', p);
+    fs.mkdirSync(path.dirname(full), { recursive: true });
+    if (!fs.existsSync(full)) fs.writeFileSync(full, `content of ${p}\n`);
+    lines.push(`${sha256(fs.readFileSync(full))}  ${p}`);
+  }
+  writeFile(swarmDir, `manifests/${task}.${attempt}.files`, paths.join('\n') + '\n');
+  writeFile(swarmDir, `manifests/${task}.${attempt}.sha256`, lines.join('\n') + '\n');
+}
+
+function sidecarHash(swarmDir, task, attempt) {
+  return sha256(fs.readFileSync(path.join(swarmDir, `manifests/${task}.${attempt}.sha256`)));
+}
+
+function verdictBody({ verdict, checker, family, task, attempt, evidence = 'ok', manifestSha256 }) {
   return (
     `VERDICT: ${verdict}\n` +
     `CHECKER: ${checker}\n` +
     `FAMILY: ${family}\n` +
     `TASK: ${task}\n` +
     `ATTEMPT: ${attempt}\n` +
+    (manifestSha256 ? `MANIFEST_SHA256: ${manifestSha256}\n` : '') +
     `---\n${evidence}`
   );
 }
 
-function writeVerdict(swarmDir, { task, attempt, checker, ...rest }) {
+// writeVerdict — creates a default manifest + fingerprint for (task, attempt)
+// when none exists and stamps MANIFEST_SHA256 with the sidecar's hash, so a
+// test that is not ABOUT fingerprints gets a consistent evidence set for
+// free. Pass `fingerprint: false` to omit the header, or `fingerprint:
+// '<hex>'` to force a value.
+function writeVerdict(swarmDir, { task, attempt, checker, fingerprint, ...rest }) {
+  if (!fs.existsSync(path.join(swarmDir, `manifests/${task}.${attempt}.sha256`))) {
+    writeManifest(swarmDir, task, attempt);
+  }
+  let manifestSha256;
+  if (fingerprint === false) manifestSha256 = undefined;
+  else if (typeof fingerprint === 'string') manifestSha256 = fingerprint;
+  else manifestSha256 = sidecarHash(swarmDir, task, attempt);
   writeFile(
     swarmDir,
     `verdicts/${task}.${attempt}.${checker}.verdict`,
-    verdictBody({ task, attempt, checker, ...rest })
+    verdictBody({ task, attempt, checker, manifestSha256, ...rest })
   );
 }
 
@@ -446,57 +482,23 @@ test('R-2: accepted ledger + 2-family PASS quorum + RESOLVED flag (target <= tie
   );
 });
 
-test('tier3 report with RESOLUTION line -> hasResolution true, resolution text captured, matrix parsed', () => {
+test('tier3 stale report.md -> hasReport true and an otherwise-valid accepted row is blocked (legacy contract removed 2026-09-18)', () => {
   const dir = makeSwarmDir();
   writeLedger(dir, [
-    ['t3-resolved', '3', '-', 'accepted', '1', 'worker-coder', 'merged after divergence'],
+    ['t3-stale-report', '3', 'tests,second', 'accepted', '1', 'worker-coder', 'reused tier3 dir'],
   ]);
-  writeVerdict(dir, { task: 't3-resolved', attempt: 1, checker: 'checker-content', verdict: 'PASS', family: 'anthropic' });
-  writeVerdict(dir, { task: 't3-resolved', attempt: 1, checker: 'checker-second', verdict: 'PASS', family: 'glm' });
-  writeFile(
-    dir,
-    'tier3/t3-resolved/report.md',
-    [
-      '# Divergence report',
-      '',
-      '| Check | Worktree A | Worktree B | Agree? |',
-      '|-------|-----------|-----------|--------|',
-      '| axe violations | PASS | PASS | Yes |',
-      '| keyboard nav | PASS | FAIL | No |',
-      '',
-      'RESOLUTION: merged worktree A, re-verified.',
-    ].join('\n')
-  );
+  writeVerdict(dir, { task: 't3-stale-report', attempt: 1, checker: 'checker-tests', verdict: 'PASS', family: 'anthropic' });
+  writeVerdict(dir, { task: 't3-stale-report', attempt: 1, checker: 'checker-second', verdict: 'PASS', family: 'adversarial' });
+  writeFile(dir, 'tier3/t3-stale-report/accept.sh', '#!/usr/bin/env bash\necho ORACLE PASS\n');
+  fs.chmodSync(path.join(dir, 'tier3/t3-stale-report/accept.sh'), 0o755);
+  writeFile(dir, 'tier3/t3-stale-report/oracle.1.log', 'ORACLE PASS\n');
+  writeFile(dir, 'tier3/t3-stale-report/report.md', '# old report\nRESOLUTION: merged\n');
 
   const state = parse(dir);
-  const task = state.tasks.find((t) => t.id === 't3-resolved');
-  assert.equal(task.tier3.hasResolution, true);
-  assert.equal(task.tier3.resolution, 'merged worktree A, re-verified.');
-  assert.equal(task.tier3.matrix.length, 2);
-  assert.deepEqual(task.tier3.matrix[0], { check: 'axe violations', a: 'PASS', b: 'PASS', agree: true });
-  assert.deepEqual(task.tier3.matrix[1], { check: 'keyboard nav', a: 'PASS', b: 'FAIL', agree: false });
-  assert.equal(task.derived.state, 'accepted');
-});
-
-test('tier3 report without RESOLUTION line -> hasResolution false, resolution null, ledger accepted is blocked', () => {
-  const dir = makeSwarmDir();
-  writeLedger(dir, [
-    ['t3-unresolved', '3', '-', 'accepted', '1', 'worker-local', 'claims accepted but no resolution yet'],
-  ]);
-  writeVerdict(dir, { task: 't3-unresolved', attempt: 1, checker: 'checker-content', verdict: 'PASS', family: 'anthropic' });
-  writeVerdict(dir, { task: 't3-unresolved', attempt: 1, checker: 'checker-second', verdict: 'PASS', family: 'glm' });
-  writeFile(
-    dir,
-    'tier3/t3-unresolved/report.md',
-    '# Divergence report\n\nStill investigating a mismatch. No resolution yet.\n'
-  );
-
-  const state = parse(dir);
-  const task = state.tasks.find((t) => t.id === 't3-unresolved');
-  assert.equal(task.tier3.hasResolution, false);
-  assert.equal(task.tier3.resolution, null);
+  const task = state.tasks.find((t) => t.id === 't3-stale-report');
+  assert.equal(task.tier3.hasReport, true);
   assert.equal(task.derived.state, 'blocked');
-  assert.ok(state.errors.some((e) => e.message.includes('t3-unresolved')));
+  assert.ok(state.errors.some((e) => e.message.includes('t3-stale-report') && e.message.includes('report.md')));
 });
 
 test('tier3 is null for tasks with no tier3/<task>/ dir', () => {
@@ -957,6 +959,418 @@ test('dispute overruled by a full judge panel + one malformed extra verdict -> s
 });
 
 // ---------------------------------------------------------------------------
+// 2026-09-18 gate hardening mirror: tier-1 blank checks, tier-3 named
+// checkers, fingerprint evidence consistency (gate.sh check_fingerprint in
+// `done` mode — the dashboard never re-hashes the tree).
+// ---------------------------------------------------------------------------
+
+test('tier-1 blank checks column -> accepted row is blocked (no longer accepts with zero verdicts)', () => {
+  const dir = makeSwarmDir();
+  writeLedger(dir, [['t1-blank', '1', '-', 'accepted', '0', 'worker-local', 'blank checks']]);
+  writeManifest(dir, 't1-blank', 0);
+  const state = parse(dir);
+  const task = state.tasks.find((t) => t.id === 't1-blank');
+  assert.equal(task.derived.state, 'blocked');
+  assert.ok(state.errors.some((e) => e.message.includes('t1-blank') && e.message.includes('checks column')));
+});
+
+test('tier-3: a named checker that never ran blocks even with two lanes of PASS', () => {
+  const dir = makeSwarmDir();
+  writeLedger(dir, [['t3-named', '3', 'tests,a11y,second', 'accepted', '1', 'worker-coder', 'a11y skipped']]);
+  writeDualLanePasses(dir, 't3-named', 1);
+  writeOracle(dir, 't3-named');
+  writeFile(dir, 'tier3/t3-named/oracle.1.log', 'ORACLE PASS\n');
+  let state = parse(dir);
+  let task = state.tasks.find((t) => t.id === 't3-named');
+  assert.equal(task.derived.state, 'blocked');
+  assert.ok(state.errors.some((e) => e.message.includes('missing PASS from checker-a11y')));
+  writeVerdict(dir, { task: 't3-named', attempt: 1, checker: 'checker-a11y', verdict: 'PASS', family: 'anthropic' });
+  state = parse(dir);
+  task = state.tasks.find((t) => t.id === 't3-named');
+  assert.equal(task.derived.state, 'accepted');
+});
+
+test('tier-3: empty checks column -> blocked', () => {
+  const dir = makeSwarmDir();
+  writeLedger(dir, [['t3-blank', '3', '-', 'accepted', '1', 'worker-coder', 'blank checks']]);
+  writeDualLanePasses(dir, 't3-blank', 1);
+  writeOracle(dir, 't3-blank');
+  writeFile(dir, 'tier3/t3-blank/oracle.1.log', 'ORACLE PASS\n');
+  const state = parse(dir);
+  assert.equal(state.tasks.find((t) => t.id === 't3-blank').derived.state, 'blocked');
+});
+
+test('fingerprint: accepted row with no .sha256 sidecar -> blocked', () => {
+  const dir = makeSwarmDir();
+  writeLedger(dir, [['fp-none', '1', 'tests', 'accepted', '1', 'worker-coder', 'no sidecar']]);
+  writeVerdict(dir, { task: 'fp-none', attempt: 1, checker: 'checker-tests', verdict: 'PASS', family: 'anthropic' });
+  fs.rmSync(path.join(dir, 'manifests/fp-none.1.sha256'));
+  const state = parse(dir);
+  const task = state.tasks.find((t) => t.id === 'fp-none');
+  assert.equal(task.derived.state, 'blocked');
+  assert.ok(state.errors.some((e) => e.message.includes('fp-none') && e.message.includes('sha256')));
+});
+
+test('fingerprint: checker PASS without MANIFEST_SHA256 -> blocked; judges need none', () => {
+  const dir = makeSwarmDir();
+  writeLedger(dir, [
+    ['fp-nohdr', '1', 'tests', 'accepted', '1', 'worker-coder', 'old-shape verdict'],
+    ['fp-judges', '2', 'tests', 'accepted', '1', 'worker-coder', 'overruled dispute'],
+  ]);
+  writeVerdict(dir, { task: 'fp-nohdr', attempt: 1, checker: 'checker-tests', verdict: 'PASS', family: 'anthropic', fingerprint: false });
+  writeVerdict(dir, { task: 'fp-judges', attempt: 1, checker: 'checker-tests', verdict: 'FAIL', family: 'anthropic', fingerprint: false });
+  writeVerdict(dir, { task: 'fp-judges', attempt: 1, checker: 'judge-claude', verdict: 'OVERRULE', family: 'anthropic', fingerprint: false });
+  writeVerdict(dir, { task: 'fp-judges', attempt: 1, checker: 'judge-standards', verdict: 'OVERRULE', family: 'adversarial', fingerprint: false });
+  writeVerdict(dir, { task: 'fp-judges', attempt: 1, checker: 'judge-impact', verdict: 'OVERRULE', family: 'impact', fingerprint: false });
+  const state = parse(dir);
+  assert.equal(state.tasks.find((t) => t.id === 'fp-nohdr').derived.state, 'blocked');
+  assert.ok(state.errors.some((e) => e.message.includes('fp-nohdr') && e.message.includes('MANIFEST_SHA256')));
+  assert.equal(state.tasks.find((t) => t.id === 'fp-judges').derived.state, 'accepted');
+});
+
+test('fingerprint: MANIFEST_SHA256 that does not match the sidecar -> blocked', () => {
+  const dir = makeSwarmDir();
+  writeLedger(dir, [['fp-wrong', '1', 'tests', 'accepted', '1', 'worker-coder', 'stale hash']]);
+  writeVerdict(dir, { task: 'fp-wrong', attempt: 1, checker: 'checker-tests', verdict: 'PASS', family: 'anthropic', fingerprint: 'a'.repeat(64) });
+  const state = parse(dir);
+  assert.equal(state.tasks.find((t) => t.id === 'fp-wrong').derived.state, 'blocked');
+});
+
+test('fingerprint: a manifest path with no sidecar line -> blocked', () => {
+  const dir = makeSwarmDir();
+  writeLedger(dir, [['fp-short', '1', 'tests', 'accepted', '1', 'worker-coder', 'sidecar incomplete']]);
+  writeManifest(dir, 'fp-short', 1, ['src/a.go', 'src/b.go']);
+  const side = path.join(dir, 'manifests/fp-short.1.sha256');
+  fs.writeFileSync(side, fs.readFileSync(side, 'utf8').split('\n').filter((l) => !l.endsWith('src/b.go')).join('\n') + '\n');
+  writeVerdict(dir, { task: 'fp-short', attempt: 1, checker: 'checker-tests', verdict: 'PASS', family: 'anthropic' });
+  const state = parse(dir);
+  assert.equal(state.tasks.find((t) => t.id === 'fp-short').derived.state, 'blocked');
+});
+
+// ---------------------------------------------------------------------------
+// inline escalation triggers (gate.sh escalation_reasons, ruling 2026-09-29e).
+// With no flag FILE on disk, `gate.sh check` recomputes the triggers and
+// refuses an accepted row whose triggers are live below its target tier.
+// Every fixture here carries a genuine quorum, so only a trigger stands
+// between the row and 'accepted'.
+// ---------------------------------------------------------------------------
+
+const taskOf = (state, id) => state.tasks.find((t) => t.id === id);
+const mismatchesOf = (state, id) =>
+  state.errors
+    .filter((e) => e.file === 'ledger.tsv' && e.message.startsWith(`task ${id}:`))
+    .map((e) => e.message);
+
+function writeVerdicts(dir, task, attempt, rows) {
+  for (const [checker, family, verdict] of rows) {
+    writeVerdict(dir, { task, attempt, checker, verdict, family });
+  }
+}
+
+test('escalation: accepted row with a critical-glob hit and no flag file -> flagged, mismatch names the trigger', () => {
+  const dir = makeSwarmDir();
+  writeLedger(dir, [['esc-crit', '2', 'tests', 'accepted', '1', 'w', 'r']]);
+  writeManifest(dir, 'esc-crit', 1, ['swarm/x.sh']);
+  writeVerdicts(dir, 'esc-crit', 1, [['checker-tests', 'anthropic', 'PASS']]);
+  writeFile(dir, 'critical.globs', 'swarm/**\n');
+
+  const state = parse(dir);
+  const task = taskOf(state, 'esc-crit');
+  assert.equal(task.derived.state, 'flagged');
+  assert.equal(task.flag, null, 'no flag file exists, so there is no open flag to show');
+  assert.equal(state.summary.accepted, 0);
+  assert.equal(state.summary.flagsOpen, 0);
+  assert.deepEqual(mismatchesOf(state, 'esc-crit'), [
+    'task esc-crit: ledger says accepted but escalation trigger (critical-glob) and no flag — run gate.sh escalate-scan',
+  ]);
+  assert.equal(fs.existsSync(path.join(dir, 'flags')), false, 'parse() is read-only: it must never write a flag');
+});
+
+test('escalation: all three triggers are listed in gate order, on a tier-1 row the tier check alone would accept', () => {
+  const dir = makeSwarmDir();
+  writeLedger(dir, [['esc-all', '1', 'a11y', 'accepted', '2', 'w', 'r']]);
+  writeManifest(dir, 'esc-all', 1, ['swarm/x.sh']);
+  writeVerdicts(dir, 'esc-all', 1, [
+    ['checker-second', 'adversarial', 'FAIL'],
+    ['boss', 'anthropic', 'OVERRULE'],
+  ]);
+  writeVerdicts(dir, 'esc-all', 2, [
+    ['checker-second', 'adversarial', 'FAIL'],
+    ['checker-a11y', 'anthropic', 'PASS'],
+  ]);
+  writeFile(dir, 'critical.globs', 'swarm/**\n');
+
+  const state = parse(dir);
+  assert.equal(taskOf(state, 'esc-all').derived.state, 'flagged');
+  assert.deepEqual(mismatchesOf(state, 'esc-all'), [
+    'task esc-all: ledger says accepted but escalation trigger (two-consecutive-fails checker-overruled critical-glob) and no flag — run gate.sh escalate-scan',
+  ]);
+});
+
+test('escalation: the trigger is decided before any quorum test (no verdicts at all still reads flagged)', () => {
+  const dir = makeSwarmDir();
+  writeLedger(dir, [
+    ['esc-noquorum', '2', 'tests', 'accepted', '1', 'w', 'r'],
+    ['esc-plain', '2', 'tests', 'accepted', '1', 'w', 'r'],
+  ]);
+  writeManifest(dir, 'esc-noquorum', 1, ['swarm/x.sh']);
+  writeManifest(dir, 'esc-plain', 1, ['src/ok.txt']);
+  writeFile(dir, 'critical.globs', 'swarm/**\n');
+
+  const state = parse(dir);
+  assert.equal(taskOf(state, 'esc-noquorum').derived.state, 'flagged');
+  assert.deepEqual(mismatchesOf(state, 'esc-noquorum'), [
+    'task esc-noquorum: ledger says accepted but escalation trigger (critical-glob) and no flag — run gate.sh escalate-scan',
+  ]);
+  // Control: without a trigger the same evidence is an ordinary quorum failure.
+  assert.equal(taskOf(state, 'esc-plain').derived.state, 'blocked');
+  assert.match(mismatchesOf(state, 'esc-plain')[0], /missing PASS from checker-tests/);
+});
+
+test('escalation: a tier-3 row is never blocked by an inline trigger (target tier is capped at 3)', () => {
+  const dir = makeSwarmDir();
+  writeLedger(dir, [['esc-t3', '3', 'tests,second', 'accepted', '2', 'w', 'r']]);
+  writeManifest(dir, 'esc-t3', 1, ['swarm/x.sh']);
+  writeVerdicts(dir, 'esc-t3', 1, [['boss', 'anthropic', 'OVERRULE']]);
+  writeManifest(dir, 'esc-t3', 2, ['swarm/x.sh']);
+  writeDualLanePasses(dir, 'esc-t3', 2);
+  writeOracle(dir, 'esc-t3');
+  writeFile(dir, 'tier3/esc-t3/oracle.2.log', 'ORACLE PASS\n');
+  writeFile(dir, 'critical.globs', 'swarm/**\n');
+
+  const state = parse(dir);
+  assert.equal(taskOf(state, 'esc-t3').derived.state, 'accepted');
+  assert.deepEqual(mismatchesOf(state, 'esc-t3'), []);
+});
+
+test('escalation: only rows ledgered accepted are re-stated (a checking row with a hit stays checking)', () => {
+  const dir = makeSwarmDir();
+  writeLedger(dir, [['esc-checking', '2', 'tests', 'checking', '1', 'w', 'r']]);
+  writeManifest(dir, 'esc-checking', 1, ['swarm/x.sh']);
+  writeVerdicts(dir, 'esc-checking', 1, [['checker-tests', 'anthropic', 'PASS']]);
+  writeFile(dir, 'critical.globs', 'swarm/**\n');
+
+  const state = parse(dir);
+  assert.equal(taskOf(state, 'esc-checking').derived.state, 'checking');
+  assert.deepEqual(mismatchesOf(state, 'esc-checking'), []);
+});
+
+test('escalation: a flag FILE on disk keeps today\'s flag logic and suppresses the inline check', () => {
+  const dir = makeSwarmDir();
+  writeLedger(dir, [
+    ['esc-closed', '2', 'tests', 'accepted', '1', 'w', 'r'],
+    ['esc-open', '2', 'tests', 'accepted', '1', 'w', 'r'],
+  ]);
+  for (const id of ['esc-closed', 'esc-open']) {
+    writeManifest(dir, id, 1, ['swarm/x.sh']);
+    writeVerdicts(dir, id, 1, [['checker-tests', 'anthropic', 'PASS']]);
+  }
+  writeFile(dir, 'critical.globs', 'swarm/**\n');
+  writeFile(dir, 'flags/esc-closed.flag', 'TARGET_TIER: 2\nREASON: critical-glob\n'); // closed: ledger tier >= target
+  writeFile(dir, 'flags/esc-open.flag', 'TARGET_TIER: 3\nREASON: critical-glob\n');
+
+  const state = parse(dir);
+  assert.equal(taskOf(state, 'esc-closed').derived.state, 'accepted');
+  assert.deepEqual(mismatchesOf(state, 'esc-closed'), []);
+  assert.equal(taskOf(state, 'esc-open').derived.state, 'flagged');
+  assert.deepEqual(mismatchesOf(state, 'esc-open'), [
+    'task esc-open: ledger says accepted but escalation flag open (target tier 3)',
+  ]);
+});
+
+test('escalation: two-consecutive-fails counts every valid judge verdict (no identity de-duplication), needs >=3 and a strict majority', () => {
+  const dir = makeSwarmDir();
+  writeLedger(dir, [
+    ['esc-dup', '1', 'a11y', 'accepted', '2', 'w', 'r'],
+    ['esc-short', '1', 'a11y', 'accepted', '2', 'w', 'r'],
+    ['esc-minor', '1', 'a11y', 'accepted', '2', 'w', 'r'],
+    ['esc-tie', '1', 'a11y', 'accepted', '2', 'w', 'r'],
+    ['esc-once', '1', 'a11y', 'accepted', '2', 'w', 'r'],
+  ]);
+  // Attempt 2 of every row: unresolved FAIL from an unnamed checker beside the
+  // named PASS — tier 1 alone accepts it.
+  for (const id of ['esc-dup', 'esc-short', 'esc-minor', 'esc-tie', 'esc-once']) {
+    writeVerdicts(dir, id, 2, [['checker-second', 'adversarial', 'FAIL'], ['checker-a11y', 'anthropic', 'PASS']]);
+  }
+  // esc-dup: three OVERRULEs sharing one FAMILY still set the FAIL aside.
+  writeVerdicts(dir, 'esc-dup', 1, [
+    ['checker-second', 'adversarial', 'FAIL'],
+    ['judge-a', 'anthropic', 'OVERRULE'],
+    ['judge-b', 'anthropic', 'OVERRULE'],
+    ['judge-c', 'anthropic', 'OVERRULE'],
+  ]);
+  // esc-short: two OVERRULEs are too few to set it aside.
+  writeVerdicts(dir, 'esc-short', 1, [
+    ['checker-second', 'adversarial', 'FAIL'],
+    ['judge-claude', 'anthropic', 'OVERRULE'],
+    ['judge-standards', 'adversarial', 'OVERRULE'],
+  ]);
+  // esc-minor: three verdicts, OVERRULE in the minority.
+  writeVerdicts(dir, 'esc-minor', 1, [
+    ['checker-second', 'adversarial', 'FAIL'],
+    ['judge-claude', 'anthropic', 'OVERRULE'],
+    ['judge-standards', 'adversarial', 'UPHOLD'],
+    ['judge-impact', 'impact', 'UPHOLD'],
+  ]);
+  // esc-tie: four verdicts split 2-2 — the OVERRULE majority must be strict.
+  writeVerdicts(dir, 'esc-tie', 1, [
+    ['checker-second', 'adversarial', 'FAIL'],
+    ['judge-a', 'anthropic', 'OVERRULE'],
+    ['judge-b', 'adversarial', 'OVERRULE'],
+    ['judge-c', 'impact', 'UPHOLD'],
+    ['judge-d', 'anthropic', 'UPHOLD'],
+  ]);
+  // esc-once: attempt 1 has no FAIL at all, so the FAILs are not consecutive.
+  writeVerdicts(dir, 'esc-once', 1, [['checker-a11y', 'anthropic', 'PASS']]);
+
+  const state = parse(dir);
+  assert.equal(taskOf(state, 'esc-dup').derived.state, 'accepted');
+  assert.equal(taskOf(state, 'esc-once').derived.state, 'accepted');
+  for (const id of ['esc-short', 'esc-minor', 'esc-tie']) {
+    assert.equal(taskOf(state, id).derived.state, 'flagged', id);
+    assert.deepEqual(mismatchesOf(state, id), [
+      `task ${id}: ledger says accepted but escalation trigger (two-consecutive-fails) and no flag — run gate.sh escalate-scan`,
+    ]);
+  }
+});
+
+test('escalation: a boss OVERRULE counts at ANY attempt, but only for the task that owns the file', () => {
+  const dir = makeSwarmDir();
+  writeLedger(dir, [
+    ['esc-boss', '1', 'tests', 'accepted', '3', 'w', 'r'],
+    ['esc-boss.1.x', '1', 'tests', 'accepted', '1', 'w', 'r'],
+    ['esc-judge', '1', 'tests', 'accepted', '1', 'w', 'r'],
+  ]);
+  writeVerdicts(dir, 'esc-boss', 1, [['boss', 'anthropic', 'OVERRULE']]);
+  writeVerdicts(dir, 'esc-boss', 3, [['checker-tests', 'anthropic', 'PASS']]);
+  // A dot-prefix sibling's boss verdict lies in esc-boss's `esc-boss.*.verdict`
+  // glob but belongs to esc-boss.1.x.
+  writeVerdicts(dir, 'esc-boss.1.x', 1, [['checker-tests', 'anthropic', 'PASS']]);
+  writeVerdicts(dir, 'esc-judge', 1, [['checker-tests', 'anthropic', 'PASS'], ['judge-claude', 'anthropic', 'OVERRULE']]);
+
+  const state = parse(dir);
+  assert.equal(taskOf(state, 'esc-boss').derived.state, 'flagged');
+  assert.match(mismatchesOf(state, 'esc-boss')[0], /escalation trigger \(checker-overruled\) and no flag/);
+  assert.equal(taskOf(state, 'esc-boss.1.x').derived.state, 'accepted');
+  assert.equal(taskOf(state, 'esc-judge').derived.state, 'accepted', 'only CHECKER: boss counts, not any OVERRULE');
+});
+
+// The glob battery: one swarm-wide critical.globs, one task per path. `hit` is
+// what gate.sh's python3 (`fnmatch` + the `**/` and `/**` candidates + the
+// default test-glob exemption) says for that path — pinned from a real run of
+// the gate's own matcher, so a JS reimplementation that drifts fails here.
+const GLOB_BATTERY_GLOBS = [
+  '# swarm/** (a comment line, never a glob)',
+  '  #hash/*', // '#' is tested on the RAW line: indented, this IS the glob '#hash/*'
+  'src/a?.go',
+  'lib/[abc]/*.txt',
+  'lib/[!abc]/*.md',
+  'docs/**/*.md',
+  '**/Makefile',
+  '*.lock',
+  '[[]x]/f',
+  '[a-c-e]z',
+  'web/[z-a]/q', // reversed range: matches nothing
+  'web/[!z-a]/r', // negated reversed range: matches any one character
+  'web/[z-a!]/s', // python quirk: the reversed range vanishes and leaves a bare '!', which reads as "any character"
+  '   pad/tab.txt   ', // surrounding whitespace is stripped
+  'vendor/**',
+];
+const GLOB_BATTERY = [
+  ['swarm/x.sh', false],
+  ['#hash/a', true],
+  ['src/ab.go', true],
+  ['src/abc.go', false],
+  [`src/a${String.fromCodePoint(0x1f600)}.go`, true], // `?` is one code point, not one UTF-16 unit
+  ['lib/a/f.txt', true],
+  ['lib/d/f.txt', false],
+  ['lib/d/f.md', true],
+  ['lib/a/f.md', false],
+  ['docs/x/y.md', true],
+  ['docs/y.md', false],
+  ['Makefile', true], // **/Makefile also tries Makefile
+  ['a/b/Makefile', true],
+  ['MAKEFILE', false], // case-sensitive
+  ['yarn.lock', true],
+  ['sub/yarn.lock', true], // `*` crosses '/'
+  ['[x]/f', true],
+  ['x/f', false],
+  ['az', true],
+  ['-z', true],
+  ['ez', true],
+  ['dz', false],
+  ['web/m/q', false],
+  ['web/m/r', true],
+  ['web/mm/r', false],
+  ['web/m/s', true],
+  ['web/mm/s', false],
+  ['pad/tab.txt', true],
+  ['vendor/foo.go', true],
+  ['vendor/foo_test.go', false], // exempted by the default test glob **/*_test.go
+  ['vendor/tests/x', true], // tests/** is anchored at the root: not exempt here
+];
+
+function writeGlobBattery(dir) {
+  const ids = GLOB_BATTERY.map((_, i) => `gb${i}`);
+  writeLedger(dir, ids.map((id) => [id, '2', 'tests', 'accepted', '1', 'w', 'r']));
+  GLOB_BATTERY.forEach(([p], i) => {
+    writeManifest(dir, ids[i], 1, [p]);
+    writeVerdicts(dir, ids[i], 1, [['checker-tests', 'anthropic', 'PASS']]);
+  });
+  writeFile(dir, 'critical.globs', GLOB_BATTERY_GLOBS.join('\n') + '\n');
+  return ids;
+}
+
+test('critical-glob: python fnmatch semantics, the gate\'s extra candidates and the default test-glob exemption', () => {
+  const dir = makeSwarmDir();
+  const ids = writeGlobBattery(dir);
+  const state = parse(dir);
+  GLOB_BATTERY.forEach(([p, hit], i) => {
+    assert.equal(
+      taskOf(state, ids[i]).derived.state,
+      hit ? 'flagged' : 'accepted',
+      `manifest path ${JSON.stringify(p)} should ${hit ? '' : 'not '}be a critical-glob hit`
+    );
+  });
+});
+
+test('critical-glob: a present test.globs REPLACES the defaults; an absent critical.globs never triggers', () => {
+  const dir = makeSwarmDir();
+  writeLedger(dir, [
+    ['cg-default', '2', 'tests', 'accepted', '1', 'w', 'r'],
+    ['cg-nomatch', '2', 'tests', 'accepted', '1', 'w', 'r'],
+  ]);
+  for (const id of ['cg-default', 'cg-nomatch']) {
+    writeManifest(dir, id, 1, ['swarm/x_test.go']);
+    writeVerdicts(dir, id, 1, [['checker-tests', 'anthropic', 'PASS']]);
+  }
+  // No critical.globs yet: nothing can trigger.
+  assert.equal(taskOf(parse(dir), 'cg-default').derived.state, 'accepted');
+  writeFile(dir, 'critical.globs', 'swarm/**\n');
+  // Default test globs exempt swarm/x_test.go.
+  assert.equal(taskOf(parse(dir), 'cg-default').derived.state, 'accepted');
+  // A test.globs that does not name it replaces the defaults: now a hit.
+  writeFile(dir, 'test.globs', 'nomatch\n');
+  assert.equal(taskOf(parse(dir), 'cg-nomatch').derived.state, 'flagged');
+  // ...and one that names it exempts it.
+  writeFile(dir, 'test.globs', 'swarm/x_test.go\n');
+  assert.equal(taskOf(parse(dir), 'cg-nomatch').derived.state, 'accepted');
+});
+
+test('critical-glob: reads EVERY manifest the gate\'s <task>.*.files glob matches, older attempts included', () => {
+  const dir = makeSwarmDir();
+  writeLedger(dir, [['cg-old', '2', 'tests', 'accepted', '2', 'w', 'r']]);
+  writeManifest(dir, 'cg-old', 1, ['swarm/x.sh']);
+  writeManifest(dir, 'cg-old', 2, ['src/ok.txt']);
+  writeVerdicts(dir, 'cg-old', 2, [['checker-tests', 'anthropic', 'PASS']]);
+  writeFile(dir, 'critical.globs', 'swarm/**\n');
+
+  const state = parse(dir);
+  assert.equal(taskOf(state, 'cg-old').derived.state, 'flagged');
+  assert.match(mismatchesOf(state, 'cg-old')[0], /escalation trigger \(critical-glob\)/);
+});
+
+// ---------------------------------------------------------------------------
 // differential run against swarm/gate.sh — the anti-lie property, tested
 // mechanically: for every fixture below (all rows ledgered 'accepted'),
 // `gate.sh check <task>` exits 0 exactly when derived.state === 'accepted'.
@@ -966,7 +1380,7 @@ const GATE_SH = fileURLToPath(new URL('../../swarm/gate.sh', import.meta.url));
 
 function gateCheck(swarmDir, taskId) {
   const res = spawnSync('bash', [GATE_SH, 'check', taskId], {
-    env: { ...process.env, SWARM_DIR: swarmDir },
+    env: { ...process.env, SWARM_DIR: swarmDir, SWARM_TREE: path.join(swarmDir, 'tree') },
     encoding: 'utf8',
   });
   assert.notEqual(res.status, null, `gate.sh did not run: ${res.error}`);
@@ -1063,6 +1477,38 @@ const DIFFERENTIAL_SCENARIOS = [
     writeFile(dir, 'tier3/d3/oracle.1.log', 'ORACLE PASS\n');
     return ['d3'];
   }],
+  ['tier-1 blank checks column', (dir) => {
+    writeLedger(dir, [['d1b', '1', '-', 'accepted', '1', 'w', 'r']]);
+    writeManifest(dir, 'd1b', 1);
+    return ['d1b'];
+  }],
+  ['tier-3 named checker never ran', (dir) => {
+    writeLedger(dir, [['d3n', '3', 'tests,a11y,second', 'accepted', '1', 'w', 'r']]);
+    writeDualLanePasses(dir, 'd3n', 1);
+    writeOracle(dir, 'd3n');
+    writeFile(dir, 'tier3/d3n/oracle.1.log', 'ORACLE PASS\n');
+    return ['d3n'];
+  }],
+  ['tier-3 stale report.md beside a green oracle', (dir) => {
+    writeLedger(dir, [['d3r', '3', 'tests,second', 'accepted', '1', 'w', 'r']]);
+    writeDualLanePasses(dir, 'd3r', 1);
+    writeOracle(dir, 'd3r');
+    writeFile(dir, 'tier3/d3r/oracle.1.log', 'ORACLE PASS\n');
+    writeFile(dir, 'tier3/d3r/report.md', 'RESOLUTION: merged\n');
+    return ['d3r'];
+  }],
+  ['fingerprint header missing / mismatched / sidecar missing', (dir) => {
+    writeLedger(dir, [
+      ['dfa', '1', 'tests', 'accepted', '1', 'w', 'r'],
+      ['dfb', '1', 'tests', 'accepted', '1', 'w', 'r'],
+      ['dfc', '1', 'tests', 'accepted', '1', 'w', 'r'],
+    ]);
+    writeVerdict(dir, { task: 'dfa', attempt: 1, checker: 'checker-tests', verdict: 'PASS', family: 'anthropic', fingerprint: false });
+    writeVerdict(dir, { task: 'dfb', attempt: 1, checker: 'checker-tests', verdict: 'PASS', family: 'anthropic', fingerprint: 'b'.repeat(64) });
+    writeVerdict(dir, { task: 'dfc', attempt: 1, checker: 'checker-tests', verdict: 'PASS', family: 'anthropic' });
+    fs.rmSync(path.join(dir, 'manifests/dfc.1.sha256'));
+    return ['dfa', 'dfb', 'dfc'];
+  }],
   ['tier-3 green oracle + quorum + malformed extra', (dir) => {
     writeLedger(dir, [['d3j', '3', 'tests,second', 'accepted', '1', 'w', 'r']]);
     writeDualLanePasses(dir, 'd3j', 1);
@@ -1070,6 +1516,221 @@ const DIFFERENTIAL_SCENARIOS = [
     writeFile(dir, 'tier3/d3j/oracle.1.log', 'ORACLE PASS\n');
     writeFile(dir, 'verdicts/d3j.1.checker-rogue.verdict', 'VERDICT: PASS\nFAMILY: anthropic\n');
     return ['d3j'];
+  }],
+
+  // --- inline escalation triggers (ruling 2026-09-29e) ----------------------
+  // Each row below carries the evidence its tier demands, so only an inline
+  // trigger (or its absence) decides whether the gate accepts. No flag files
+  // unless the scenario names one.
+  ['tier-2 manifest path in critical.globs, no flag file', (dir) => {
+    writeLedger(dir, [['e1', '2', 'tests', 'accepted', '1', 'w', 'r']]);
+    writeManifest(dir, 'e1', 1, ['swarm/x.sh']);
+    writeVerdicts(dir, 'e1', 1, [['checker-tests', 'anthropic', 'PASS']]);
+    writeFile(dir, 'critical.globs', 'swarm/**\n');
+    return ['e1'];
+  }],
+  ['tier-2 critical.globs present, manifest path outside it', (dir) => {
+    writeLedger(dir, [['e2', '2', 'tests', 'accepted', '1', 'w', 'r']]);
+    writeManifest(dir, 'e2', 1, ['swarm/x.sh']);
+    writeVerdicts(dir, 'e2', 1, [['checker-tests', 'anthropic', 'PASS']]);
+    writeFile(dir, 'critical.globs', 'nomatch/**\n');
+    return ['e2'];
+  }],
+  ['tier-2 critical path that a default test glob exempts', (dir) => {
+    writeLedger(dir, [['e3', '2', 'tests', 'accepted', '1', 'w', 'r']]);
+    writeManifest(dir, 'e3', 1, ['swarm/x_test.go']);
+    writeVerdicts(dir, 'e3', 1, [['checker-tests', 'anthropic', 'PASS']]);
+    writeFile(dir, 'critical.globs', 'swarm/**\n');
+    return ['e3'];
+  }],
+  ['tier-2 critical path that a present test.globs exempts', (dir) => {
+    writeLedger(dir, [['e4', '2', 'tests', 'accepted', '1', 'w', 'r']]);
+    writeManifest(dir, 'e4', 1, ['swarm/probe.sh']);
+    writeVerdicts(dir, 'e4', 1, [['checker-tests', 'anthropic', 'PASS']]);
+    writeFile(dir, 'critical.globs', 'swarm/**\n');
+    writeFile(dir, 'test.globs', 'swarm/probe.sh\n');
+    return ['e4'];
+  }],
+  ['tier-2 default-test-glob path with a test.globs that replaces the defaults', (dir) => {
+    writeLedger(dir, [['e5', '2', 'tests', 'accepted', '1', 'w', 'r']]);
+    writeManifest(dir, 'e5', 1, ['swarm/x_test.go']);
+    writeVerdicts(dir, 'e5', 1, [['checker-tests', 'anthropic', 'PASS']]);
+    writeFile(dir, 'critical.globs', 'swarm/**\n');
+    writeFile(dir, 'test.globs', 'nomatch\n');
+    return ['e5'];
+  }],
+  ['tier-2 default-test-glob path with an empty test.globs', (dir) => {
+    writeLedger(dir, [['e5b', '2', 'tests', 'accepted', '1', 'w', 'r']]);
+    writeManifest(dir, 'e5b', 1, ['swarm/x_test.go']);
+    writeVerdicts(dir, 'e5b', 1, [['checker-tests', 'anthropic', 'PASS']]);
+    writeFile(dir, 'critical.globs', 'swarm/**\n');
+    writeFile(dir, 'test.globs', '# nothing is exempt\n');
+    return ['e5b'];
+  }],
+  ['tier-2 **/X glob and X at the repo root', (dir) => {
+    writeLedger(dir, [['e6', '2', 'tests', 'accepted', '1', 'w', 'r']]);
+    writeManifest(dir, 'e6', 1, ['gate.sh']);
+    writeVerdicts(dir, 'e6', 1, [['checker-tests', 'anthropic', 'PASS']]);
+    writeFile(dir, 'critical.globs', '**/gate.sh\n');
+    return ['e6'];
+  }],
+  ['tier-2 critical path only in an older attempt\'s manifest', (dir) => {
+    writeLedger(dir, [['e7', '2', 'tests', 'accepted', '2', 'w', 'r']]);
+    writeManifest(dir, 'e7', 1, ['swarm/x.sh']);
+    writeManifest(dir, 'e7', 2, ['src/ok.txt']);
+    writeVerdicts(dir, 'e7', 2, [['checker-tests', 'anthropic', 'PASS']]);
+    writeFile(dir, 'critical.globs', 'swarm/**\n');
+    return ['e7'];
+  }],
+  ['tier-3 green oracle + quorum + critical path', (dir) => {
+    writeLedger(dir, [['e8', '3', 'tests,second', 'accepted', '1', 'w', 'r']]);
+    writeManifest(dir, 'e8', 1, ['swarm/x.sh']);
+    writeDualLanePasses(dir, 'e8', 1);
+    writeOracle(dir, 'e8');
+    writeFile(dir, 'tier3/e8/oracle.1.log', 'ORACLE PASS\n');
+    writeFile(dir, 'critical.globs', 'swarm/**\n');
+    return ['e8'];
+  }],
+  ['tier-2 critical path beside a CLOSED flag file', (dir) => {
+    writeLedger(dir, [['e9', '2', 'tests', 'accepted', '1', 'w', 'r']]);
+    writeManifest(dir, 'e9', 1, ['swarm/x.sh']);
+    writeVerdicts(dir, 'e9', 1, [['checker-tests', 'anthropic', 'PASS']]);
+    writeFile(dir, 'critical.globs', 'swarm/**\n');
+    writeFile(dir, 'flags/e9.flag', 'TARGET_TIER: 2\nREASON: critical-glob\n');
+    return ['e9'];
+  }],
+  ['tier-2 critical path beside an OPEN flag file', (dir) => {
+    writeLedger(dir, [['e9o', '2', 'tests', 'accepted', '1', 'w', 'r']]);
+    writeManifest(dir, 'e9o', 1, ['swarm/x.sh']);
+    writeVerdicts(dir, 'e9o', 1, [['checker-tests', 'anthropic', 'PASS']]);
+    writeFile(dir, 'critical.globs', 'swarm/**\n');
+    writeFile(dir, 'flags/e9o.flag', 'TARGET_TIER: 3\nREASON: critical-glob\n');
+    return ['e9o'];
+  }],
+  ['tier-1 boss OVERRULE at an older attempt', (dir) => {
+    writeLedger(dir, [['e10', '1', 'tests', 'accepted', '2', 'w', 'r']]);
+    writeVerdicts(dir, 'e10', 1, [['checker-tests', 'anthropic', 'FAIL'], ['boss', 'anthropic', 'OVERRULE']]);
+    writeVerdicts(dir, 'e10', 2, [['checker-tests', 'anthropic', 'PASS']]);
+    return ['e10'];
+  }],
+  ['tier-3 green oracle + quorum + boss OVERRULE at an older attempt', (dir) => {
+    writeLedger(dir, [['e11', '3', 'tests,second', 'accepted', '2', 'w', 'r']]);
+    writeVerdicts(dir, 'e11', 1, [['boss', 'anthropic', 'OVERRULE']]);
+    writeDualLanePasses(dir, 'e11', 2);
+    writeOracle(dir, 'e11');
+    writeFile(dir, 'tier3/e11/oracle.2.log', 'ORACLE PASS\n');
+    return ['e11'];
+  }],
+  ['tier-1 unresolved FAILs at attempts 1 and 2 beside the named PASS', (dir) => {
+    writeLedger(dir, [['e12', '1', 'a11y', 'accepted', '2', 'w', 'r']]);
+    writeVerdicts(dir, 'e12', 1, [['checker-second', 'adversarial', 'FAIL']]);
+    writeVerdicts(dir, 'e12', 2, [['checker-second', 'adversarial', 'FAIL'], ['checker-a11y', 'anthropic', 'PASS']]);
+    return ['e12'];
+  }],
+  ['tier-1 FAIL at attempt 1 only, named PASS at attempt 2', (dir) => {
+    writeLedger(dir, [['e13', '1', 'a11y', 'accepted', '2', 'w', 'r']]);
+    writeVerdicts(dir, 'e13', 1, [['checker-second', 'adversarial', 'FAIL']]);
+    writeVerdicts(dir, 'e13', 2, [['checker-a11y', 'anthropic', 'PASS']]);
+    return ['e13'];
+  }],
+  ['tier-1 attempt-1 FAIL set aside by three same-family judges (no identity de-dup), unresolved FAIL at attempt 2', (dir) => {
+    writeLedger(dir, [['e14', '1', 'a11y', 'accepted', '2', 'w', 'r']]);
+    writeVerdicts(dir, 'e14', 1, [
+      ['checker-second', 'adversarial', 'FAIL'],
+      ['judge-a', 'anthropic', 'OVERRULE'],
+      ['judge-b', 'anthropic', 'OVERRULE'],
+      ['judge-c', 'anthropic', 'OVERRULE'],
+    ]);
+    writeVerdicts(dir, 'e14', 2, [['checker-second', 'adversarial', 'FAIL'], ['checker-a11y', 'anthropic', 'PASS']]);
+    return ['e14'];
+  }],
+  ['tier-1 attempt-1 FAIL with a two-judge panel, unresolved FAIL at attempt 2', (dir) => {
+    writeLedger(dir, [['e15', '1', 'a11y', 'accepted', '2', 'w', 'r']]);
+    writeVerdicts(dir, 'e15', 1, [
+      ['checker-second', 'adversarial', 'FAIL'],
+      ['judge-claude', 'anthropic', 'OVERRULE'],
+      ['judge-standards', 'adversarial', 'OVERRULE'],
+    ]);
+    writeVerdicts(dir, 'e15', 2, [['checker-second', 'adversarial', 'FAIL'], ['checker-a11y', 'anthropic', 'PASS']]);
+    return ['e15'];
+  }],
+  ['tier-1 attempt-1 FAIL with a 2-2 judge panel, unresolved FAIL at attempt 2', (dir) => {
+    writeLedger(dir, [['e15s', '1', 'a11y', 'accepted', '2', 'w', 'r']]);
+    writeVerdicts(dir, 'e15s', 1, [
+      ['checker-second', 'adversarial', 'FAIL'],
+      ['judge-a', 'anthropic', 'OVERRULE'],
+      ['judge-b', 'adversarial', 'OVERRULE'],
+      ['judge-c', 'impact', 'UPHOLD'],
+      ['judge-d', 'anthropic', 'UPHOLD'],
+    ]);
+    writeVerdicts(dir, 'e15s', 2, [['checker-second', 'adversarial', 'FAIL'], ['checker-a11y', 'anthropic', 'PASS']]);
+    return ['e15s'];
+  }],
+  ['tier-1 attempt-1 FAIL with an OVERRULE/UPHOLD/UPHOLD panel, unresolved FAIL at attempt 2', (dir) => {
+    writeLedger(dir, [['e15t', '1', 'a11y', 'accepted', '2', 'w', 'r']]);
+    writeVerdicts(dir, 'e15t', 1, [
+      ['checker-second', 'adversarial', 'FAIL'],
+      ['judge-claude', 'anthropic', 'OVERRULE'],
+      ['judge-standards', 'adversarial', 'UPHOLD'],
+      ['judge-impact', 'impact', 'UPHOLD'],
+    ]);
+    writeVerdicts(dir, 'e15t', 2, [['checker-second', 'adversarial', 'FAIL'], ['checker-a11y', 'anthropic', 'PASS']]);
+    return ['e15t'];
+  }],
+  ['tier-1 FAILs at attempts 0 and 1', (dir) => {
+    writeLedger(dir, [['e16', '1', 'a11y', 'accepted', '1', 'w', 'r']]);
+    writeVerdicts(dir, 'e16', 0, [['checker-second', 'adversarial', 'FAIL']]);
+    writeVerdicts(dir, 'e16', 1, [['checker-second', 'adversarial', 'FAIL'], ['checker-a11y', 'anthropic', 'PASS']]);
+    return ['e16'];
+  }],
+  ['tier-1 sibling task\'s boss OVERRULE lies in the dot-prefix glob (both tasks checked)', (dir) => {
+    writeLedger(dir, [
+      ['e17', '1', 'tests', 'accepted', '1', 'w', 'r'],
+      ['e17.1.x', '1', 'tests', 'accepted', '2', 'w', 'r'],
+    ]);
+    writeVerdicts(dir, 'e17', 1, [['checker-tests', 'anthropic', 'PASS']]);
+    writeVerdicts(dir, 'e17.1.x', 1, [['boss', 'anthropic', 'OVERRULE']]);
+    writeVerdicts(dir, 'e17.1.x', 2, [['checker-tests', 'anthropic', 'PASS']]);
+    return ['e17', 'e17.1.x'];
+  }],
+  ['tier-1 sibling task\'s critical manifest lies in the dot-prefix glob (both tasks checked)', (dir) => {
+    writeLedger(dir, [
+      ['e18', '1', 'tests', 'accepted', '1', 'w', 'r'],
+      ['e18.1.x', '1', 'tests', 'accepted', '1', 'w', 'r'],
+    ]);
+    writeManifest(dir, 'e18', 1, ['src/ok.txt']);
+    writeVerdicts(dir, 'e18', 1, [['checker-tests', 'anthropic', 'PASS']]);
+    writeManifest(dir, 'e18.1.x', 1, ['swarm/x.sh']);
+    writeVerdicts(dir, 'e18.1.x', 1, [['checker-tests', 'anthropic', 'PASS']]);
+    writeFile(dir, 'critical.globs', 'swarm/**\n');
+    return ['e18', 'e18.1.x'];
+  }],
+  ['tier-2 critical.globs with comment, whitespace, class, ? and ** lines, one manifest path per task', writeGlobBattery],
+  ['tier-2 critical.globs that is not valid UTF-8', (dir) => {
+    writeLedger(dir, [['e19', '2', 'tests', 'accepted', '1', 'w', 'r']]);
+    writeManifest(dir, 'e19', 1, ['swarm/x.sh']);
+    writeVerdicts(dir, 'e19', 1, [['checker-tests', 'anthropic', 'PASS']]);
+    writeFile(dir, 'critical.globs', Buffer.concat([Buffer.from('swarm/**\n'), Buffer.from([0xff, 0x0a])]));
+    return ['e19'];
+  }],
+  ['tier-2 critical.globs that starts with a UTF-8 BOM', (dir) => {
+    writeLedger(dir, [['e20', '2', 'tests', 'accepted', '1', 'w', 'r']]);
+    writeManifest(dir, 'e20', 1, ['swarm/x.sh']);
+    writeVerdicts(dir, 'e20', 1, [['checker-tests', 'anthropic', 'PASS']]);
+    writeFile(dir, 'critical.globs', Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), Buffer.from('swarm/**\n')]));
+    return ['e20'];
+  }],
+  ['tier-2 critical.globs with CRLF line endings and a lone-CR line break', (dir) => {
+    writeLedger(dir, [
+      ['e21', '2', 'tests', 'accepted', '1', 'w', 'r'],
+      ['e21b', '2', 'tests', 'accepted', '1', 'w', 'r'],
+    ]);
+    writeManifest(dir, 'e21', 1, ['swarm/x.sh']);
+    writeVerdicts(dir, 'e21', 1, [['checker-tests', 'anthropic', 'PASS']]);
+    writeManifest(dir, 'e21b', 1, ['lib/y.sh']);
+    writeVerdicts(dir, 'e21b', 1, [['checker-tests', 'anthropic', 'PASS']]);
+    writeFile(dir, 'critical.globs', '# header\r\nswarm/**\rlib/**\r\n');
+    return ['e21', 'e21b'];
   }],
 ];
 

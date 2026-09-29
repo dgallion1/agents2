@@ -50,8 +50,9 @@ it now just explains that the gateway is gone and exits.
 
 Rigor is chosen per task, not applied uniformly (see `TIERS.md`):
 
-- **Tier 1** — reversible, oracle-checkable work: worker → one mechanical
-  checker. Same cost as the base kit.
+- **Tier 1** — reversible, oracle-checkable work: worker → the mechanical
+  checker(s) named in the ledger `checks` column (never blank). Same cost as
+  the base kit.
 - **Tier 2** — shared/weak-oracle work: every checker named in the ledger
   `checks` column must PASS. Since the lean-verification experiment
   (2026-08-31) the default is ONE primary verifier (`checker-tests`/
@@ -68,8 +69,8 @@ Rigor is chosen per task, not applied uniformly (see `TIERS.md`):
   acceptance oracle (`.swarm/tier3/<task>/accept.sh`) before dispatch and
   validates it at both ends (fails on a featureless tree, passes on the
   spec's own examples), a single worker builds against it, `accept.sh` must
-  log an `ORACLE PASS`, then the result still goes through the same Tier-2
-  dual-lane check.
+  log an `ORACLE PASS`, then every checker named in the `checks` column must
+  PASS and the PASSes must span both lanes.
 
 Before dispatch, every Tier-3 task and every Tier-2 task that names `second`
 gets a read-only `surface-census` pass: it reads the whole affected area and
@@ -81,8 +82,12 @@ reads it.
 A pure-bash gate enforces it: a task is accepted only when `swarm/gate.sh check
 <task>` exits 0, and the run completes only when `swarm/gate.sh done` does.
 `swarm/gate.sh escalate-scan` raises a task's tier on evidence (two consecutive
-fails, a checker overrule, or a change to a `critical.globs` path). Every agent
-writes its own evidence into `.swarm/`, so the boss cannot fabricate a check.
+fails, a checker overrule, or a change to a `critical.globs` path), and
+`check`/`done` refuse a row whose trigger has not been scanned. Every agent
+writes its own evidence into `.swarm/`, so the boss cannot fabricate a check,
+and every attempt is fingerprinted: the worker's manifest comes with a
+`.sha256` sidecar, each checker PASS records the sidecar hash it verified
+(`MANIFEST_SHA256`), and `check` re-hashes the tree before accepting.
 
 Run the deterministic gate tests (no API keys, no network calls):
 
@@ -110,8 +115,9 @@ It live-reloads over SSE whenever a file under the watched dir changes.
 What it shows: the ledger with tier badges; a per-task drawer with the worker
 manifest and every verdict rendered verbatim; a dispute panel with both
 checker verdicts and the three judge votes plus the mechanical tally; the
-Tier-3 oracle log and (for the legacy divergence-report contract) the
-RESOLUTION line; and a cost panel.
+Tier-3 oracle status; and a cost panel. Two gate checks are not mirrored
+because the dashboard only sees `.swarm/`: the tree re-hash and the inline
+escalation triggers (it shows flag files, not the glob test).
 
 Anti-lie note: the dashboard computes each task's state from the verdict
 evidence, not from the ledger `status` string — so a task that the ledger

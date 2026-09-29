@@ -9,8 +9,11 @@
 // attempt (the anti-lie property).
 //
 // Quorum rules mirror `swarm/gate.sh` exactly so the dashboard never
-// disagrees with the mechanical gate about what is actually accepted.
+// disagrees with the mechanical gate about what is actually accepted. That
+// includes the inline escalation triggers `gate.sh check` recomputes when no
+// flag file exists (see "inline escalation triggers" below).
 
+import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -47,6 +50,15 @@ function listDirIfExists(dirPath) {
 function isDirectory(p) {
   try {
     return fs.statSync(p).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
+// Mirrors bash `[[ -f ... ]]`: a regular file (symlinks followed).
+function isFile(p) {
+  try {
+    return fs.statSync(p).isFile();
   } catch {
     return false;
   }
@@ -114,6 +126,60 @@ function parseManifest(swarmDir, taskId, attempt) {
   return content
     .split(/\r?\n/)
     .filter((line) => line.length > 0);
+}
+
+// ---------------------------------------------------------------------------
+// manifests/<task>.<attempt>.sha256 — fingerprint sidecar (2026-09-18)
+// ---------------------------------------------------------------------------
+// sha256sum format: `<64 hex>  <path>` or `deleted  <path>`. Mirrors gate.sh
+// check_fingerprint in its `done` mode: evidence consistency only. The
+// dashboard never re-hashes the tree — tree currency is a `gate.sh check`
+// property, and the dashboard is not told where the tree is.
+
+const FP_LINE = /^([0-9a-f]{64}|deleted) [ *](.+)$/;
+
+function parseFingerprint(swarmDir, taskId, attempt) {
+  const filePath = path.join(swarmDir, 'manifests', `${taskId}.${attempt}.sha256`);
+  const content = readFileIfExists(filePath);
+  if (content === null) return null;
+  const entries = new Map();
+  const badLines = [];
+  for (const line of content.split(/\r?\n/)) {
+    if (line.length === 0) continue;
+    const m = FP_LINE.exec(line);
+    if (!m) { badLines.push(line); continue; }
+    entries.set(m[2], m[1]);
+  }
+  return {
+    sha256: createHash('sha256').update(content).digest('hex'),
+    entries,
+    badLines,
+  };
+}
+
+// The first fingerprint defect gate.sh would report for an otherwise
+// acceptable row, or null. Same order as check_fingerprint.
+function fingerprintProblem(task, verdicts) {
+  const man = `manifests/${task.id}.${task.attempt}.files`;
+  const side = `manifests/${task.id}.${task.attempt}.sha256`;
+  if (task.manifest === null) return `no manifest at ${man}`;
+  if (task.manifest.length === 0) return `manifest ${man} is empty`;
+  if (task.fingerprint === null) return `no fingerprint sidecar at ${side}`;
+  if (task.fingerprint.badLines.length > 0) {
+    return `unparseable fingerprint line in ${side}: '${task.fingerprint.badLines[0]}'`;
+  }
+  for (const p of task.manifest) {
+    if (!task.fingerprint.entries.has(p)) return `manifest path '${p}' has no fingerprint line in ${side}`;
+  }
+  for (const v of verdicts) {
+    if (v.verdict !== 'PASS' || !v.checker.startsWith('checker-')) continue;
+    const file = `${task.id}.${task.attempt}.${v.checker}.verdict`;
+    if (!v.manifestSha256) return `${file} has no MANIFEST_SHA256 header`;
+    if (v.manifestSha256 !== task.fingerprint.sha256) {
+      return `${file} verified fingerprint set ${v.manifestSha256} but the sidecar hashes to ${task.fingerprint.sha256}`;
+    }
+  }
+  return null;
 }
 
 // ---------------------------------------------------------------------------
@@ -202,6 +268,10 @@ function validateVerdictRecord(filename, headers, hasSeparator, fileTask, fileAt
       verdict: verdictValue,
       task: headers.TASK,
       attempt: fileAttempt,
+      // Optional (2026-09-18): the sha256 of the manifest's .sha256 sidecar
+      // the checker verified. Required on every checker-* PASS by
+      // fingerprintProblem(); judges never carry it.
+      manifestSha256: headers.MANIFEST_SHA256 || null,
     },
   };
 }
@@ -259,6 +329,7 @@ function parseAllVerdicts(swarmDir, errors) {
       verdict: validated.verdict.verdict,
       task: validated.verdict.task,
       attempt: validated.verdict.attempt,
+      manifestSha256: validated.verdict.manifestSha256,
       evidence,
       path: filePath,
       filename,
@@ -326,55 +397,295 @@ function parseFlag(swarmDir, taskId, ledgerTier) {
 }
 
 // ---------------------------------------------------------------------------
-// tier3/<task>/report.md
+// inline escalation triggers (gate.sh escalation_reasons, 2026-09-18)
 // ---------------------------------------------------------------------------
+// With no flag FILE on disk, `gate.sh check` recomputes the escalation
+// triggers and refuses an `accepted` row whose triggers are live below its
+// target tier (escalate-scan was never run for this evidence; ruling
+// 2026-09-29e). Everything here reproduces that recomputation read-only —
+// writing the flag stays escalate-scan's job — so the dashboard cannot show
+// `accepted` for a row the gate refuses.
 
-function splitTableRow(line) {
-  let trimmed = line.trim();
-  if (trimmed.startsWith('|')) trimmed = trimmed.slice(1);
-  if (trimmed.endsWith('|')) trimmed = trimmed.slice(0, -1);
-  return trimmed.split('|').map((cell) => cell.trim());
+// gate.sh escalation_target: one tier up, capped at 3.
+function escalationTarget(tier) {
+  return Math.min(tier + 1, 3);
 }
 
-function isSeparatorRow(cells) {
-  return cells.length > 0 && cells.every((cell) => /^:?-+:?$/.test(cell));
-}
-
-function parseTier3Matrix(content) {
-  const lines = content.split(/\r?\n/);
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i].trim();
-    if (!line.startsWith('|')) continue;
-
-    const headerCells = splitTableRow(line);
-    const checkColIdx = headerCells.findIndex((c) => c.toLowerCase().includes('check'));
-    if (checkColIdx === -1) continue; // not the table we're looking for
-
-    // next non-empty line should be the separator row
-    let j = i + 1;
-    if (j >= lines.length || !isSeparatorRow(splitTableRow(lines[j].trim()))) {
-      continue; // malformed table; skip
-    }
-    j += 1;
-
-    const otherCols = headerCells
-      .map((_, idx) => idx)
-      .filter((idx) => idx !== checkColIdx);
-    const [aColIdx, bColIdx] = otherCols;
-
-    const matrix = [];
-    while (j < lines.length && lines[j].trim().startsWith('|')) {
-      const cells = splitTableRow(lines[j].trim());
-      const check = cells[checkColIdx] ?? '';
-      const a = aColIdx !== undefined ? cells[aColIdx] ?? '' : '';
-      const b = bColIdx !== undefined ? cells[bColIdx] ?? '' : '';
-      matrix.push({ check, a, b, agree: a === b });
-      j += 1;
-    }
-    return matrix; // first matching table wins
+// gate.sh unresolved_fail_at: a valid FAIL at this attempt that no judge panel
+// set aside. The panel test is judges_overruled_at's — every valid
+// UPHOLD/OVERRULE at the attempt counts, with NO identity de-duplication
+// (unlike tallyJudges) — so the two halves of the gate agree.
+function unresolvedFailAt(byTaskAttempt, taskId, attempt) {
+  const verdicts = byTaskAttempt.get(`${taskId}.${attempt}`) ?? [];
+  if (!verdicts.some((v) => v.verdict === 'FAIL')) return false;
+  let ups = 0;
+  let ovs = 0;
+  for (const v of verdicts) {
+    if (v.verdict === 'UPHOLD') ups += 1;
+    else if (v.verdict === 'OVERRULE') ovs += 1;
   }
-  return [];
+  return !(ups + ovs >= 3 && ovs > ups);
 }
+
+// gate.sh overrule_exists, for every task at once: ids owning a valid
+// `VERDICT: OVERRULE` from `CHECKER: boss` at ANY attempt. byTaskAttempt holds
+// only valid verdicts, each filed under its own filename-parsed task, which is
+// the ownership overrule_exists confirms (a dot-prefix sibling's file is
+// not this task's).
+function tasksWithBossOverrule(byTaskAttempt) {
+  const ids = new Set();
+  for (const verdicts of byTaskAttempt.values()) {
+    for (const v of verdicts) {
+      if (v.verdict === 'OVERRULE' && v.checker === 'boss') ids.add(v.task);
+    }
+  }
+  return ids;
+}
+
+// gate.sh DEFAULT_TEST_GLOBS — used only when test.globs is absent; a present
+// test.globs replaces the list entirely.
+const DEFAULT_TEST_GLOBS = [
+  '**/*_test.go',
+  '**/*_test.py',
+  '**/test_*.py',
+  '**/*.test.ts',
+  '**/*.spec.ts',
+  'smoketest/**',
+  'tests/**',
+];
+
+// manifest_hits_glob hands its files to an embedded python3, so the parts of
+// python that decide the outcome are reproduced here rather than approximated
+// with their JS lookalikes:
+//   - str.strip(): python's whitespace set (isspace) differs from JS trim().
+//   - open(): strict UTF-8 (a BOM stays as U+FEFF) and universal newlines.
+//     A file that is not valid UTF-8 makes python die, and the gate then
+//     reports NO hit — so an unreadable input is "no hit" here too.
+//   - fnmatch.fnmatch (case-sensitive on posix): see compileFnmatch.
+const PY_STRIP_RE =
+  /^[\t-\r\x1c-\x20\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]+|[\t-\r\x1c-\x20\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]+$/g;
+
+function pyStrip(s) {
+  return s.replace(PY_STRIP_RE, '');
+}
+
+// The lines python's `for l in open(path)` yields (blank ones included), or
+// null when the file cannot be read that way.
+function readPyLines(filePath) {
+  try {
+    const text = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(
+      fs.readFileSync(filePath)
+    );
+    return text.split(/\r\n|\r|\n/);
+  } catch {
+    return null;
+  }
+}
+
+// gate.sh's embedded `load`: stripped, non-empty lines that do not start with
+// '#' — the '#' test is on the RAW line, so an indented "  # x" is a glob.
+function loadGlobs(lines) {
+  return lines.filter((l) => pyStrip(l) !== '' && !l.startsWith('#')).map(pyStrip);
+}
+
+const FN_STAR = Symbol('fnmatch-star');
+
+// python fnmatch.translate's `[...]` branch, on the pattern's code points:
+// pat[i:j] is the class body (j is its closing ']'). Reproduces the
+// hyphen-chunking and empty-range removal, then reads the resulting body the
+// way python's re module does. Returns a code-point predicate.
+function fnmatchClass(pat, i, j) {
+  let stuff;
+  const raw = pat.slice(i, j);
+  if (!raw.includes('-')) {
+    stuff = raw.join('').replace(/\\/g, '\\\\');
+  } else {
+    const chunks = [];
+    let start = i;
+    let k = pat[i] === '!' ? i + 2 : i + 1;
+    for (;;) {
+      let found = -1;
+      for (let x = k; x < j; x++) {
+        if (pat[x] === '-') { found = x; break; }
+      }
+      if (found < 0) break;
+      chunks.push(pat.slice(start, found));
+      start = found + 1;
+      k = found + 3;
+    }
+    const chunk = pat.slice(start, j);
+    if (chunk.length > 0) chunks.push(chunk);
+    else chunks[chunks.length - 1].push('-');
+    // Remove empty (reversed) ranges.
+    for (let m = chunks.length - 1; m > 0; m--) {
+      const prev = chunks[m - 1];
+      if (prev[prev.length - 1].codePointAt(0) > chunks[m][0].codePointAt(0)) {
+        chunks[m - 1] = prev.slice(0, -1).concat(chunks[m].slice(1));
+        chunks.splice(m, 1);
+      }
+    }
+    // Only the joins between chunks stay unescaped hyphens (range operators).
+    stuff = chunks
+      .map((c) => c.join('').replace(/\\/g, '\\\\').replace(/-/g, '\\-'))
+      .join('-');
+  }
+  stuff = stuff.replace(/([&~|])/g, '\\$1');
+  if (stuff === '') return () => false; // empty range: never matches
+  if (stuff === '!') return () => true; // negated empty range: any character
+  const negate = stuff[0] === '!';
+  const body = Array.from(negate ? stuff.slice(1) : stuff);
+  const singles = new Set();
+  const ranges = [];
+  let b = 0;
+  const atom = () => {
+    if (body[b] === '\\') { b += 2; return body[b - 1]; }
+    b += 1;
+    return body[b - 1];
+  };
+  while (b < body.length) {
+    const lo = atom();
+    if (body[b] !== '-') { singles.add(lo); continue; }
+    b += 1;
+    if (b >= body.length) { singles.add(lo); singles.add('-'); break; }
+    ranges.push([lo.codePointAt(0), atom().codePointAt(0)]);
+  }
+  const inSet = (ch) => {
+    if (singles.has(ch)) return true;
+    const cp = ch.codePointAt(0);
+    return ranges.some(([lo, hi]) => cp >= lo && cp <= hi);
+  };
+  return negate ? (ch) => !inSet(ch) : inSet;
+}
+
+// python fnmatch.fnmatch(name, pattern) on posix: case-sensitive, the whole
+// string must match, `*` crosses '/', `?` is one code point, `[seq]`/`[!seq]`
+// are classes. Returns a predicate over names.
+function compileFnmatch(pattern) {
+  const pat = Array.from(pattern);
+  const n = pat.length;
+  const toks = [];
+  let i = 0;
+  while (i < n) {
+    const c = pat[i];
+    i += 1;
+    if (c === '*') {
+      if (toks[toks.length - 1] !== FN_STAR) toks.push(FN_STAR);
+    } else if (c === '?') {
+      toks.push(() => true);
+    } else if (c === '[') {
+      let j = i;
+      if (j < n && pat[j] === '!') j += 1;
+      if (j < n && pat[j] === ']') j += 1;
+      while (j < n && pat[j] !== ']') j += 1;
+      if (j >= n) {
+        toks.push((ch) => ch === '['); // unclosed: a literal '['
+      } else {
+        toks.push(fnmatchClass(pat, i, j));
+        i = j + 1;
+      }
+    } else {
+      toks.push((ch) => ch === c);
+    }
+  }
+  return (name) => {
+    const s = Array.from(name);
+    let si = 0;
+    let ti = 0;
+    let starTi = -1;
+    let starSi = 0;
+    while (si < s.length) {
+      if (toks[ti] === FN_STAR) {
+        starTi = ti;
+        starSi = si;
+        ti += 1;
+      } else if (ti < toks.length && toks[ti](s[si])) {
+        ti += 1;
+        si += 1;
+      } else if (starTi !== -1) {
+        ti = starTi + 1;
+        starSi += 1;
+        si = starSi;
+      } else {
+        return false;
+      }
+    }
+    while (toks[ti] === FN_STAR) ti += 1;
+    return ti === toks.length;
+  };
+}
+
+// gate.sh's embedded `matches`: the glob itself, plus `**/X` also tried as `X`
+// (zero leading dirs) and any `/**` also tried as `/*`.
+function globMatcher(glob) {
+  const candidates = new Set([glob]);
+  if (glob.startsWith('**/')) candidates.add(glob.slice(3));
+  if (glob.includes('/**')) candidates.add(glob.split('/**').join('/*'));
+  const tests = Array.from(candidates, compileFnmatch);
+  return (p) => tests.some((t) => t(p));
+}
+
+// gate.sh manifest_hits_glob: true when a NON-TEST path in any of the task's
+// manifests matches critical.globs. A test glob exempts only the test path
+// itself, never the whole manifest.
+function manifestHitsGlob(swarmDir, taskId) {
+  try {
+    const criticalFile = path.join(swarmDir, 'critical.globs');
+    if (!isFile(criticalFile)) return false;
+    // gate.sh globs manifests/<task>.*.files: a prefix+suffix match, not a
+    // task-id boundary, so it also catches every OLDER attempt's manifest and
+    // a dot-prefix sibling task's (`k` sees `k.1.x.1.files`). Mirrored, not
+    // fixed — same shape as blockingVerdictFiles.
+    const manifestsDir = path.join(swarmDir, 'manifests');
+    const prefix = `${taskId}.`;
+    const suffix = '.files';
+    const manifestFiles = listDirIfExists(manifestsDir).filter(
+      (fn) =>
+        fn.startsWith(prefix) &&
+        fn.endsWith(suffix) &&
+        fn.length >= prefix.length + suffix.length &&
+        isFile(path.join(manifestsDir, fn))
+    );
+    if (manifestFiles.length === 0) return false;
+
+    const criticalLines = readPyLines(criticalFile);
+    const testFile = path.join(swarmDir, 'test.globs');
+    const testLines = isFile(testFile) ? readPyLines(testFile) : DEFAULT_TEST_GLOBS;
+    if (criticalLines === null || testLines === null) return false;
+    const paths = [];
+    for (const fn of manifestFiles) {
+      const lines = readPyLines(path.join(manifestsDir, fn));
+      if (lines === null) return false;
+      for (const line of lines) {
+        if (pyStrip(line) !== '') paths.push(pyStrip(line));
+      }
+    }
+    const critical = loadGlobs(criticalLines).map(globMatcher);
+    const tests = loadGlobs(testLines).map(globMatcher);
+    return paths.some((p) => critical.some((m) => m(p)) && !tests.some((m) => m(p)));
+  } catch {
+    return false; // unreadable input: python dies, the gate reports no hit
+  }
+}
+
+// gate.sh escalation_reasons: the live triggers for a row, space-separated in
+// gate order ("two-consecutive-fails checker-overruled critical-glob"), or ''.
+function escalationReasons(swarmDir, row, byTaskAttempt, bossOverruled) {
+  const reasons = [];
+  if (
+    row.attempt >= 1 &&
+    unresolvedFailAt(byTaskAttempt, row.id, row.attempt) &&
+    unresolvedFailAt(byTaskAttempt, row.id, row.attempt - 1)
+  ) {
+    reasons.push('two-consecutive-fails');
+  }
+  if (bossOverruled.has(row.id)) reasons.push('checker-overruled');
+  if (manifestHitsGlob(swarmDir, row.id)) reasons.push('critical-glob');
+  return reasons.join(' ');
+}
+
+// ---------------------------------------------------------------------------
+// tier3/<task>/ — oracle contract (gate.sh check_tier3)
+// ---------------------------------------------------------------------------
 
 // Mirrors gate.sh `tail -n1`: a trailing newline does not add an empty last
 // line, but any other trailing content (extra blank line, \r) counts as-is.
@@ -397,22 +708,11 @@ function parseTier3(swarmDir, taskId, attempt) {
   const dirPath = path.join(swarmDir, 'tier3', taskId);
   if (!isDirectory(dirPath)) return null;
 
-  const reportPath = path.join(dirPath, 'report.md');
-  const reportContent = readFileIfExists(reportPath);
-  const hasReport = reportContent !== null;
-  const content = reportContent ?? '';
+  // A report.md is the pre-2026-08-26 blind-arm artefact. The legacy
+  // contract was removed 2026-09-18: its presence now BLOCKS the row
+  // (gate.sh check_tier3), so a reused directory cannot bypass the oracle.
+  const hasReport = fs.existsSync(path.join(dirPath, 'report.md'));
 
-  const lines = content.split(/\r?\n/);
-  let resolution = null;
-  for (const line of lines) {
-    if (line.startsWith('RESOLUTION:')) {
-      resolution = line.slice('RESOLUTION:'.length).trim();
-      break;
-    }
-  }
-
-  // Oracle-first contract (gate.sh check_tier3, 2026-08-26): only consulted
-  // when no report.md exists, but always reported for display.
   const scriptPath = path.join(dirPath, 'accept.sh');
   const logContent = readFileIfExists(path.join(dirPath, `oracle.${attempt}.log`));
   const oracle = {
@@ -422,30 +722,24 @@ function parseTier3(swarmDir, taskId, attempt) {
     oraclePass: logContent !== null && lastLine(logContent) === 'ORACLE PASS',
   };
 
-  return {
-    hasReport,
-    hasResolution: resolution !== null,
-    resolution,
-    matrix: parseTier3Matrix(content),
-    oracle,
-  };
+  return { hasReport, oracle };
 }
 
-// The tier-3 evidence contract (gate.sh check_tier3): a report.md switches the
-// directory to the legacy blind-arm contract (RESOLUTION line required, oracle
-// ignored); otherwise the oracle contract applies in full.
+// The tier-3 evidence contract (gate.sh check_tier3, 2026-09-18): no stale
+// report.md, an executable accept.sh, and an oracle log at the current
+// attempt whose last line is ORACLE PASS.
 function tier3ContractOk(tier3) {
   if (!tier3) return false;
-  if (tier3.hasReport) return tier3.hasResolution;
+  if (tier3.hasReport) return false;
   const o = tier3.oracle;
   return o.scriptExists && o.scriptExecutable && o.logExists && o.oraclePass;
 }
 
 function tier3ContractReason(tier3) {
-  if (!tier3) return 'no tier-3 oracle (accept.sh) and no legacy report.md';
-  if (tier3.hasReport) return 'no RESOLUTION line in tier-3 report';
+  if (!tier3) return 'no tier-3 oracle (accept.sh)';
+  if (tier3.hasReport) return 'stale blind-arm report.md in tier-3 dir (legacy contract removed 2026-09-18)';
   const o = tier3.oracle;
-  if (!o.scriptExists) return 'no tier-3 oracle (accept.sh) and no legacy report.md';
+  if (!o.scriptExists) return 'no tier-3 oracle (accept.sh)';
   if (!o.scriptExecutable) return 'tier-3 oracle accept.sh is not executable';
   if (!o.logExists) return 'no oracle run log at the current attempt';
   return 'oracle log does not end with ORACLE PASS';
@@ -574,7 +868,8 @@ function tallyJudges(verdicts) {
 
 function computeQuorum(tier, checks, verdicts, tier3, hasFail, disputeResolved, majorityOverrule) {
   if (tier === 1) {
-    if (checks.length === 0) return true;
+    // gate.sh check_tier1 (2026-09-18): a blank checks column hard-fails.
+    if (checks.length === 0) return false;
     return checks.every((c) =>
       verdicts.some((v) => v.checker === `checker-${c}` && v.verdict === 'PASS')
     );
@@ -606,13 +901,17 @@ function computeQuorum(tier, checks, verdicts, tier3, hasFail, disputeResolved, 
     return true;
   }
 
-  // Tier 3 (gate.sh check_tier3): evidence contract first, then the
-  // unconditional dual-lane quorum regardless of the checks column.
-  const baseQuorum = hasFail ? disputeQuorum : familiesPassed.size >= 2;
-  return tier3ContractOk(tier3) && baseQuorum;
+  // Tier 3 (gate.sh check_tier3, 2026-09-18): evidence contract first, then
+  // a PASS from EVERY named checker (empty column hard-fails) AND the
+  // unconditional two-lane span.
+  if (!tier3ContractOk(tier3)) return false;
+  if (checks.length === 0) return false;
+  if (hasFail) return disputeQuorum;
+  if (!checks.every((c) => passCheckers.has(`checker-${c}`))) return false;
+  return familiesPassed.size >= 2;
 }
 
-function computeDerived(task, verdicts, flagOpen) {
+function computeDerived(task, verdicts, flagOpen, escalation) {
   const hasFail = verdicts.some((v) => v.verdict === 'FAIL');
   const { ups, ovs, identityError } = tallyJudges(verdicts);
 
@@ -646,20 +945,31 @@ function computeDerived(task, verdicts, flagOpen) {
   let state;
   let mismatch = null;
 
-  // Mirror gate.sh cmd_check precedence: an OPEN escalation flag is checked
+  // Mirror gate.sh check_task precedence: the escalation check comes
   // *before* tier acceptance and blocks 'accepted' outright, even when a
-  // genuine PASS-quorum exists for the current attempt.
+  // genuine PASS-quorum exists for the current attempt. An OPEN flag file
+  // blocks; with no flag file at all, so does a live inline trigger
+  // (`escalation`, computed only in that case — see parse()).
   if (flagOpen && task.status === 'accepted') {
     state = 'flagged';
     mismatch = `task ${task.id}: ledger says accepted but escalation flag open (target tier ${task.flag.targetTier})`;
+  } else if (task.status === 'accepted' && escalation !== '') {
+    state = 'flagged';
+    mismatch = `task ${task.id}: ledger says accepted but escalation trigger (${escalation}) and no flag — run gate.sh escalate-scan`;
   } else if (task.status === 'accepted') {
-    if (quorumHolds) {
+    // gate.sh runs check_fingerprint AFTER the tier checks, so a fingerprint
+    // defect is reported only for a row whose quorum otherwise holds.
+    const fpProblem = quorumHolds ? fingerprintProblem(task, verdicts) : null;
+    if (quorumHolds && fpProblem === null) {
       state = 'accepted';
+    } else if (quorumHolds) {
+      state = 'blocked';
+      mismatch = `task ${task.id}: ledger says accepted but ${fpProblem}`;
     } else {
       state = 'blocked';
       let reason;
       const missingChecker =
-        task.tier === 2 && !hasFail
+        task.tier >= 2 && !hasFail
           ? task.checks.find(
               (c) => !verdicts.some((v) => v.checker === `checker-${c}` && v.verdict === 'PASS')
             )
@@ -667,10 +977,10 @@ function computeDerived(task, verdicts, flagOpen) {
       if (task.tier === 3 && !tier3ContractOk(task.tier3)) {
         // gate.sh checks the tier-3 evidence contract before the quorum walk.
         reason = tier3ContractReason(task.tier3);
-      } else if (task.tier === 2 && task.checks.length === 0) {
-        // gate.sh check_tier2 fails on an empty checks column before walking
-        // any verdict files, so this outranks invalid-file blocking too.
-        reason = 'tier 2 requires named checkers in the ledger checks column';
+      } else if (task.checks.length === 0) {
+        // gate.sh check_tier1/2/3 fail on an empty checks column before
+        // walking any verdict files, so this outranks invalid-file blocking.
+        reason = `tier ${task.tier} requires named checkers in the ledger checks column`;
       } else if (invalidBlocking) {
         reason = `invalid verdict file(s) at attempt ${task.attempt}: ${task.invalidVerdicts.join(', ')}`;
       } else if (identityError) {
@@ -688,7 +998,7 @@ function computeDerived(task, verdicts, flagOpen) {
       } else if (task.tier === 2) {
         reason = `checks include 'second' but PASSes span ${familiesPassed.length} lane(s), need 2`;
       } else {
-        reason = `only ${familiesPassed.length} distinct family PASS(es), need 2`;
+        reason = `need PASS from 2 families, have ${familiesPassed.length}`;
       }
       mismatch = `task ${task.id}: ledger says accepted but ${reason}`;
     }
@@ -721,11 +1031,14 @@ export function parse(swarmDir) {
   const { byTaskAttempt: verdictsByTaskAttempt, filenames: verdictFilenames } =
     parseAllVerdicts(swarmDir, errors);
 
+  const bossOverruled = tasksWithBossOverrule(verdictsByTaskAttempt);
+
   const tasks = ledgerRows.map((row) => {
     const manifest = parseManifest(swarmDir, row.id, row.attempt);
     const verdicts = verdictsByTaskAttempt.get(`${row.id}.${row.attempt}`) ?? [];
     const flag = parseFlag(swarmDir, row.id, row.tier);
     const tier3 = parseTier3(swarmDir, row.id, row.attempt);
+    const fingerprint = parseFingerprint(swarmDir, row.id, row.attempt);
     const invalidVerdicts = blockingVerdictFiles(verdictFilenames, verdicts, row.id, row.attempt);
 
     const task = {
@@ -737,6 +1050,7 @@ export function parse(swarmDir) {
       worker: row.worker,
       reason: row.reason,
       manifest,
+      fingerprint,
       verdicts,
       invalidVerdicts,
       flag,
@@ -744,7 +1058,16 @@ export function parse(swarmDir) {
       derived: null, // filled below
     };
 
-    const { derived, mismatch } = computeDerived(task, verdicts, flag !== null);
+    // gate.sh check_task recomputes the triggers only when NO flag file exists
+    // (open or closed — parseFlag hides a closed one) and only below the
+    // escalation target, so a tier-3 row is never blocked this way.
+    const flagFile = isFile(path.join(swarmDir, 'flags', `${row.id}.flag`));
+    const escalation =
+      row.status === 'accepted' && !flagFile && row.tier < escalationTarget(row.tier)
+        ? escalationReasons(swarmDir, row, verdictsByTaskAttempt, bossOverruled)
+        : '';
+
+    const { derived, mismatch } = computeDerived(task, verdicts, flag !== null, escalation);
     task.derived = derived;
     if (mismatch) errors.push({ file: 'ledger.tsv', message: mismatch });
 

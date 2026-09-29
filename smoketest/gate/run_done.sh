@@ -46,7 +46,7 @@ run_gate "$sd" done; assert_rc "accepted with malformed verdicts -> done fails" 
 # D7: no-change row with reason containing see-SPEC -> done rc 0, visible line
 sd=$(newswarm)
 mkledger "$sd" 'R9\t1\tcontent\tno-change\t0\tworker-coder\tno-defect-found-root-cause-was-lead-shared-tree-see-SPEC\n'
-out=$(SWARM_DIR="$sd" bash "$GATE" done 2>&1); rc=$?
+out=$(gate_out "$sd" done); rc=$?
 assert_rc "no-change (see-SPEC) -> done ok" 0 $rc
 echo "$out" | grep -qF "no-change: R9 (no-defect-found-root-cause-was-lead-shared-tree-see-SPEC)" \
   && echo "ok   - no-change (see-SPEC) line is visible in done output" \
@@ -55,7 +55,7 @@ echo "$out" | grep -qF "no-change: R9 (no-defect-found-root-cause-was-lead-share
 # D8: no-change row with reason containing ruling-YYYY-MM-DD[letter] -> done rc 0, visible line
 sd=$(newswarm)
 mkledger "$sd" 'R9\t1\tcontent\tno-change\t0\tworker-coder\tno-defect-found-root-cause-was-lead-shared-tree-ruling-2026-08-20d\n'
-out=$(SWARM_DIR="$sd" bash "$GATE" done 2>&1); rc=$?
+out=$(gate_out "$sd" done); rc=$?
 assert_rc "no-change (ruling-2026-08-20d) -> done ok" 0 $rc
 echo "$out" | grep -qF "no-change: R9 (no-defect-found-root-cause-was-lead-shared-tree-ruling-2026-08-20d)" \
   && echo "ok   - no-change (ruling) line is visible in done output" \
@@ -132,5 +132,43 @@ sd=$(newswarm)
 mkledger "$sd" 'A.1\t1\ttests\tno-change\t1\tw\tno-defect-see-SPEC\nA\t1\ttests\taccepted\t1\tw\tok\n'
 mkverdict "$sd" A 1 checker-tests PASS anthropic
 run_gate "$sd" done; assert_rc "dotted-parent verdict does not block no-change (done)" 0 $?
+
+# ---------------------------------------------------------------------------
+# 2026-09-18 gate hardening
+# ---------------------------------------------------------------------------
+
+# HD1: done does NOT re-hash the tree — an accepted row whose files were
+# edited by a LATER task still closes (multi-run ledgers), while check on
+# the same row would now reject.
+sd=$(newswarm)
+mkledger "$sd" 'a\t1\tcontent\taccepted\t0\tworker-coder\t-\n'
+mkmanifest "$sd" a 0 web/page.html
+mkverdict "$sd" a 0 checker-content PASS anthropic
+echo later > "$sd/tree/web/page.html"
+run_gate "$sd" check a; assert_rc "check rejects drifted tree" 1 $?
+run_gate "$sd" done;    assert_rc "done tolerates later edits to an accepted row's files" 0 $?
+
+# HD2: done DOES require the evidence set to be internally consistent — a
+# PASS whose MANIFEST_SHA256 disagrees with the sidecar fails done.
+sd=$(newswarm)
+mkledger "$sd" 'a\t1\tcontent\taccepted\t0\tworker-coder\t-\n'
+mkverdict "$sd" a 0 checker-content PASS anthropic
+printf 'extra  more/paths\n' >> "$sd/manifests/a.0.sha256"   # sidecar edited after the verdict
+run_gate "$sd" done; assert_rc "done rejects verdict/sidecar fingerprint mismatch" 1 $?
+
+# HD3: done rejects an accepted row with no fingerprint sidecar.
+sd=$(newswarm)
+mkledger "$sd" 'a\t1\tcontent\taccepted\t0\tworker-coder\t-\n'
+mkverdict "$sd" a 0 checker-content PASS anthropic
+rm -f "$sd/manifests/a.0.sha256"
+run_gate "$sd" done; assert_rc "done rejects accepted row without fingerprint" 1 $?
+
+# HD4: done rejects an accepted critical-glob row that was never flagged.
+sd=$(newswarm)
+mkledger "$sd" 'a\t1\tcontent\taccepted\t0\tworker-coder\t-\n'
+printf 'src/payments/**\n' > "$sd/critical.globs"
+mkmanifest "$sd" a 0 src/payments/x.js
+mkverdict "$sd" a 0 checker-content PASS anthropic
+run_gate "$sd" done; assert_rc "done rejects unflagged critical-glob row" 1 $?
 
 finish

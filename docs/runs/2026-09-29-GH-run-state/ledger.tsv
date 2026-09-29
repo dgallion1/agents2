@@ -1,0 +1,3 @@
+# task_id	tier	checks	status	attempt	worker	reason
+GH1	3	tests,second,a11y	accepted	1	worker-coder	gate-ok-tier3-attempt-1-both-gates
+GH2	3	tests,second	accepted	1	worker-coder	gate-ok-tier3-attempt-1-both-gates

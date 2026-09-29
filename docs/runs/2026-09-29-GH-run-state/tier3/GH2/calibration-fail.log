@@ -1,0 +1,16 @@
+# GH2 oracle: TREE=/home/darrell/work/agents2/.claude/worktrees/unifi-camera-streaming-7be695
+ok   - S0 of GH1's 39 files only parse.mjs / parse.test.mjs changed (gate.sh and render.mjs untouched)
+ok   - S0 no file outside GH1's set changed
+    FAIL - S1 tier-2 manifest hits a critical glob, no flag: gate rejects but dashboard state is 'accepted' (gate: FAIL: s1: escalation trigger (critical-glob) but no flag — run gate.sh escalate-scan, bump the tier, re-verify)
+    FAIL - S4b a present test.globs replaces the defaults entirely: gate rejects but dashboard state is 'accepted' (gate: FAIL: s4b: escalation trigger (critical-glob) but no flag — run gate.sh escalate-scan, bump the tier, re-verify)
+    FAIL - S5 **/X also matches X at the root: gate rejects but dashboard state is 'accepted' (gate: FAIL: s5: escalation trigger (critical-glob) but no flag — run gate.sh escalate-scan, bump the tier, re-verify)
+    FAIL - S6 critical hit only in an OLDER attempt manifest: gate rejects but dashboard state is 'accepted' (gate: FAIL: s6: escalation trigger (critical-glob) but no flag — run gate.sh escalate-scan, bump the tier, re-verify)
+    FAIL - S9 a boss OVERRULE at an old attempt triggers at tier 1: gate rejects but dashboard state is 'accepted' (gate: FAIL: s9: escalation trigger (checker-overruled) but no flag — run gate.sh escalate-scan, bump the tier, re-verify)
+    FAIL - S11 dot-prefix sibling manifest (agreement only — mirrors the gate glob): gate rejects but dashboard state is 'accepted' (gate: FAIL: k: escalation trigger (critical-glob) but no flag — run gate.sh escalate-scan, bump the tier, re-verify)
+    FAIL - S13 two consecutive unresolved FAILs: the trigger outranks the tier check: dashboard mismatch lacks ["two-consecutive-fails"]: 'task s13: ledger says accepted but open dispute (0 uphold / 0 overrule, need >=3 judges)'
+    differential: 7/14 ok
+FAIL - D differential battery: differential: 7/14 ok
+ok   - C1 smoketest/gate/run_tests.sh passes
+ok   - C2 dashboard tests pass (ℹ tests 55)
+FAIL - C3 the shipped dashboard tests do not catch a parse.mjs without trigger mirroring (fail=0)
+ORACLE FAIL: 2 check(s) failed

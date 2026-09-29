@@ -1,0 +1,106 @@
+VERDICT: PASS
+CHECKER: checker-tests
+FAMILY: anthropic
+TASK: GH1
+ATTEMPT: 1
+MANIFEST_SHA256: a6a61f9d1731b36b1078db6c3d35a12e2ae6dbe910e8d55e09b546fdbc02e8cb
+---
+TREE = /home/darrell/work/agents2/.claude/worktrees/unifi-camera-streaming-7be695 (HEAD cae89ff, work uncommitted).
+Every mutation and throwaway fixture ran in private no-.git copies under the session scratchpad. TREE was only read.
+
+FINGERPRINT (pre-check). A python re-hash of .swarm/manifests/GH1.1.sha256 gave "ok 39 bad 0":
+34 sha256 lines match and the 5 "deleted" paths are absent (both tier-3-*/report.md,
+smoketest/gate/tier3_test.sh, swarm/tier3-compare.sh, swarm/tier3-setup.sh). I re-ran it at the end:
+"34 hashed paths OK", no deleted path present, git status identical to my opening snapshot apart from
+checker-a11y's verdict, and no file outside .swarm is newer than the sidecar.
+The MANIFEST_SHA256 above was computed after that final re-check.
+
+(a) PASS. Oracle ends in ORACLE PASS and is not vacuous.
+  Command: TMPDIR=<scratch> bash .swarm/tier3/GH1/accept.sh
+  Result: exit 0, 39 ok lines, last line "ORACLE PASS". The ok/FAIL lines are identical to the lead's
+  .swarm/tier3/GH1/oracle.1.log (diff empty). accept.sh is mode rwx.
+  Mutation evidence: rsync --exclude .git copy, one mutation of swarm/gate.sh per copy,
+  run as "accept.sh <copy>". F fails in every copy because there is no .git (ignored, as instructed).
+  - pristine copy: only F fails, 38 ok.
+  - M1, master's tier-1 blank-accept restored ("&& return 0"): caught by P3, C1 (run_tests: "tier1 blank checks column rejects") and C2 (1 fail).
+  - M2, check_fingerprint call dropped: caught by P5a/b/c/d/e/f, C1 and C2.
+  - M3, inline escalation fail made a no-op: caught by P2 and C1.
+  - M4, tier-3 named-checker fail made a no-op: caught by P1, C1 and C2.
+  - M5, stale report.md fail made a no-op: caught by P4 (rc 1 but wrong reason, "no tier-3 oracle", so the fragment check fails it), C1 and C2.
+  - M6, stats overrule label removed: caught by P7 ("failed", summary 0/2) and C1.
+  - M7, check runs with rehash=0: caught by P5a, P5d and C1.
+  Every mutant ended "ORACLE FAIL". The same mutations are also killed by the ported smoketests (C1).
+  Dashboard mutants (node --test in a copy):
+  - D1, parse.mjs:435 "if (tier3.hasReport) return false;" removed: 3/55 fail.
+  - D2, parse.mjs:166 MANIFEST_SHA256-missing check removed: 1/55 fail.
+
+(b) PASS. Command: bash smoketest/gate/run_tests.sh
+  Result: exit=0. run_check, run_escalate, run_done, agents_test, doc_test, checker-evals and e2e each
+  print "ALL PASS". verify_layout prints 15 ok lines (that script has no ALL PASS line). The log has no FAIL or not-ok lines.
+
+(c) PASS. Command: node --test dashboard/test/*.test.mjs (Node v24.12.0)
+  Result: exit=0, "tests 55 / pass 55 / fail 0".
+
+(d) PASS. The eight §2 items. Probes are my own script, run against TREE's gate (28 ok, 0 fail).
+  Calibration: on master's gate (cae89ff:swarm/gate.sh, cmp-equal to .swarm/gate-master.sh), all 17
+  new-behaviour probes FAIL and the 11 unchanged-behaviour controls pass.
+  1. Tier 3 honours checks. Oracle P1 plus own probes:
+     - a "-" column fails "tier 3 requires named checkers";
+     - named tests,a11y (one lane) fails "need PASS from 2 families";
+     - checker-second PASS only at a prior attempt fails "missing PASS from checker-second (attempt 2)";
+     - dispute path unchanged: 2-1 OVERRULE from a 3-lane panel accepts, an upheld panel refuses.
+  2. Inline triggers. Oracle P2 plus own probes:
+     - critical-glob row with no flag is refused by BOTH check and done, citing "escalate-scan";
+     - neither check nor done wrote a flag; escalate-scan wrote TARGET_TIER 3; with the flag present the message is "escalation pending";
+     - boss OVERRULE refused "(checker-overruled)"; two consecutive FAILs refused "(two-consecutive-fails)";
+     - a tier-3 row with a glob hit accepts (already at target);
+     - code: escalation_reasons() is the one function called from both cmd_escalate_scan and check_task.
+  3. Tier-1 blank. Oracle P3 ("-") plus own probe: a truly empty column fails "tier 1 requires named checkers".
+  4. Legacy removed.
+     - Oracle P4 and own probe: report.md beside a valid oracle fails "stale blind-arm report.md".
+     - The 3 scripts are absent.
+     - Dashboard, executed: render of swarm-demo tier-3-resolved shows "<h3 id="tier3-heading">Tier-3 oracle</h3>" with 4 ok lines and 0 "divergen|matrix|RESOLUTION" strings.
+     - With report.md planted: parse gives derived.state=blocked plus a "stale blind-arm report.md" warning, and gate.sh exits 1 on the same fixture.
+  5. Fingerprints. Oracle P5a-f plus own probes:
+     - a sidecar missing a manifest path fails "no fingerprint line"; an empty manifest is refused;
+     - SWARM_TREE pointed at a non-cwd tree accepts, while the default "." from a foreign cwd fails "missing from";
+     - done skips the re-hash (drifted tree passes done) but still fails on a mismatched MANIFEST_SHA256 ("sidecar hashes");
+     - judges are exempt: a tier-2 overruled FAIL with header-less judge verdicts accepts.
+  6. checker-second, text. .claude/agents/checker-second.md:14-22:
+     "You are scored on the EVIDENCE in your verdict — for each criterion, the attack you tried, the command you ran, and what it showed — not on whether you disagreed."
+     :34 keeps "Default to FAIL when the evidence is ambiguous."
+     grep -c 'never once disagreed' returns 0.
+  7. stats. Oracle P7 (fail-overruled, 1/2, escalated: n/m) plus own probe with touch-set mtimes:
+     "stats: A ... elapsed=1h30m", "stats: B ... elapsed=0h15m", "escalated: 1/2", "elapsed total: 1h45m (sum of per-task evidence spans)".
+  8. CLAUDE.md, text.
+     - Phase 0 (:35-50): "SPEC.md — always" (:39); "ACCESSIBILITY.md — only when a task can touch markup, styles, or interactive behaviour" (:45); "SOURCES.md — only when content is migrated or quoted" (:50).
+     - Final pass (:304-321): checker-a11y sweep only "If any accepted manifest in the run touched markup, styles, or interactive behaviour" (:306-310); self-review (:311) and run_tests.sh (:315) are unconditional.
+
+(e) PASS.
+  - .swarm/tier3/GH1/master-CLAUDE.md is cmp-equal to "git show cae89ff:CLAUDE.md".
+  - Master's Superpowers section (30 lines) is present verbatim, once, still between Phase 0 and Dispatch rules.
+  - The "Resume, don't re-dispatch" bullet (10 lines) is present verbatim.
+  - difflib master->TREE gives +66/-30 lines, equal as multisets to the source CLAUDE.md hunks (+66/-30, 5 hunks), so the ACTIVE EXPERIMENT and Phase 0 hunks are carried. No old Phase 0 or Final pass text survives.
+  - Byte check: cae89ff (git archive) + "patch -p1 < source.patch" (rc 0; CLAUDE.md hunk 2 applied with fuzz 2 because Superpowers now sits after Phase 0) is cmp-identical to TREE's CLAUDE.md.
+
+(f) PASS.
+  - "git diff --no-renames --name-only cae89ff" plus untracked = 40 paths, which is the source's 39 plus SPEC.md (the lead's). The diff against source.patch paths plus source-untracked/ is exactly "> SPEC.md".
+  - Content, not just names: all 34 present files are cmp-identical to cae89ff + source.patch + source-untracked/, the 5 deleted paths are absent in both, and file modes match.
+  - docs/runs: 0 changed, 0 untracked.
+  - "grep -rlE 'tier3-setup\.sh|tier3-compare\.sh|tier3_test\.sh'" (excluding .git and .swarm) hits only docs/runs/**, docs/superpowers/{plans,specs}/2026-07-09-* and SPEC.md.
+  - Tier 3 permits the critical-glob paths touched.
+  - Worker evidence: GH1.1.files, sorted, equals the source's 39 paths (diff rc 0), and GH1.1.sha256 re-hashes clean (see FINGERPRINT).
+
+(g) Not assessed. This is checker-a11y's criterion (dashboard accessibility in both themes).
+
+OBSERVATIONS (backlog, not FAILs):
+O1. Item 2 has no dashboard mirror; this is a source-design gap and the port is byte-identical to the source.
+    - Fixture: an accepted tier-2 row, critical-glob hit, no flag, valid evidence.
+    - gate.sh check exits 1 ("escalation trigger (critical-glob) but no flag"), but dashboard parse gives derived.state=accepted. Control (no glob hit): both accept.
+    - This breaks the dashboard's own stated anti-lie property: parse.test.mjs:1051-1053 says "gate.sh check <task> exits 0 exactly when derived.state === 'accepted'".
+    - parse.mjs has no trigger logic (no match for escalate-scan, critical.globs or trigger), so the differential battery never builds this case. M3 surviving C2 shows the same gap.
+O2. The demo fixture fingerprints (dashboard/fixtures/swarm-demo/manifests/*.sha256) hash dashboard files that no longer match the repo files.
+    "gate.sh check" on the demo with SWARM_TREE=<repo> reports drift. This is cosmetic: the dashboard never re-hashes by design (parse.mjs:125-126), and the fixtures are source-identical.
+O3. Process: the session scratchpad is shared with the concurrently running checkers.
+    Another agent removed scratchpad/mut/ mid-run and voided my first mutant batch; I re-ran all of it in a private mktemp dir, and the results above come from that re-run.
+    My early scratch-root files (files.txt, node.log, run_tests.log, gate-master.sh, have.txt, want.txt) may have overwritten same-named files of another agent. The gate-master.sh I wrote is byte-identical to cae89ff's gate.

@@ -1,0 +1,5 @@
+swarm/**
+dashboard/lib/**
+.claude/agents/**
+CLAUDE.md
+TIERS.md

@@ -1,0 +1,75 @@
+VERDICT: PASS
+CHECKER: checker-a11y
+FAMILY: anthropic
+TASK: GH1
+ATTEMPT: 1
+MANIFEST_SHA256: a6a61f9d1731b36b1078db6c3d35a12e2ae6dbe910e8d55e09b546fdbc02e8cb
+---
+Criterion (g): the dashboard's changed tier-3 panel meets ACCESSIBILITY.md in both themes.
+
+TREE CURRENCY
+- sha256sum -c .swarm/manifests/GH1.1.sha256: every path OK; the 5 "deleted" lines (tier3/*/report.md x2, smoketest/gate/tier3_test.sh, swarm/tier3-compare.sh, swarm/tier3-setup.sh) verified absent from the tree. Re-run after all audit work: 0 non-OK lines (tree unchanged by this audit).
+
+WHAT RAN (real render, real CSS, both themes)
+- Theme mechanism (A-2): dashboard/lib/render.mjs ships ONE stylesheet with :root light tokens and a single
+  @media (prefers-color-scheme: dark) override block (lines ~413-471). There is no class="dark" toggle in this
+  dashboard, so "both themes" = Playwright colorScheme light / dark emulation against the real served pages; the
+  dark run confirmed matchMedia('(prefers-color-scheme: dark)').matches === true.
+- Server: PORT=8791 node dashboard/server.mjs dashboard/fixtures/swarm-demo, pages /?task=tier-3-resolved,
+  /?task=tier-3-unresolved, and /. Stopped afterwards (curl to :8791 fails; no server/chrome processes left).
+- Attribution: git diff master -- dashboard/lib/render.mjs: the only rendered-markup change is renderTier3Diff ->
+  renderTier3Oracle (heading "Tier-3 oracle", <ul class="tier3-oracle"> of four <li> each with a .tag ok/missing
+  and aria-hidden glyph, optional stale-report warning) + CSS: adds .tier3-oracle / .tier3-oracle li, removes
+  tr.row-diverge. Everything else on the page is byte-identical to master.
+
+A-1 automated audit clean: PASS
+- npx @axe-core/cli http://127.0.0.1:8791/?task=tier-3-resolved  (axe-core 4.13.0, wcag2a/aa/21a/21aa/22aa + best-practice): 0 violations.
+- same for ?task=tier-3-unresolved: 0 violations.
+- Playwright + the same axe-core, dark scheme, both task pages and "/": 0 violations each. Light scheme via Playwright: 0 violations each.
+- Stale-report branch (hasReport=true, not in the fixtures): rendered through the real parse()+render() from a cp -a fixture copy with a report.md added, light and dark: 0 violations.
+- axe "incomplete" (needs-review) items are ONLY aria-prohibited-attr on .badge-tier[aria-label] and color-contrast on aria-hidden glyphs inside .status badges; none of the incomplete nodes is inside .tier3-panel or a .tag (filtered check, all four page/theme combos). axe PASSED color-contrast, list, listitem, region on the tier-3 panel nodes.
+
+A-2 both themes: PASS (all values below measured in both)
+
+A-3 contrast (computed colors, not assumed): PASS
+- .tag-agree "ok"      light: fg rgb(20,93,50)  on rgb(215,244,227) = 6.79:1 | dark: fg rgb(160,238,192) on rgb(22,59,38)  = 9.18:1
+- .tag-diverge "missing" light: fg rgb(134,29,19) on rgb(249,223,220) = 7.56:1 | dark: fg rgb(248,177,170) on rgb(71,25,21)  = 8.37:1
+- <li> description text  light: rgb(23,23,28) on rgb(255,255,255) = 17.86:1 | dark: rgb(241,241,244) on rgb(30,30,36) = 14.71:1
+- Stale-report warning paragraph light: rgb(110,61,12) on rgb(249,231,200) = 7.40:1 | dark: rgb(249,216,148) on rgb(73,51,18) = 8.65:1
+- Tag text is 11.7px/600 (small text, needs 4.5:1): all >= 6.79:1. The glyph inherits the tag color so it clears 3:1 with the same margin.
+- No control is visible in one theme and invisible in the other: screenshots of both themes read correctly (shot-light/dark-tier-3-*.png in the scratchpad).
+
+A-4 keyboard / A-5 visible focus: PASS
+- Tab walk on ?task=tier-3-unresolved (light and dark): 1 Skip link, 2 ledger scroll region, 3-7 the five task links, 8 spend-by-alias scroll region, then wraps. Order is logical; skip link first; no trap.
+- The new panel has ZERO focusable elements (query of .tier3-panel * for tabindex/a/button/input = []). The removed matrix's tabindex=0 region and the removed Resolution tabindex=0 evidence region left no orphaned tab stops.
+- Focus ring on every stop: 2px solid var(--focus) offset 2px: light rgb(20,80,199) = 5.47:1 on the surface; dark rgb(127,176,255) = 8.64:1. >= 3:1 in both themes. (The single "BODY outline none" stop is the tab wrapping back to the document, not an element.)
+
+A-6 structure and landmarks: PASS
+- h1 count 1; heading sequence H1 > H2 (Open flags, Ledger, Task detail) > H3 (Manifest, Verdicts, Tier-3 oracle) > H2 (Cost panel) > H3 x2: no skipped level. The new panel is an H3 under the H2 drawer, correct.
+- header 1, main 1 (#main-content), footer 1; skip link href=#main-content is first focusable.
+- <section aria-labelledby="tier3-heading"> resolves to <h3 id="tier3-heading">; every aria-labelledby on the page resolves; no duplicate ids. grep for tier3-table / row-diverge / "Tier-3 diff" / "comparison matrix" in dashboard/lib and the rendered pages: 0 hits, so no orphaned labels or CSS from the removed table.
+- Accessibility tree of the panel: region "Tier-3 oracle" > heading level 3 > list > 4 listitems ("ok accept.sh present", "missing oracle log at the current attempt", ...).
+
+A-7 real table: PASS (not touched). The ledger and cost tables are unchanged. The tier-3 comparison table was removed; the replacement is check/status list data, correctly a <ul>, not a div grid.
+
+A-8 icons / A-9 never color-only: PASS
+- The glyphs (check mark, warning sign) are aria-hidden="true" decorative icons with adjacent visible text; the only aria-hidden nodes in the panel are the glyphs (no content hidden from assistive tech).
+- Status is carried by the words "ok" / "missing" in the tag text in addition to color and glyph; colorblind reading is identical (a ok/missing distinction exists in the text alone).
+- No junk text injected for screen readers: no sr-only/visually-hidden nodes, no aria-label on the panel items.
+
+A-10 / A-14: PASS (unchanged). No inline handlers, no external origins in render.mjs (grep for onclick/onload/<script/http(s)://: none; the client script is the pre-existing server-injected /client.js). Panel is static server-rendered HTML.
+
+A-11 reduced motion: PASS. The panel has transition 0s / animation none even with motion allowed; with reducedMotion:'reduce' all transition durations across panel/.badge/.card compute to 0s. The only transitions live inside @media (prefers-reduced-motion: no-preference).
+
+A-12 evidence verbatim / keyboard-scrollable: PASS. The panel has no overflow (scrollWidth 988 == clientWidth 988, ul 988/988; at a 320px viewport documentElement.scrollWidth = 320, no horizontal scroll) so no scroll region is required. The removed "Resolution" .evidence block is gone entirely (not truncated); the verdict-evidence regions elsewhere are unchanged.
+
+A-13 empty states: PASS. The old "no comparison matrix recorded yet" / "no RESOLUTION recorded" empty states are gone; the panel always renders its four labelled states (never blank), and the stale-report case renders a labelled warning paragraph (light 7.40:1, dark 8.65:1).
+
+A-15 target size: N/A for the panel (non-interactive). Existing task-link targets measured 27px tall (>= 24) in this walk.
+
+OBSERVATIONS (non-blocking)
+1. PRE-EXISTING, not this change (markup byte-identical to master; git diff master touches none of it): axe "incomplete" aria-prohibited-attr on .badge-tier spans that carry aria-label with no role, and color-contrast needs-review on aria-hidden glyphs inside .status badges (flags heading, ledger status column).
+2. .tier3-oracle sets list-style:none. Chromium keeps the list semantics (confirmed in the accessibility tree); Safari/VoiceOver historically drops list semantics for list-style:none lists. ACCESSIBILITY.md and WCAG 2.2 AA are silent, so this is not a failure; adding role="list" would harden it.
+3. The pill fill vs the drawer surface is 1.12-1.33:1. Not a 1.4.11 issue because the meaning is carried by the visible text ("ok"/"missing") at >= 6.79:1, not by the pill boundary. Same pattern as every other badge on the page.
+4. Stale-report branch (hasReport=true) is not exercised by the shipped fixtures (their report.md files were deleted); I verified it via a scratch fixture copy. The panel then shows a warning that the gate rejects the row beside four "ok" items, which is an accurate rendering of the oracle checks but could read as contradictory. Content/design call for the lead, not an accessibility criterion.
+5. Evidence method: axe-cli covers the light scheme by default; dark scheme was audited with the same axe-core inside Playwright emulating prefers-color-scheme:dark (the dashboard's only theme switch). Page JS was not exercised beyond loading; the SSE client is unchanged by this task.

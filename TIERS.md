@@ -26,13 +26,15 @@ The lead assigns every task a tier in Phase 0. Answer three questions per task.
 
 Assigning Tier 2 is only half the decision — the ledger `checks` column names
 the verifiers, and the gate requires a PASS from every one named (an empty
-column hard-fails at Tier 2). Default to the ONE relevant primary verifier
+column hard-fails at every tier). Default to the ONE relevant primary verifier
 (`tests`, `a11y`, or `content`). Add `second` — restoring the dual-lane
 pre-experiment contract for that task — when the task touches a
 defect-history surface: user-visible value formatting/rounding, a
 threshold applied to a figure on multiple surfaces, arithmetic over rendered
 strings, money, or anything where a wrong figure on screen is a lie. When
-unsure, add it. Tier 3 always gets both lanes regardless of this column.
+unsure, add it. At Tier 3 name every checker that must run (at least the
+primary and `second`): the gate requires a PASS from each one named AND
+PASSes spanning both lanes.
 
 **Tie-break: round up.** If a task sits between two tiers, choose the higher.
 But escalation is not free: a test-only follow-up dragged through Tier 3 once

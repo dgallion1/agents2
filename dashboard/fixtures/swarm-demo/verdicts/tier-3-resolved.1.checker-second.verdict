@@ -1,0 +1,10 @@
+VERDICT: PASS
+CHECKER: checker-second
+FAMILY: adversarial
+TASK: tier-3-resolved
+ATTEMPT: 1
+MANIFEST_SHA256: 8abbf355b76d2695ed10f70f78e80e8b64987e81b68a72dcea65ec3407bb283a
+---
+Attack 1 (rounding tie .50): probed 3 fixtures, all render identically across surfaces — refuted.
+Attack 2 (locale): LANG=de_DE run, output unchanged — refuted.
+sha256sum -c manifests/tier-3-resolved.1.sha256: all OK

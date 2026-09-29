@@ -1,0 +1,10 @@
+VERDICT: PASS
+CHECKER: checker-tests
+FAMILY: anthropic
+TASK: tier-3-resolved
+ATTEMPT: 1
+MANIFEST_SHA256: 8abbf355b76d2695ed10f70f78e80e8b64987e81b68a72dcea65ec3407bb283a
+---
+go build ./... ok; go test -count=1 ./... ok (14 pkgs)
+.swarm/tier3/tier-3-resolved/accept.sh -> ORACLE PASS (exit 0)
+sha256sum -c manifests/tier-3-resolved.1.sha256: all OK

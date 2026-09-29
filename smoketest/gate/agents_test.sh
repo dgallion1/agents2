@@ -9,6 +9,17 @@ has worker-coder.md '.swarm/manifests/' "writes manifest"
 has worker-local.md '.swarm/manifests/' "writes manifest"
 hasnot worker-local.md 'blind' "no longer mentions blind arms"
 
+has worker-coder.md '\.sha256' "writes fingerprint sidecar"
+has worker-local.md '\.sha256' "writes fingerprint sidecar"
+has worker-coder.md 'deleted  <path>' "documents the deleted-path fingerprint line"
+
+for f in checker-a11y.md checker-content.md checker-second.md checker-tests.md; do
+  has "$f" '^MANIFEST_SHA256:' "verdict header carries MANIFEST_SHA256"
+  has "$f" 'sha256sum -c' "verifies the fingerprinted tree before checking"
+done
+hasnot checker-second.md 'never once disagreed' "no longer scored on disagreement"
+has    checker-second.md 'evidence-free PASS' "scored on evidence in the verdict"
+
 has checker-content.md '.swarm/verdicts/' "writes verdict"
 has checker-a11y.md    '.swarm/verdicts/' "writes verdict"
 has checker-second.md  'FAMILY: adversarial' "declares adversarial family"
