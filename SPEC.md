@@ -1,325 +1,269 @@
-# SPEC.md — Land the 2026-09-18 gate hardening (GH run)
+# SPEC.md — Vendor-neutral swarm: Claude or Sol may lead (VN run)
 
-Run prefix: **GH**. Target repo: **agents2 itself** — this worktree
-(`.claude/worktrees/unifi-camera-streaming-7be695`), branch
-`claude/gate-hardening`, base master **cae89ff**. This run's `.swarm/` lives
-here (gitignored). Fresh ledger.
+Run prefix: **VN**. Target repo: **agents2 itself** — worktree
+`.claude/worktrees/codex-sol-agent-integration-f64e99`, branch
+`claude/codex-sol-agent-integration-f64e99`, base master **12f6413**.
+VN5 also touches the budget2 repo (its own branch/PR). This run's `.swarm/`
+lives here (gitignored). Fresh ledger.
 
-Source of the change: the uncommitted work in worktree
-`.claude/worktrees/agents2-review-verification-de0532` (base 5ec528a, built
-lead-direct 2026-09-18, never committed, never checked by a non-author).
-Snapshotted 2026-09-29 so the source cannot move under the run:
-`.swarm/tier3/GH1/source.patch` (29 tracked files: 24 modified, 5 deleted) +
-`.swarm/tier3/GH1/source-untracked/` (10 fixture files), fingerprinted in
-`.swarm/tier3/GH1/source.sha256`.
+## 0. Status — Phase 0 SIGNED OFF 2026-09-30 (VN1–VN7); all six probes answered (§5)
 
-Why now: the next run adds Codex as an alongside checker (run CD). It
-changes the same files (`swarm/gate.sh`, `dashboard/lib/parse.mjs`,
-`CLAUDE.md`, the checker briefs), so the gate it is designed against must be
-settled first (user decision 2026-09-29: "Land hardening first").
+Build is **blocked on run CD merging** (worktree
+`unifi-camera-streaming-7be695`, CD1 attempt 3 in checking): CD4 edits
+`CLAUDE.md`, `TIERS.md`, `swarm/gate.sh` and `dashboard/lib/parse.mjs`,
+which VN restructures. After CD merges: rebase onto the new master, then
+write briefs and oracles and run the surface census against the post-CD tree.
+The previous SPEC (run GH) is archived byte-identical at
+`docs/runs/2026-09-29-GH-run-state/SPEC.md`.
 
-## 0. Status — RUN COMPLETE: GH1 + GH2 ACCEPTED at attempt 1 (both gates); not yet committed
+## 1. Problem and decisions (user, 2026-09-30)
 
-Signed off 2026-09-29 (GH1; GH2 added and signed off the same day after
-ruling 2026-09-29e). Both oracles validated at both ends before dispatch.
+Models keep shipping, so which vendor fills each role should be something
+you set, not something baked into the files. The user wants GPT-6-Sol (Codex)
+to lead some runs, for cost (the lead is ~37% of Claude spend at list
+price) and capability, while Claude can still run the same system.
 
-```
-OK: GH1 accepted at tier 3 (attempt 1)          (ported gate and frozen master gate)
-OK: GH2 accepted at tier 3 (attempt 1)          (ported gate and frozen master gate)
-OK: all tasks accepted, evidence verified, no unresolved flags   (done, both gates)
-stats: GH1 tier=3 first-attempt=1 clean (now: status=accepted attempt=1) elapsed=0h12m
-stats: GH2 tier=3 first-attempt=1 clean (now: status=accepted attempt=1) elapsed=0h27m
-first-attempt clean: 2/2 (no-evidence rows: 0)
-escalated: 0/2
-elapsed total: 0h40m (sum of per-task evidence spans)
-```
+| # | Decision |
+|---|---|
+| D1 | Either **Claude or Codex/Sol may lead** a run. The gate, ledger, verdict format, tiers and hard stop are the same whichever vendor leads. |
+| D2 | **Run CD's D3 is relaxed for the LEAD only.** A Sol lead may see live data (budget2 `data/`, its MCP, the live app), as a Claude lead does. Every NON-lead Codex role stays under D3: data-free copy, container, egress allowlist (CD1's harness). |
+| D3 | **One constitution**, no copies (§3a). Signed off. |
+| D4 | Model choice per role is **one table row** with exact model IDs, re-tuned as releases ship (§3b). Signed off. |
+| D5 | **Cross-vendor independence rule approved** (§3d): at Tier 3, and at Tier 2 when `second` is named, a checker from a vendor other than the lead's must run. |
+| D6 | Stale Codex constitution **renamed aside now** (done 2026-09-30, §7). |
+| D7 | Choices of lead, worker and checker are re-tuned from **mechanically kept stats** under pre-registered rules (§3f). Signed off. |
+| D8 | The user reports Sol is very strong at computer use; VN7 gives it a UI-checker role, scored by VN6. Signed off; P6 narrowed it to browser automation. |
 
-Final pass: lead integration run `bash smoketest/gate/run_tests.sh` → every
-suite ALL PASS (rc 0); `node --test dashboard/test/*.test.mjs` → 66/66.
-checker-a11y's GH1 sweep covers the final markup (GH2 left `render.mjs`
-byte-identical). Lead self-review of SPEC.md fixed stale oracle-plan text.
+## 2. Why, with evidence (Phase-0 probes 2026-09-30)
 
-## 1. Problem — the eight gaps (2026-09-18 review; all five gate probes reproduced)
+- **Copies drift within days.** The Sep 5 Codex-as-lead port (a
+  find-and-replace of CLAUDE.md, updated 09-23) is 298 lines against
+  CLAUDE.md's 357. It still says "all lanes on Codex since 2026-08-19" and
+  lacks the surface census and the 09-29 gate hardening. budget2 shows the
+  same thing: its `AGENTS.md` (07-03) and `CLAUDE.md` (09-02) share only 4
+  of 18 paragraphs.
+- **Codex was following a stale copy** (fixed the same day, D6 and §7).
+  `~/.codex/AGENTS.md` sent every Codex build task to
+  `~/work/agents2/AGENTS.md`, the untracked, drifted port in the main
+  checkout.
+- **Aliases drift silently.** In one hour the same `sonnet` alias ran
+  `claude-sonnet-5` from the headless CLI 2.1.260 and `claude-sonnet-5-5`
+  from the desktop app's subagents (run CD). Exact IDs work even on a client
+  that does not know them: `claude-sonnet-5-5` ran from 2.1.260 with only an
+  `unrecognized_model` warning.
+- **Headless cross-vendor dispatch works.** `claude -p --agent
+  surface-census --output-format json` loaded the project role (`PROBE-OK
+  surface-census`, $0.10), and `claude -p --resume <session_id>` continued
+  it (`RESUME-OK PROBE-OK`). `codex exec resume <id>` exists in the bundled
+  0.159 CLI. So each vendor's lead can dispatch and resume the other
+  vendor's roles, and the resume-don't-re-dispatch rule survives.
+- **Claude's private memory holds operational safety rules a Sol lead
+  would not have**: budget2 binaries parse no flags (any invocation starts
+  a server and kills live :8080); never `git checkout` on a swarm tree
+  (wipes uncommitted worker output); rtk rewrites git output and falsifies
+  diffs; throttle heavy verification (nice + capped parallelism); agents2 is
+  PUBLIC (redact names from evidence); worktree `data/` symlinks live data.
+  Under D2 a Sol lead has live access, so these rules must be in the shared
+  constitution.
 
-| # | Gap | Where |
-|---|-----|-------|
-| 1 | Tier 3 ignores the ledger `checks` column — two lanes of PASS accept even when a named checker never ran | `check_tier3` |
-| 2 | A critical-glob manifest is accepted by `check`/`done` unless the lead remembered `escalate-scan` | `check_task` |
-| 3 | Tier 1 with a blank `checks` column accepts with zero verdicts | `check_tier1` |
-| 4 | A `report.md` in a tier-3 dir bypasses the oracle (legacy blind-arm contract); blind-arm scripts still shipped | `check_tier3`, `swarm/tier3-*.sh` |
-| 5 | No fingerprint ties a verdict to the tree it verified (TC incident: a checker's `git checkout` wiped worker output) | manifests, verdicts, `check` |
-| 6 | `checker-second` is told a run of PASSes is evidence of bad performance — invites manufactured disagreement | `.claude/agents/checker-second.md` |
-| 7 | `stats` counts an overruled FAIL as a failed first attempt; no escalation count; no elapsed time | `cmd_stats` |
-| 8 | Phase 0 / final-pass text describes a website build, not what the runs do | `CLAUDE.md` |
+## 3. Design
 
-## 2. Design (as built 2026-09-18; carried here — the design note is not ported)
+### 3a. One constitution (VN1)
+- `SWARM.md`: the vendor-neutral body of today's CLAUDE.md. It uses
+  role-level verbs (dispatch, resume, run in the background) and never
+  names a vendor's tool (Agent tool, SendMessage, `codex exec`). It gains
+  an **Operational rules** section holding the generic rules from §2,
+  with no household facts because the repo is public.
+- `CLAUDE.md` = `@SWARM.md` plus the Claude adapter: the Agent tool,
+  SendMessage, background runs, where transcripts record the `model` ID.
+- `AGENTS.md` is **generated** (Codex has no `@` import) by
+  `swarm/gen-adapters.sh` from `SWARM.md` + `swarm/adapters/codex.md`,
+  with a do-not-edit header. The Codex adapter says: dispatch every swarm
+  role through `swarm/dispatch.sh`; never use native Codex subagents for a
+  swarm role (they would inherit the lead's live access and break D2's
+  non-lead boundary); model IDs come from the Codex session JSONL.
+- Doc tests (`smoketest/doc_test.sh`) retarget `SWARM.md` and add three
+  checks: `AGENTS.md` regenerates byte-identical, `CLAUDE.md` imports
+  `@SWARM.md`, and `SWARM.md` names no vendor tool (a neutrality lint).
 
-1. **Tier 3 named checkers.** `check_tier3` receives `checks`; empty column
-   hard-fails; every named checker must PASS at the current attempt AND the
-   PASSes span two lanes. Dispute path unchanged.
-2. **Inline escalation triggers.** One trigger function shared by
-   `escalate-scan` and `check_task`; `check`/`done` refuse a row with a live
-   trigger, below target tier, and no flag file ("run gate.sh
-   escalate-scan"). The scan stays the only flag writer.
-3. **Tier 1 blank checks hard-fails.**
-4. **Legacy contract removed.** A `report.md` in a tier-3 dir is a hard FAIL
-   ("stale blind-arm report.md"). `swarm/tier3-setup.sh`,
-   `swarm/tier3-compare.sh`, `smoketest/gate/tier3_test.sh` deleted. The
-   dashboard mirror follows: oracle contract always; the divergence-matrix
-   panel becomes an oracle-status panel.
-5. **Source fingerprints.** Worker writes `<task>.<attempt>.sha256`
-   (`sha256sum` format; a deleted path is `deleted  <path>`) beside the
-   `.files` manifest. Every `checker-*` PASS carries `MANIFEST_SHA256: <sha256
-   of the .sha256 file>`. `check` requires manifest + sidecar covering every
-   path, re-hashes every path against `SWARM_TREE` (default `.`), and matches
-   every checker PASS's header to the sidecar hash; judges exempt. `done`
-   checks evidence consistency but not the tree re-hash. Ledgers holding rows
-   accepted before this change will not pass `done` — fresh ledger per run.
-6. **checker-second contract.** Scored on evidence per criterion (attack
-   tried, command, result), not on disagreement. Default-to-FAIL on
-   ambiguity stays.
-7. **stats.** An overruled first-attempt FAIL counts `clean (fail-overruled)`;
-   adds `escalated: n/m` and mtime-based `elapsed=` per task plus a total.
-8. **CLAUDE.md.** Phase 0 scales with tier and UI: SPEC.md always;
-   ACCESSIBILITY.md / SOURCES.md only when UI / migrated content is in scope.
-   Final pass: `checker-a11y` sweep only when a manifest touched UI;
-   self-review and `run_tests.sh` always.
+### 3b. One role → model table (VN2)
+- `swarm/roles.tsv`: `role  vendor  model  effort  fallback`, with **exact
+  model IDs** (never aliases, §2). A new release means editing a row, and
+  the ACTIVE EXPERIMENT rule already requires that change to be recorded
+  and not mixed with a process change.
+- Role prompts are single-source in `swarm/roles/<role>.md`. The generator
+  writes `.claude/agents/<role>.md` with frontmatter from the table. No
+  `.codex/agents/*.toml` is generated: Codex-vendor roles run only through
+  the container wrappers.
+- `agents_test.sh` asserts that every generated file is fresh and that its
+  frontmatter model matches the table.
 
-## 2b. GH2 design — the dashboard mirrors the inline escalation triggers (ruling 2026-09-29e)
+### 3c. Cross-vendor dispatch (VN3)
+- `swarm/dispatch.sh <role> <task> <attempt> <brief>` reads `roles.tsv`:
+  - **anthropic** role → `claude -p --agent <role> --model <id>
+    --permission-mode <P> --output-format json` in the target tree;
+  - **openai** checker → `swarm/codex-check.sh` (CD1, in the container);
+    an **openai** worker → refused until the Codex worker lane exists
+    (§6).
+- It records `.swarm/dispatch/<task>.<attempt>.<role>.json` (session id,
+  vendor, the model ID actually reported, cost, exit status).
+  `dispatch.sh --resume <task> <attempt> <role> <message-file>` continues
+  the same session, for BLOCKED returns and checker FAIL answers.
+- A Claude lead may keep the native Agent tool for anthropic roles. A Sol
+  lead uses `dispatch.sh` for every role.
+- `<P>` is `auto` (probe P5): the same classifier-gated rights as a native
+  subagent, never `bypassPermissions`, so a Sol lead cannot widen a Claude
+  role.
+- A Sol lead runs `dispatch.sh` as an escalated command and must request
+  escalation UP FRONT for every dispatch (probe P3): inside Codex's sandbox
+  `claude -p` hangs and then fails on DNS, and Codex does not infer that it
+  should escalate. The unit of approval is one dispatch, or a narrow Codex
+  permission profile for that one script (network plus writes to `~/.claude`
+  and the run's `.swarm/`), never a whole unsandboxed session.
 
-`dashboard/lib/parse.mjs` reproduces `gate.sh escalation_reasons` and the
-`check_task` precedence, so `gate.sh check` exits 0 exactly when
-`derived.state === 'accepted'` (the dashboard's stated anti-lie property):
+### 3d. Vendor attribution and cross-vendor independence (VN4)
+- The run's lead is declared once, in a ledger header line
+  `# lead: <vendor> <model-id>`. `check`/`done` refuse a new-format ledger
+  without it.
+- Verdicts gain an optional `MODEL:` header (dispatch.sh stamps it from
+  the CLI's own report). `FAMILY` stays an independence **lane**, not a
+  vendor (gate.sh comment, line 64).
+- **Rule (approved, D5):** at Tier 3, and at Tier 2 when `second`
+  is named, the attempt must hold a verdict or skip record from at least
+  one checker whose vendor is not the lead's.
+  - A Sol lead meets it through the Claude checkers.
+  - A Claude lead meets it by naming `codex` (CD4 semantics: a FAIL
+    counts, a PASS never does).
 
-1. **two-consecutive-fails** — an unresolved FAIL at the ledger attempt N and
-   at N−1. Unresolved = a valid FAIL verdict at that attempt and NOT (≥3
-   UPHOLD/OVERRULE verdicts there with OVERRULE strictly more), counted with
-   no identity de-duplication, as `judges_overruled_at` does.
-2. **checker-overruled** — any valid verdict owned by the task, at any
-   attempt, with `VERDICT: OVERRULE` and `CHECKER: boss`.
-3. **critical-glob** — every `manifests/<task>.*.files` the gate's glob
-   matches (a superset prefix, dot-prefix siblings included — mirrored, not
-   fixed; see backlog), each path tested against `critical.globs` with
-   Python `fnmatch` semantics plus the gate's candidates (`**/X` also tries
-   `X`; `/**` also tries `/*`), exempt when it matches `test.globs` — or, when
-   that file is absent, the gate's default test-glob list.
-4. **Precedence (gate order).** A flag FILE on disk (open or closed) keeps
-   today's logic and suppresses the inline check. With no flag file, a
-   non-empty trigger set on a row below `min(tier+1, 3)` makes an `accepted`
-   row `flagged`, before any quorum test, with a ledger mismatch naming the
-   reasons and `escalate-scan`.
+  The surface census follows the same rule but stays advisory. Reason:
+  every lean-era catch landed on the lead's own artifacts.
+- `gate.sh stats` gains a `lead:` line plus first-attempt clean rates split
+  by lead vendor and by worker vendor, so the choice of lead is decided by
+  data. `parse.mjs` mirrors all of it.
 
-Oracle `.swarm/tier3/GH2/accept.sh` (+ `differential.mjs`): 14 independent
-gate-vs-dashboard scenarios with pinned outcomes and mismatch text; a scope
-check against GH1's fingerprints; the consumer suites; and a mutation kill
-(the shipped tests must fail against GH1's frozen `parse.mjs`,
-`gh1-parse.mjs`). Validated both ends before dispatch: the current tree →
-`ORACLE FAIL: 2` (7/14 scenarios disagree; shipped tests catch nothing);
-a throwaway prototype → `ORACLE PASS`; discarded. After GH2 lands,
-`gate.sh check GH1` reports drift on the two dashboard files by design (a
-later task edited them); `done` is the run-level check and does not re-hash.
+### 3e. budget2's own instructions (VN5, budget2 repo)
+budget2's `AGENTS.md` becomes generated from its `CLAUDE.md` (same pattern
+and freshness test). budget2-specific operational rules (binary flags,
+deploy recipe, file-rename trap) move there from Claude's memory, because
+the target repo's instructions are what any lead reads there.
 
-## 3. Port scope
+### 3f. Stats that drive the setup (VN6)
+Principle: stats are **derived from evidence files**, like the gate, and
+never transcribed by the lead, because the lead's own choices are among the
+things being scored.
+- **Record** at run close (`stats/record.py`), appending to tracked
+  `docs/runs/stats/`:
+  - `attempts.tsv`: run, task, tier, attempt, lead and worker vendor+model,
+    outcome, first-attempt clean, elapsed.
+  - `verdicts.tsv`: checker, vendor+model, lane, verdict, overruled?,
+    unique? (the only FAIL at that attempt).
+  - `cost.tsv`: role, vendor, model, tokens; Claude $ at list price; Codex
+    weekly-quota % (session `token_count.rate_limits`).
+  - `catches.tsv`: mechanism, catcher vendor+model, target (lead artifact
+    or worker output), defect class.
 
-- Apply every change in `source.patch` and add every file in
-  `source-untracked/`. Nothing else.
-- **Excluded:** `AGENTS.md` and `.codex/` (the stale Codex port — run CD
-  decides their fate), and `docs/superpowers/specs/2026-09-18-gate-hardening-design.md`
-  (CLAUDE.md: SPEC.md is the design artifact; §1–2 above carry it).
-- **The one conflict is `CLAUDE.md`** (trial apply onto cae89ff, 2026-09-29:
-  every other file applies cleanly). Master gained the "Superpowers skills —
-  front half only" section (#32) after the source was built. The merge keeps
-  every master section verbatim AND applies every source hunk.
-- Never write to the de0532 worktree; the snapshot is the source.
+  Checker and oracle catches come from verdicts and logs. Census and user
+  catches come from a fixed tag the lead writes in Rulings (`[catch:
+  <mechanism> <target> <class>]`); it is the only hand-written input, and
+  the final pass checks it. Model IDs come from Claude transcripts, Codex
+  session JSONL and VN3's dispatch records.
+- **Report** (`stats/report.py`): aggregates across runs by (role, vendor,
+  model). It partitions at every commit that changes `swarm/roles.tsv`, so
+  before and after a model change never mix, and it shows counts with n,
+  never bare percentages.
+- **Pre-registered decision rules** (the user signs them, as with the lean
+  rule). The report prints which rules fire and the user decides.
+  `roles.tsv` changes only between runs:
+  - **Worker:** at ≥10 tasks per vendor, the default worker goes to the
+    higher first-attempt clean rate; on a tie, the cheaper vendor.
+  - **Checker yield:** zero unique catches over ≥15 tasks → reserve it for
+    defect-history surfaces. ≥2 overruled FAILs per 10 → review its prompt.
+  - **Codex PASS promotion:** ≥2 upheld Codex-only FAILs and 0 overruled
+    FAILs over ≥10 tasks → propose letting a Codex PASS count.
+  - **Lead:** lead-artifact catches per task and cost per accepted task, by
+    lead vendor, after ≥3 runs each.
+  - **New release:** the new model starts a fresh partition; the old
+    model's numbers are the baseline it must beat.
+  - **Quota guard:** Codex weekly quota >80% at run start → Codex roles use
+    their fallback row for the run, and the fallback is recorded.
+- **Backfill** from `docs/runs/` plus the local transcripts that still
+  exist; runs without usable evidence are marked, not guessed.
 
 ## 4. Task table
 
-| Task | Tier | Checks | Owner | Acceptance criteria |
-|------|------|--------|-------|---------------------|
-| GH1 | 3 | tests,second,a11y | worker-coder | (a) `.swarm/tier3/GH1/accept.sh` run on the result ends `ORACLE PASS`. (b) `bash smoketest/gate/run_tests.sh` → ALL PASS. (c) `node --test dashboard/test/*.test.mjs` (from the repo root) → 0 fail (ruling 2026-09-29b). (d) Each of the eight §2 items holds as specified — checkers verify point by point, with a command per point (items 6 and 8 are text: cite the lines). (e) `CLAUDE.md` keeps master's "Superpowers skills — front half only" section and "Resume, don't re-dispatch" paragraph verbatim (no source hunk touches either), and carries every source hunk — including the hunks inside "ACTIVE EXPERIMENT" and "Phase 0" (ruling 2026-09-29a). (f) The changed-file set equals the source's (29 tracked + 10 untracked, §3 exclusions honoured); nothing under `docs/runs/` touched; no remaining reference to `tier3-setup.sh`, `tier3-compare.sh` or `tier3_test.sh` outside the history folders `docs/runs/` and `docs/superpowers/` (ruling 2026-09-29c). (g) The dashboard's changed tier-3 panel meets ACCESSIBILITY.md in both themes. |
-| GH2 | 3 | tests,second | worker-coder | (a) `.swarm/tier3/GH2/accept.sh` ends `ORACLE PASS`. (b) `bash smoketest/gate/run_tests.sh` → ALL PASS. (c) `node --test dashboard/test/*.test.mjs` → 0 fail. (d) Only `dashboard/lib/parse.mjs` and `dashboard/test/parse.test.mjs` change; `swarm/gate.sh` and `dashboard/lib/render.mjs` stay byte-identical to GH1's fingerprints. (e) `parse.mjs` mirrors each trigger exactly as §2b states, and the precedence: checkers prove each with their own gate-vs-dashboard fixtures. (f) The shipped `DIFFERENTIAL_SCENARIOS` gains trigger scenarios that FAIL against GH1's `parse.mjs` (the property outlives the oracle). |
+| Task | Tier | Checks | Owner | Depends | Acceptance (summary; full blocks at dispatch) |
+|------|------|--------|-------|---------|-----------------------------------------------|
+| VN1 | 3 | tests,second,codex | worker-coder | CD merged | §3a. Oracle: every current `doc_test.sh` assertion holds against `SWARM.md`; every paragraph of master's CLAUDE.md appears in `SWARM.md` or the Claude adapter, or is listed in `.swarm/tier3/VN1/rewrites.tsv` (old → new, reviewed by both checkers), so no rule is silently dropped; regeneration is idempotent; mutations (drop a paragraph, hand-edit `AGENTS.md`, name `SendMessage` in `SWARM.md`) each fail the suite. |
+| VN2 | 3 | tests,second,codex | worker-coder | VN1 | §3b. Oracle: generated `.claude/agents/*.md` are byte-identical to master's apart from the `model:` line; every model is an exact ID matching `roles.tsv`; the freshness test fails on a hand edit. |
+| VN3 | 3 | tests,second,codex | worker-coder | VN2, CD1 | §3c. Oracle, with a stub `claude` and a stub Codex on PATH: exact argv per vendor, dispatch record fields, `--resume` reuses the session id, openai worker refused, permission mode never `bypassPermissions`, a stub failure → recorded non-zero status and no verdict; plus ONE live `claude -p` probe of a real role. |
+| VN4 | 3 | tests,second,codex | worker-coder | VN3, CD4 | §3d in `gate.sh` + `parse.mjs` (differential scenarios); ledgers without a lead header and pre-VN verdicts still validate; `stats` lines exact. |
+| VN6 | 2 | tests,second | worker-coder | VN4 | §3f (signed off). `second` because it renders rates shown to the user (defect-history surface). Oracle: a fixture archive with known counts → exact report lines; a roles.tsv change splits a partition; a lead-transcribed figure has no path in (every column traces to an evidence file or a `[catch:]` tag); each decision rule fires exactly at its threshold and not below it. Lives in `stats/`, outside the critical globs. |
+| VN7 | 3 | tests,second | worker-coder | VN3, VN6 | Signed off; P6 narrowed it to the browser path. A `checker-ui` role (openai, Sol): drives the built UI in headless Chromium through Playwright inside the container, against a synthetic-data demo instance built from the data-free copy, and writes a verdict whose evidence is an action log plus screenshots, each with a replay script a Claude checker can re-run. Under CD's trial rule its FAIL counts and its PASS never does. VN6 scores its unique catches against `checker-a11y`'s (~8% of Claude spend). The image adds Chromium and the Playwright MCP, which are downloads that need approval at build time. |
+| VN5 | 2 | tests | worker-coder | VN1 | §3e in budget2: generated `AGENTS.md` + freshness test; operational rules present; nothing household-specific added to agents2. |
 
-**Tier 3:** GH1 — the gate decides acceptance for every later run; a wrong
-gate is a silent bypass (critical-glob: `swarm/**`). GH2 — the dashboard is
-the gate's read-only mirror; a wrong mirror shows `accepted` for refused rows
-(critical-glob: `dashboard/lib/**`). GH2's oracle is described in §2b.
+Tiers: VN1–VN4 are Tier 3 because they change the constitution, the role
+definitions, the process that launches agents on live data, and the gate
+(critical globs below). VN5 is docs in the target repo. Every Tier-3 task
+gets a `surface-census` pass on its draft brief and `accept.sh` before
+dispatch, and every oracle is validated at both ends. `codex` is named on
+VN1–VN4 as trial data points for CD's lane (a FAIL counts, a PASS never
+does). Its copy excludes `docs/runs/` and `*.png`.
 
-### GH1 oracle plan (`accept.sh`, written and validated at both ends BEFORE dispatch)
+## 5. Phase-0 probes (run 2026-09-30) — all six answered
 
-- **Gate probes, one per mechanical gap (1–5, 7).** Each builds a throwaway
-  `.swarm` fixture and runs the candidate `swarm/gate.sh`. Every probe has a
-  **negative case** (the bypass) that must exit 1 with a defect-specific
-  message fragment, and a **positive control** that must exit 0 — so a
-  failure is proven to be the defect, not the harness. Fixtures carry valid
-  fingerprints so a negative case fails for its own reason only.
-  Probe 5 covers: tree drift after fingerprinting, a PASS whose
-  `MANIFEST_SHA256` mismatches, a missing sidecar, and a `deleted` path
-  (absent → ok, present → fail).
-- **Every consumer of the contract.** `run_tests.sh` ALL PASS; dashboard
-  `node --test dashboard/test/*.test.mjs` 0 fail (its parity battery runs the gate per fixture);
-  `worker-coder.md` and `worker-local.md` instruct writing `.sha256`; every
-  `checker-*.md` names `MANIFEST_SHA256`; `CLAUDE.md` keeps master's
-  Superpowers section and Resume paragraph verbatim and carries every
-  source-added line, with no source-removed line surviving (ruling
-  2026-09-29a; the plan first said "three master sections").
-- **Formats pinned only where the design pins them:** the
-  `fail-overruled` label and an `escalated: n/m` line.
-- **Fail end:** master's tree (cae89ff) — every negative probe exits 0 there,
-  so the oracle must FAIL, for the probes' reasons. **Pass end:** a throwaway
-  trial port in scratch → `ORACLE PASS`; then discarded.
+| # | Probe | Result |
+|---|---|---|
+| P1 | Headless dispatch of a project role | **Pass.** See §2. |
+| P2 | Exact model ID in a role definition | **Pass.** See §2. |
+| P3 | A Sol session runs `claude -p --agent …` from its own shell | **Pass (15:51).** An interactive Sol session (`gpt-6-sol`, approval `on-request`; the app-bundled CLI needs `--no-daemon`), told to request escalation up front, called `exec_command` with `sandbox_permissions: require_escalated`; the user approved once ("Yes, proceed", no standing rule); `claude -p --agent surface-census` returned exit 0, `"result":"PROBE-OK surface-census"`, $0.10, model `claude-sonnet-5` (the `sonnet` alias again resolving to the older model from CLI 2.1.260; VN2 pins exact IDs). Earlier attempts: the unsandboxed `codex exec -s danger-full-access` was blocked by Claude's auto-mode classifier ("Create Unsafe Agents") and is never launched from a Claude session. Inside Codex's sandbox, `claude -p` hung and then failed after 180 s with `Can't reach the API server … (ENOTFOUND)`, and Sol did not ask to escalate on its own; hence §3c's up-front escalation rule. The same session confirmed the new `~/.codex/AGENTS.md` pointer loads. |
+| P4 | Which constitution a Sol lead sees in a worktree | **Done.** Sol (model `gpt-6-sol`, per its session JSONL) auto-loaded the worktree's `AGENTS.md` and also followed the global pointer to `~/work/agents2`, found no `AGENTS.md` there (D6), and said it would report that before falling back. Consequence: once VN merges, the main checkout holds master's `AGENTS.md`, so a Sol lead in a run worktree would see two constitutions. The global pointer must name the current agents2 worktree (§7). |
+| P5 | Permission mode for headless roles | **Done.** `--permission-mode auto` gives a dispatched Claude role the same classifier-gated rights as a native subagent (it even allowed a benign `touch` in `~`, since removed). `dontAsk` is strictly narrower: allow-listed commands only, and it refused the write outside the repo. Frontmatter `tools` are enforced (no Write tool → none offered). §3c uses `auto`, never `bypassPermissions`, so a Sol lead cannot widen a Claude role. |
+| P6 | Codex computer use confined to a nested display | **Done: desktop computer use is not available to the Codex CLI.** With `cua_repl` enabled for the run and `DISPLAY` set to a Xephyr display, Sol searched its tool list for screen/desktop tools, found only the Playwright MCP from the global config, and screenshotted a blank browser viewport (780×493, no text). Desktop control appears to be a ChatGPT-app feature. VN7 therefore takes its fallback: browser automation (headless Chromium + Playwright) inside the container. |
 
-### Acceptance mechanics
+Side finding, fixed 2026-09-30 (user OK): `~/.codex/config.toml` opted into `[features].use_legacy_landlock`. On Codex 0.159 that path crashes ("filesystem-restricted execution requires bubblewrap"), while bubblewrap works from the user's terminal despite `apparmor_restrict_unprivileged_userns=1`: reads allowed, writes and network blocked. The line was removed and the default sandbox verified; backup `~/.codex/config.toml.bak-2026-09-30`. It explains the first sandboxed P3 run, in which no command ran at all.
 
-- Gate of record: **both** master's gate, frozen at `.swarm/gate-master.sh`
-  (sha256 `e15a7f88…622c`, the currently trusted gate), **and** the ported
-  `swarm/gate.sh` (dogfood — it requires fingerprints, so the worker writes
-  the `.sha256` sidecar and every checker PASS carries `MANIFEST_SHA256`).
-  Both must exit 0.
-- Checkers get the §4 criteria and the foreign-territory note: the de0532
-  worktree is the source, read-only; the main checkout's untracked
-  `AGENTS.md` / `.codex/` are not this run's.
-- Hard stop: two failed attempts (Tier 3). Two failures of the same class →
-  contract rewrite before the last attempt.
+## 6. Out of scope (next runs)
 
-## 5. Critical globs (`.swarm/critical.globs`)
+- **The Codex worker lane** (`codex-work.sh`: patch out of the container,
+  applied and fingerprinted by the harness; about 24% of Claude spend).
+  It is its own run after VN and reuses CD1's container.
+- **The trial**: Sol leads one real run (budget2 is allowed under D2);
+  `stats` compares it with Claude-led runs.
+- Letting a Codex PASS count, which is decided by CD's trial data.
+
+## 7. User actions (outside this repo, need approval)
+
+- **Done 2026-09-30 (D6):** `~/work/agents2/AGENTS.md` (the Sep 5 port,
+  untracked) renamed to `AGENTS.md.stale-port-2026-09-05`, so Codex now
+  finds no workflow source and, per `~/.codex/AGENTS.md`, reports that
+  before falling back. The untracked `.codex/` (project config + 7 agent
+  TOMLs, Sep 5) is still in place and loads only when Codex runs in the
+  main checkout.
+- **Done 2026-09-30:** P3 run by the user, interactively (§5).
+- **Done 2026-09-30 (P4 consequence):** `~/.codex/AGENTS.md` now resolves
+  the workflow source per session: inside an agents2 checkout or worktree
+  (`git rev-parse --path-format=absolute --git-common-dir` =
+  `/home/darrell/work/agents2/.git`), it uses that checkout's `AGENTS.md`;
+  otherwise it uses `~/work/agents2`. The same edit replaced "per-run
+  artifacts in the target project" with "run evidence is archived to agents2
+  `docs/runs/`". Backup: `~/.codex/AGENTS.md.bak-2026-09-30` (sha256
+  17d43df8…).
+- At VN's merge, the main checkout's `git pull` is safe: the stale port is
+  now `AGENTS.md.stale-port-2026-09-05`, and VN tracks nothing under
+  `.codex/` (§3b). Delete both leftovers once VN1 lands.
+
+## 8. Critical globs (`.swarm/critical.globs`)
 
 ```
 swarm/**
 dashboard/lib/**
 .claude/agents/**
 CLAUDE.md
+SWARM.md
+AGENTS.md
 TIERS.md
 ```
 
-## 6. Final pass
+## 9. Rulings
 
-`checker-a11y` sweep of the dashboard (GH1's manifest touches UI; GH2 leaves
-`render.mjs` byte-identical, so GH1's a11y verdict covers the final markup); lead
-self-review of SPEC.md, the oracle and every file the lead authored;
-`bash smoketest/gate/run_tests.sh` ALL PASS; `gate.sh stats` reported
-verbatim; `gate.sh done` exit 0 under both gates.
-
-After merge: the de0532 worktree is removed only on the user's say-so.
-
-## 7. Rulings
-
-- **2026-09-29a — criterion (e) contradicted the source (mechanism: oracle
-  authoring, lead, pre-dispatch).** The signed-off (e) required master's
-  "ACTIVE EXPERIMENT" text verbatim AND every source hunk, but the source's
-  first CLAUDE.md hunk edits ACTIVE EXPERIMENT's Measurement bullet (the
-  stats `fail-overruled` note) and its second rewrites Phase 0. Found while
-  mapping hunks to sections for the oracle's CLAUDE.md check. Corrected:
-  verbatim retention applies to the two master-only texts no hunk touches
-  (Superpowers section, Resume paragraph); every source hunk applies,
-  ACTIVE EXPERIMENT included. A lead brief error — the same class as
-  GM-2026-09-06a/b.
-- **2026-09-29b — criterion (c)'s command did not run the suite (mechanism:
-  oracle calibration against master, lead, pre-dispatch).** On Node 24
-  `node --test dashboard/test/` treats the directory argument as one test
-  file and reports a single synthetic failure — a harness error that would
-  have failed a perfect port. Calibrated on cae89ff: the explicit
-  `dashboard/test/*.test.mjs` form runs 49 tests, 49 pass. Criterion (c) and
-  the oracle use that form.
-- **2026-09-29c — criterion (f)'s reference sweep flagged history (mechanism:
-  oracle pass-end validation, lead, pre-dispatch).** The throwaway trial
-  port failed exactly one check: two July design documents
-  (`docs/superpowers/plans/2026-07-09-tiered-verification.md`,
-  `docs/superpowers/specs/2026-07-09-tiered-verification-design.md`) name the
-  blind-arm scripts. CLAUDE.md classes `docs/superpowers/` as history to
-  read, the source never touches it, and rewriting history is out of scope —
-  same standing as `docs/runs/`. Criterion (f) and the oracle now exclude
-  both history folders; the oracle re-validated at both ends.
-- **2026-09-29d — GH1 attempt 1 accepted; no FAIL at any lane.** checker-tests
-  PASS: 7 single-line gate mutants each caught by its own oracle probe, 28
-  own probes, byte-identity of all 34 present paths to cae89ff+source.
-  checker-second PASS: independent reconstruction (own merge-file of
-  CLAUDE.md identical to TREE's; 33 other present paths byte-identical,
-  modes match), 14 oracle mutants of which 13 caught. checker-a11y PASS:
-  0 axe violations both themes, tag contrast 6.79–9.18:1, panel has no
-  focus stops. Dogfood: every checker wrote `MANIFEST_SHA256` from the new
-  briefs-by-dispatch, and both gates accept.
-- **2026-09-29e — the port creates a dashboard/gate disagreement
-  (mechanism: primary checker O1, independently second checker obs. 2;
-  lead-reproduced).** With the ported gate, an `accepted` tier-2 row whose
-  manifest hits a critical glob and has no flag is refused by `gate.sh check`
-  (exit 1, "escalation trigger (critical-glob) but no flag") while
-  `parse.mjs` derives `state: accepted`. Same for boss-overrule and
-  two-consecutive-fails triggers. Pre-existing in the 2026-09-18 source (the
-  port is byte-faithful), so not a GH1 FAIL (scope precedent 2026-08-29c/d);
-  but on master the two AGREE (neither refuses), so merging GH1 alone
-  introduces the lie the dashboard's differential battery exists to
-  prevent. Lead oracle gap: C2 asserted the dashboard suite passes, not
-  that the suite covers the new refusal. User decision pending.
-- **2026-09-29f — a judge-named PASS supplies a lane (mechanism: second
-  checker obs. 1; lead-reproduced).** Tier-3 row `checks=tests` with
-  `checker-tests` PASS + a `judge-x.verdict` saying `VERDICT: PASS`,
-  `FAMILY: adversarial`, no `MANIFEST_SHA256` → `OK: accepted at tier 3`
-  under BOTH gates. Pre-existing on master. Belongs with run CD, which
-  redefines which verdicts count toward a lane.
-- **Backlog observations (second checker, not reproduced by the lead):**
-  oracle has no probe for "manifest path without fingerprint line" (one of
-  14 mutants survived); `.files` itself is not fingerprinted, so trimming a
-  path after fingerprinting evades the critical-glob trigger; a `report.md`
-  that is a directory or dangling symlink passes the `-f` test; CLAUDE.md's
-  "next scan clears a flag once the tier is raised" is false while the
-  trigger is still live; stale text at `dashboard/test/parse.test.mjs:693`
-  and `smoketest/e2e/RUNBOOK.md:17-18`; `sha256sum -c` warns on `deleted`
-  lines; dashboard tests leave `dash-parse-test-*` dirs in TMPDIR.
-  Process (primary checker O3): concurrent checkers share the session
-  scratchpad — one deleted another's `mut/` dir mid-run. Future checker
-  briefs name a unique scratch subdirectory.
-- **2026-09-29g — GH2 attempt 1 accepted; no FAIL at any lane.** Oracle
-  `ORACLE PASS` (D 14/14, C3: shipped tests fail 9 against GH1's
-  parse.mjs). checker-tests PASS: 13 one-edit parse.mjs mutants — the
-  oracle's D scenarios caught 10, the shipped suite (C2) caught judge
-  de-dup, non-strict majority and JS `trim()` (lead oracle gap: D alone
-  misses those three), one equivalent survivor (`/**`→`/*` is redundant in
-  fnmatch, 380k fuzz cases); own fixtures 84/85 agree, the one miss being a
-  pre-existing filename-parse ambiguity. checker-second PASS: ~2.3M fnmatch
-  pairs and 9,000 fuzzed glob/manifest files vs the gate's embedded python,
-  0 mismatches; ~3,000 fuzzed fixtures against the real gate, 0
-  trigger-caused disagreements; `parse()` proven read-only on 300 fixtures.
-- **Backlog from GH2 (checkers + worker; pre-existing, identical under GH1):**
-  - **B1 — gate fails OPEN on bad critical-glob inputs (second checker,
-    gate defect, highest priority).** An unreadable or non-UTF-8
-    `critical.globs`, `test.globs` or any manifest of the task makes the
-    embedded python in `manifest_hits_glob` die; the gate then reports no
-    critical-glob hit and accepts (chmod-000 probes exit 0 with a traceback).
-    The dashboard mirrors it, so parity holds — both are wrong.
-  - Verdict header parsing: the gate's `field_of` takes the FIRST `^KEY:`
-    line anywhere; `parse.mjs` takes the LAST header before `---` and trims
-    keys/values — duplicate VERDICT headers, trailing/leading whitespace,
-    `VERDICT:` only in evidence all split the two (worker, both checkers).
-  - Verdict filename ambiguity (`r.1.2.x.verdict`, `CHECKER: 2.x`) and
-    leading-zero attempts split the two.
-  - Flag `TARGET_TIER` parsing differs on `x`, `3abc`, `0x3`, CRLF, duplicate
-    lines (gate dies "unbound variable" on `x`); `parse()` throws EISDIR when
-    `flags/<id>.flag` is a directory (never-throw contract).
-  - Boss OVERRULE + a judge sharing a FAMILY with no FAIL: gate refuses
-    ("duplicate judge family"), dashboard accepts.
-  - Test gaps (V3 candidates): one path per remaining default test glob
-    (`tests/**`, `smoketest/**`, `**/test_*.py`) and a mixed
-    test+production manifest.
-  - Lead oracle nit: `differential.mjs` uses `TMPDIR ?? os.tmpdir()`; an
-    EMPTY `TMPDIR` would put scratch in the cwd (`||` is the fix). Unset
-    here, so no effect this run.
-
-- **2026-09-29h — integration with #39 before merge (mechanism: GitHub
-  mergeability, lead).** PR #40 reported CONFLICTING: #39 (surface census,
-  read-not-grep, judge-impact on sonnet) landed on master mid-run and edits
-  six GH1 files. Merged origin/master into the branch; the one textual
-  conflict (`smoketest/doc_test.sh`, both sides appended CLAUDE.md checks)
-  resolved as the union. #39's text reviewed against the new contract: no
-  contradiction (the census is advisory and writes no verdict, so
-  `MANIFEST_SHA256` does not apply to it). On the merged tree:
-  `run_tests.sh` ALL PASS; dashboard 66/66; GH1 oracle — every probe and
-  consumer check passes, only F (changed-file set vs cae89ff) fails, listing
-  exactly #39's two new agents and this run record; GH2 oracle — D 14/14,
-  C1–C3 pass, only the two S0 scope checks fail, listing exactly #39's files
-  and this run record. The run predates the census rule (it arrived with
-  #39), so no census was run; no retroactive census.
-- **Models (new #39 rule — from the subagent transcripts' `model` field):**
-  lead `claude-opus-5-5`; GH1 worker `claude-sonnet-5-5`, checker-tests
-  `claude-opus-5-5`, checker-second `claude-sonnet-5-5`, checker-a11y
-  `claude-sonnet-5-5`; GH2 worker `claude-sonnet-5-5`, checker-tests
-  `claude-opus-5-5`, checker-second `claude-sonnet-5-5`.
+(none yet)
