@@ -2,8 +2,9 @@
 
 Replicates the "expensive boss, cheap workers, mechanical checkers" pattern:
 lead session on a frontier Claude model, workers and checkers on cheaper
-Claude model tiers, all through the same Anthropic API — no gateway, no
-second vendor (user decision 2026-08-19).
+Claude model tiers, all through the same Anthropic API — no gateway (user
+decision 2026-08-19). One second vendor joins as a trial checker lane: Codex
+(see "Verification tiers").
 
 ## How the routing works
 
@@ -23,8 +24,10 @@ Haiku-tier worker for high-volume, low-judgment tasks.
    claude
    ```
    No env vars, no proxy, no separate gateway process to bring up. Every
-   role — lead, workers, checkers, judges — authenticates the same way your
-   `claude` CLI normally does.
+   Claude role — lead, workers, checkers, judges — authenticates the same way
+   your `claude` CLI normally does. The Codex check is the exception:
+   `swarm/codex-check.sh` uses your own Codex login (`~/.codex/auth.json`) and
+   needs Docker; without them it writes a skip record and blocks nothing.
 
 2. Kick it off with a "big work" prompt, e.g.:
    > Read CLAUDE.md. Phase 0 first: draft SPEC.md and ACCESSIBILITY.md for
@@ -41,8 +44,9 @@ it now just explains that the gateway is gone and exits.
 - If your account is under a managed org policy, an `availableModels`
   allowlist can override frontmatter model choices.
 - Tier 2's dual-lane requirement is about the **job** (primary verifier vs.
-  adversarial `checker-second`) and **model tier**, not a second vendor —
-  see "Verification tiers" below and CLAUDE.md.
+  adversarial `checker-second`) and **model tier**; the Claude lanes share a
+  vendor, and the cross-vendor lane is the Codex trial — see "Verification
+  tiers" below and CLAUDE.md.
 - Checkers are cheap but not free: keep their checks mechanical (diffs,
   axe-core, explicit constitution points) so a small model can't drift.
 
@@ -60,8 +64,8 @@ Rigor is chosen per task, not applied uniformly (see `TIERS.md`):
   (lane `adversarial`, defaults to FAIL on ambiguity) is added for tasks on
   defect-history surfaces (formatting/rounding, split classification,
   rendered-string arithmetic, money), and when listed the gate requires the
-  PASSes to span both lanes. All lanes run on Claude; the independence is
-  job + model tier, not vendor. Disputes default to concede-and-rework; a
+  PASSes to span both lanes. The Claude lanes share a vendor, so their
+  independence is job + model tier. Disputes default to concede-and-rework; a
   3-judge panel (`judge-claude`, `judge-standards`, `judge-impact`) is
   dispatched only for a FAIL the lead would overrule.
 - **Tier 3** — irreversible / high blast radius (payments, auth, deploys,
@@ -78,6 +82,16 @@ reports every consumer of the touched data, every brief claim the code
 contradicts, and every consumer the draft oracle misses — auditing the lead's
 brief before a worker spends an attempt on it. It is advisory; the gate never
 reads it.
+
+Codex lane (a trial, run CD): Codex, another vendor's model, runs alongside
+`checker-second` — name `codex` in `checks` beside `second` on every Tier-3
+task and every Tier-2 task that names `second`. The lead runs
+`swarm/codex-check.sh <task> <attempt>` (Docker, a data-free copy of the tree,
+an egress allowlist), which writes one `checker-codex` verdict or one skip
+record. Trial rule: a Codex FAIL counts (the dispute path), a Codex PASS never
+does (no requirement, no lane), an outage never blocks; `codex` in `checks`
+only demands one outcome at the current attempt. `gate.sh stats` ends with a
+`codex:` line, the trial's measurement.
 
 A pure-bash gate enforces it: a task is accepted only when `swarm/gate.sh check
 <task>` exits 0, and the run completes only when `swarm/gate.sh done` does.
@@ -115,9 +129,10 @@ It live-reloads over SSE whenever a file under the watched dir changes.
 What it shows: the ledger with tier badges; a per-task drawer with the worker
 manifest and every verdict rendered verbatim; a dispute panel with both
 checker verdicts and the three judge votes plus the mechanical tally; the
-Tier-3 oracle status; and a cost panel. Two gate checks are not mirrored
-because the dashboard only sees `.swarm/`: the tree re-hash and the inline
-escalation triggers (it shows flag files, not the glob test).
+Tier-3 oracle status; and a cost panel. It mirrors the gate's verdict
+rules, the Codex lane and the inline escalation triggers; the one gate check
+it cannot repeat is the tree re-hash, because the dashboard only sees
+`.swarm/`.
 
 Anti-lie note: the dashboard computes each task's state from the verdict
 evidence, not from the ledger `status` string — so a task that the ledger

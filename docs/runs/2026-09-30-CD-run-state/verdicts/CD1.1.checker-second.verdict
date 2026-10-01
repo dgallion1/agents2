@@ -1,0 +1,116 @@
+VERDICT: FAIL
+CHECKER: checker-second
+FAMILY: adversarial
+TASK: CD1
+ATTEMPT: 1
+MANIFEST_SHA256: b4e51570998af298902a4494bc435affc0767767ce08eb33716cef38677299f1
+---
+Tree confirmed first: `sha256sum -c .swarm/manifests/CD1.1.sha256` -> 14/14 OK (re-run again just before this write).
+All experiments ran in a `cp -a` copy without .git (scratch: .../scratchpad/cd1-second.we1Yns), real harness + real containers
++ STUB binaries + FAKE auth files only, every docker command under the shared flock. Real ~/.codex/auth.json never read or mounted.
+
+CRITERION (a) oracle ends ORACLE PASS -- PASS
+ - Lead's log: .swarm/tier3/CD1/oracle.1.log, 115 lines, last line exactly `ORACLE PASS`, 113 ok / 0 FAIL; mtime 21:48 is after the
+   manifest (21:46) and the last worker edit (21:41), so it describes this tree.
+ - Independent re-run on my copy: `nice -n 10 flock $LOCK bash <copy>/.swarm/tier3/CD1/accept.sh <copy>` -> 112 ok, 0 FAIL, last line
+   `ORACLE PASS` (the territory check self-skips: no git base in a .git-less copy; I did (c) separately).
+ - Attack "a check that passes for the wrong reason against THIS implementation": the host-reachability, lookalike, port-80, plain-HTTP and
+   direct-egress checks all pass here for the RIGHT reason (proxy.log shows `Proxying refused on filtered domain`/403 Access violation;
+   no route: `tcp 172.17.0.1:<port> Network is unreachable` from a probe stub). No vacuous pass against the shipped code found.
+ - Oracle blind spots (observations, not a failure of (a)): see O5, O6.
+
+CRITERION (b) every step holds as written -- FAIL, on step 7 (secret hygiene) only; every other attack below was refuted
+ Step 7 ("Every occurrence in events.jsonl, proxy.log or out/ is replaced by [REDACTED] before the script exits, on every path";
+ "any secret appearing in last.json -> skip secret-leak"):
+ F1a. Attack: a file in out/ the harness cannot open O_RDWR. `redact_path` swallows OSError (tools.py: `except OSError: return`) and
+      os.walk swallows scandir errors, so redaction silently skips them (fail-OPEN).
+      Repro (end-to-end, real container, stub creates the files, host uid == container uid 1000):
+        stub: cp /codex-home/auth.json /out/auth-copy.json ; echo $SECRET > /out/readonly.txt; chmod 444 /out/readonly.txt ;
+              mkdir /out/locked; echo $SECRET > /out/locked/inner.txt; chmod 000 /out/locked
+        `SWARM_DIR=.. SWARM_TREE=.. CODEX_BIN=stub CODEX_AUTH=fake nice -n 10 flock $LOCK bash swarm/codex-check.sh T 1` -> rc=0, verdict written.
+        After exit: `auth-copy.json` was redacted (control) but `out/readonly.txt` and `out/locked/inner.txt` STILL CONTAIN the secret
+        (grep -rl after chmod -R u+rwX). Docker-free reproduction: `tools.py secrets redact auth events.jsonl proxy.log out` on
+        0444 / 0400 / dir-000 files -> exit ok, secret remains in all three.
+      Note the harness already knows this hazard (it does `chmod -R u+rwX "$AUD/out"` at the START of the next run and on $TMP at exit)
+      but not before redacting. Remedy verified: `chmod -R u+rwX out` before `secrets redact` -> no residual secret.
+ F1b. Attack: the auth file is bind-mounted RW (brief step 4) and the secret list is read only AFTER the run (cleanup and step 7 both
+      call load_secrets on $CODEX_AUTH at that time). If the container rewrites or truncates the file (a token refresh does the first),
+      the values Codex was actually given are no longer "in $CODEX_AUTH" and are neither leak-checked nor redacted.
+      Repro A (stub echoes auth.json into events + out/ files, then rewrites auth.json in place): events.jsonl (twice) and out/.hidden,
+        out/sub/deep.txt kept the OLD secret; only the new value would be redacted.
+      Repro B (stub puts the secret in last.json.result, then `: > /codex-home/auth.json`): the harness wrote a `VERDICT: PASS`
+        file whose `result:` line is the full secret into .swarm/verdicts/, no secret-leak skip, and the host auth file is left at 0 bytes.
+      Remedy verified: redacting run3's leftovers with the ORIGINAL auth file removes the secret from events.jsonl and out/ files;
+      taking the secret set from a pre-run snapshot (union with post-run) would have made Repro B a `secret-leak` skip.
+      (Filename-embedded secrets, e.g. `out/tok_FAKE...name`, are also not redacted -- lesser.)
+      Judgement: F1a is a plain counterexample to a universal statement in the brief; F1b is letter-compliant only if "$CODEX_AUTH" is read
+      at the end, which defeats the purpose stated in ruling CD-e (public archive). Both are fixable inside CD1's territory
+      (snapshot secrets before `compose run`; chmod u+rwX before redacting; treat a file that still cannot be rewritten as a failure).
+      Neither is covered by the worker's smoketest or the oracle (no read-only-file, no auth-rotation case).
+ Attacks on the rest of (b) -- all REFUTED (PASS):
+ - Excluded data reaching the copy. Fixture with names: spaces, `-dash/-rf`, `glob[1]`, `star*`, `..hidden`, unicode, invalid UTF-8 (0xff 0xfe), leading-dot dirs;
+   `tools.py copy` -> files.txt/excluded.txt correct, byte-order sorted, non-UTF-8 name round-trips. Segments data/.codex/.claude/.agents/.swarm*, basename
+   .env*/.pem/.key/AGENTS*.md all excluded by NAME without lstat. `data` as a tracked symlink to a real data dir (`ln -s ../realdata data`):
+   listed under excluded.txt, never followed, `grep -r REAL-DATA out` -> nothing. Nested untracked repo (with its own data/) and a real gitlink
+   submodule dir -> excluded as `nestedrepo/`, `subm/`. Newline in a name -> unsafe-tree (fail-closed).
+ - Symlinks: ->data/live.csv, ->src/../data/live.csv, chain a->b->data, chain to a policy-excluded file, ../../etc escape, loop, ->.git/config, ->.,
+   dir link, absolute: all `unsafe-tree` (rc=0). In-tree relative links and chains: copied as links. `.env -> /etc/passwd` and `data -> /etc` excluded, not followed.
+   Symlinked parent -> unsafe-tree. FIFO/socket never reach the candidate list (git omits them).
+ - Fingerprints: sidecar grammar identical to gate.sh check_fingerprint (same regex, last-line-wins for duplicates); excluded manifest path listed+skipped;
+   `deleted` present -> mismatch; abs/`..` manifest paths -> mismatch; MANIFEST_SHA256 = sha256(sidecar bytes) (b4e5.. matches the file).
+ - Mounts (read /proc/self/mountinfo from a probe stub, real run): exactly /out, /schema(ro), /work, /codex-home, /codex-home/auth.json,
+   /opt/codex/codex(ro), /opt/codex/codex-code-mode-host(ro) plus the runtime's own resolv.conf/hostname/hosts; no docker.sock, no /home, no host
+   module cache; Go run adds only /gomodcache (ro; `touch` -> Read-only file system). uid 1000:1000, CapEff 0, no default route, single eth0.
+ - Network: from the checker, direct TCP to 1.1.1.1:443, 8.8.8.8:53, 172.17.0.1:<host listener>, 192.168.1.1:80, a Cloudflare IP -> `Network is unreachable`;
+   DNS: getent example.com / chatgpt.com -> rc=2, raw UDP to 127.0.0.11 -> SERVFAIL, to 8.8.8.8/1.1.1.1 -> fail (no external forwarding).
+   Through the proxy (raw sockets): CONNECT to chatgpt.com:80/8443/22, IP literals (v4, v6, 127.0.0.1, 172.17.0.1), example.com, `chatgpt.com.:443`,
+   `xapi.openai.com`, `api.openai.com.evil.com`, `chatgpt.com@example.com`, `example.com%00.chatgpt.com`, `proxy:8888`, tab tricks -> 403 (Filtered/Access violation).
+   `example.com#@chatgpt.com:443` -> 200 but proxy.log shows the filter AND the connection used host "chatgpt.com" (consistent, no bypass).
+   Absolute-URI GET tricks with a host-side canary listener (`chatgpt.com@172.17.0.1:<p>`, `172.17.0.1:<p>@chatgpt.com`, `#`/`?`/`\` variants, Host-header
+   mismatch, pipelined second request, tinyproxy.stats, origin-form, HTTP/1.0): the canary saw exactly ONE hit -- my own host-side curl positive control;
+   proxy.log `Established connection to host` lines are only chatgpt.com/auth.openai.com/api.openai.com.
+ - Go subset (real dependency github.com/google/uuid v1.6.0 + a `replace => /abs/host/dir`): /gomodcache holds 48 entries / 252K, only uuid; nothing private;
+   `go build` rc=0 offline; go.mod/go.sum in /work byte-identical to the tree's; the host cache's dgallion1/* entries are info-only records (cannot be pulled).
+ - Verdict laundering: existing verdict never replaced (oracle + `-e || -L`), `ln` not `mv` for the write, skip replaced by a verdict removes the skip,
+   never a skip after a verdict. Usage: rc=2 and nothing written for [], [T], [T x], [T -1], [a/b 1], [../x 1], [. 1], [-x 1], [T 1 extra].
+ - Misclassification: `tools.py classify` -> item.completed{type:error,"quota"} = codex-error; nested turn.failed quota = quota; secret in an error message is
+   redacted in DETAIL; 6b: type=error, item.type=error (any case) -> unavailable; command_execution output, agent_message, turn.failed -> available (correct per brief).
+ - Verdict rendering: header-looking text in id/result/observations cannot forge a header (body is indented; `grep -n '^VERDICT|^FAMILY|^CHECKER|^---'`
+   finds only the real ones, and gate.sh's field_of is first-match); lone surrogate -> traceback -> container-error (fail-closed, tmp removed);
+   empty criteria / bad types / extra keys -> schema-invalid.
+ - Leftovers: after normal runs and after SIGTERM mid-run (exit 143, skip `container-error: terminated` written): no agents2-codex containers, networks, volumes, codex-check.*
+   temp dirs or watchdog processes; docker image count constant (26 -> 26 -> 26) across repeated runs; fixed-name images only. My oracle re-run left one dangling
+   tinyproxy image (the documented re-tag leak) which I removed by ID.
+
+CRITERION (c) only CD1-territory files exist/changed -- PASS
+ - `git status --short -uall`: the 14 CD1 files (swarm/codex-check.sh, swarm/codex/**, smoketest/codex/**) are the only ones outside foreign territory;
+   modified swarm/gate.sh, dashboard/**, smoketest/gate/**, SPEC.md are declared foreign/lead (mtimes 21:40-21:44, concurrent CD3). manifest CD1.1.files == 14 lines == the
+   14 untracked CD1 files; none is gitignored (`git check-ignore -v` on each: nothing). accept.sh (21:13) and the brief (21:07) predate the worker's files: untouched.
+   Nothing added to smoketest/gate/run_tests.sh. smoketest/codex never references the real auth or codex binary.
+
+EXTRAS beyond the brief -- none contradicts it (compatible hardening): task-id regex (bad id -> exit 2, nothing written); newline/CR names -> unsafe-tree (note: also fires
+ for a newline name under an excluded `data/`, i.e. skip instead of exclude -- fail-closed); symlinked parents -> unsafe-tree; abs/`..` manifest paths -> fingerprint-mismatch;
+ interrupted/harness-crash -> container-error skip (exit 130/143/rc, not 0); indented verdict body; 4 MiB last.json cap -> schema-invalid; non-regular last.json = absent;
+ nested repos/`.git` segment excluded; leading `/` stripped in exclude lines; invalid CODEX_TIMEOUT -> 1800; `docker compose version` also required.
+
+OBSERVATIONS (not grounds for FAIL)
+ O1. A `VERDICT: PASS` whose own criteria include `pass:false` is recorded as PASS (verdict/pass flags never cross-checked); a FAIL with empty evidence is recorded (brief
+     only guards PASS). `​` counts as non-empty evidence.
+ O2. Exclusion is by NAME only: a hard link (or copy) of an excluded file under another name is copied verbatim (fixture: `ln realdata/secret.csv notes-hardlink.txt`
+     -> content in /work). `.env*`/`.pem`/`.key` are BASENAME rules per the brief, so files inside a directory named `.env`/`x.pem` are copied; case variants (`.ENV`,
+     `Data/`) are not excluded; other credential names (id_rsa, .netrc, credentials.json, *.sqlite) rely on codex.exclude.
+ O3. codex.exclude semantics per brief but footguns: `private` (no slash) does not exclude `private/*`; `private/` matches only at the tree root (`x/private/n.txt`
+     copied); `./private/` matches nothing; a UTF-8 BOM defeats the first line.
+ O4. classify/6b scan every STRING value of error/turn.failed events, not only the message: `{"type":"error","message":"boom","thread_id":"019a4290-.."}` -> quota
+     (429 inside an id). Integer status fields are ignored.
+ O5. ORACLE BLIND SPOT: the suffix-lookalike probe `chatgpt.com.evil.invalid` cannot see a proxy filter missing the `$` anchor. Experiment: mutant filter `^chatgpt\.com`
+     (no `$`) -> `curl --proxy` to https://chatgpt.com.evil.invalid/ gives code=000 rc=56, identical to the correct proxy (the mutant's log shows
+     `opensock: opening connection to chatgpt.com.evil.invalid:443`, then NXDOMAIN). The shipped filter IS anchored (`api.openai.com.evil.com:443` -> 403 Filtered).
+     A resolvable lookalike or an assertion on proxy.log would close it.
+ O6. Oracle "P no host path visible" checks a hard-coded path list; the real mount set is only proven by my mountinfo read (clean).
+ O7. Proxy: plain-HTTP requests to the three allowlisted hosts on ANY port are forwarded (`GET http://chatgpt.com:<p>/` opens a connection to chatgpt.com:<p>); only CONNECT is
+     port-restricted (brief-conformant). `CONNECT chatgpt.com:0443` / `:+443` accepted (still 443).
+ O8. Container /etc/resolv.conf carries the host's DNS search domain (`otter-lungfish.ts.net`, the tailnet name); mountinfo exposes host path strings of the mount sources.
+ O9. No lock for two concurrent invocations at the same (T,A) (they share $AUD/out); parent-directory symlink checks are made at listing time only (final component uses
+     O_NOFOLLOW) -- exploitable only by a concurrent local writer to the tree.
+ O10. The `ln` "appeared meanwhile" branch still prints "wrote <verdict>" before exiting (cosmetic).

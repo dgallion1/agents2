@@ -1371,6 +1371,179 @@ test('critical-glob: reads EVERY manifest the gate\'s <task>.*.files glob matche
 });
 
 // ---------------------------------------------------------------------------
+// lane accounting (run CD, CD2) — mirrors gate.sh load_verdict. PASS/FAIL are
+// valid only from a CHECKER starting `checker-`; UPHOLD/OVERRULE only from one
+// starting `judge-` or exactly `boss`. Any other pairing is an INVALID verdict
+// file: excluded from the quorum, reported in errors[], and (at tiers 2/3)
+// blocking the row like every other invalid current-attempt file.
+// ---------------------------------------------------------------------------
+
+const pairingMessage = (verdict, checker) =>
+  `VERDICT ${verdict} not allowed from CHECKER '${checker}' ` +
+  `(PASS/FAIL come from checker-*; UPHOLD/OVERRULE from judge-* or boss)`;
+
+// [CHECKER, VERDICT] pairs that must be INVALID: wrong verdict class for the
+// prefix, exact identity boundaries (`boss-2`, `Boss`, bare `checker`/`judge`,
+// `checkerx-y`), and identities that may cast nothing.
+const INVALID_PAIRINGS = [
+  ['judge-x', 'PASS'],
+  ['judge-x', 'FAIL'],
+  ['boss', 'PASS'],
+  ['boss', 'FAIL'],
+  ['checker-rogue', 'UPHOLD'],
+  ['checker-rogue', 'OVERRULE'],
+  ['worker-coder', 'PASS'],
+  ['worker-coder', 'OVERRULE'],
+  ['lead', 'UPHOLD'],
+  ['checker', 'PASS'],
+  ['checkerx-y', 'PASS'],
+  ['judge', 'OVERRULE'],
+  ['boss-2', 'OVERRULE'],
+  ['Boss', 'OVERRULE'],
+];
+
+test('lane accounting: every mis-paired VERDICT/CHECKER is excluded and reported naming both', () => {
+  const dir = makeSwarmDir();
+  const ids = INVALID_PAIRINGS.map((_, i) => `lp${i}`);
+  writeLedger(dir, ids.map((id) => [id, '2', 'tests', 'checking', '1', 'w', 'r']));
+  INVALID_PAIRINGS.forEach(([checker, verdict], i) => {
+    writeVerdict(dir, { task: ids[i], attempt: 1, checker: 'checker-tests', verdict: 'PASS', family: 'anthropic' });
+    writeVerdict(dir, { task: ids[i], attempt: 1, checker, verdict, family: 'impact' });
+  });
+  const state = parse(dir);
+  INVALID_PAIRINGS.forEach(([checker, verdict], i) => {
+    const t = taskOf(state, ids[i]);
+    assert.deepEqual(t.verdicts.map((v) => v.checker), ['checker-tests'], `${verdict} from '${checker}' must be excluded`);
+    const hit = state.errors.find((e) => e.file === `verdicts/${ids[i]}.1.${checker}.verdict`);
+    assert.ok(hit, `${verdict} from '${checker}' must be reported in errors[]`);
+    assert.equal(hit.message, pairingMessage(verdict, checker));
+    assert.deepEqual(t.invalidVerdicts, [`${ids[i]}.1.${checker}.verdict`], `${verdict} from '${checker}' must be listed as invalid`);
+  });
+});
+
+test('lane accounting: the valid pairings are admitted (checker PASS/FAIL, judge and boss UPHOLD/OVERRULE)', () => {
+  const dir = makeSwarmDir();
+  const ok = [
+    ['checker-tests', 'PASS'],
+    ['checker-second', 'FAIL'],
+    ['checker-a', 'FAIL'],
+    ['judge-x', 'UPHOLD'],
+    ['judge-y', 'OVERRULE'],
+    ['boss', 'UPHOLD'],
+    ['boss', 'OVERRULE'],
+  ];
+  const ids = ok.map((_, i) => `lv${i}`);
+  writeLedger(dir, ids.map((id) => [id, '2', 'tests', 'checking', '1', 'w', 'r']));
+  ok.forEach(([checker, verdict], i) => {
+    writeVerdict(dir, { task: ids[i], attempt: 1, checker, verdict, family: 'impact' });
+  });
+  const state = parse(dir);
+  ok.forEach(([checker, verdict], i) => {
+    assert.deepEqual(taskOf(state, ids[i]).verdicts.map((v) => `${v.checker}:${v.verdict}`), [`${checker}:${verdict}`]);
+    assert.ok(!state.errors.some((e) => e.file.includes(`${ids[i]}.1.`)), `${verdict} from '${checker}' is valid`);
+  });
+});
+
+test('lane accounting: a judge-named PASS cannot supply the second lane (GH-29f) — blocked, naming the invalid file', () => {
+  const dir = makeSwarmDir();
+  writeLedger(dir, [['la-t3', '3', 'tests', 'accepted', '1', 'w', 'r'], ['la-t2', '2', 'tests,second', 'accepted', '1', 'w', 'r']]);
+  writeManifest(dir, 'la-t3', 1);
+  writeVerdicts(dir, 'la-t3', 1, [['checker-tests', 'anthropic', 'PASS']]);
+  // the reproduced file: judge-named, PASS, adversarial lane, NO MANIFEST_SHA256
+  writeVerdict(dir, { task: 'la-t3', attempt: 1, checker: 'judge-x', verdict: 'PASS', family: 'adversarial', fingerprint: false });
+  writeOracle(dir, 'la-t3');
+  writeFile(dir, 'tier3/la-t3/oracle.1.log', 'ORACLE PASS\n');
+  // tier 2 with `second` named: two same-lane checker PASSes + a judge-named PASS in the other lane
+  writeVerdicts(dir, 'la-t2', 1, [
+    ['checker-tests', 'anthropic', 'PASS'],
+    ['checker-second', 'anthropic', 'PASS'],
+    ['judge-x', 'adversarial', 'PASS'],
+  ]);
+  const state = parse(dir);
+  for (const id of ['la-t3', 'la-t2']) {
+    assert.equal(taskOf(state, id).derived.state, 'blocked', id);
+    assert.deepEqual(mismatchesOf(state, id), [
+      `task ${id}: ledger says accepted but invalid verdict file(s) at attempt 1: ${id}.1.judge-x.verdict`,
+    ]);
+    assert.ok(
+      state.errors.some((e) => e.file === `verdicts/${id}.1.judge-x.verdict` && e.message === pairingMessage('PASS', 'judge-x')),
+      id
+    );
+  }
+});
+
+test('lane accounting: tier 1 loads only the named checkers — an unnamed mis-paired stray does not block; a named file casting OVERRULE does', () => {
+  const dir = makeSwarmDir();
+  writeLedger(dir, [
+    ['la-t1s', '1', 'tests', 'accepted', '1', 'w', 'r'],
+    ['la-t1n', '1', 'tests', 'accepted', '1', 'w', 'r'],
+  ]);
+  writeVerdicts(dir, 'la-t1s', 1, [['checker-tests', 'anthropic', 'PASS'], ['judge-x', 'adversarial', 'PASS']]);
+  writeVerdicts(dir, 'la-t1n', 1, [['checker-tests', 'anthropic', 'OVERRULE']]);
+  const state = parse(dir);
+  assert.equal(taskOf(state, 'la-t1s').derived.state, 'accepted');
+  assert.equal(taskOf(state, 'la-t1n').derived.state, 'blocked');
+  assert.ok(state.errors.some((e) => e.file === 'verdicts/la-t1n.1.checker-tests.verdict' && e.message === pairingMessage('OVERRULE', 'checker-tests')));
+});
+
+test('lane accounting: a checker-cast UPHOLD/OVERRULE never joins the judge panel; a boss UPHOLD does', () => {
+  const dir = makeSwarmDir();
+  writeLedger(dir, [
+    ['la-panel', '2', 'tests', 'accepted', '1', 'w', 'r'],
+    ['la-boss', '2', 'tests', 'accepted', '1', 'w', 'r'],
+  ]);
+  // two judge OVERRULEs + a checker-cast OVERRULE: the third vote is invalid
+  writeVerdicts(dir, 'la-panel', 1, [
+    ['checker-tests', 'anthropic', 'FAIL'],
+    ['judge-claude', 'anthropic', 'OVERRULE'],
+    ['judge-standards', 'adversarial', 'OVERRULE'],
+    ['checker-rogue', 'impact', 'OVERRULE'],
+  ]);
+  // two judge OVERRULEs + a boss UPHOLD: three valid votes, OVERRULE majority
+  writeVerdicts(dir, 'la-boss', 1, [
+    ['checker-tests', 'anthropic', 'FAIL'],
+    ['judge-standards', 'adversarial', 'OVERRULE'],
+    ['judge-impact', 'impact', 'OVERRULE'],
+    ['boss', 'anthropic', 'UPHOLD'],
+  ]);
+  const state = parse(dir);
+  assert.equal(taskOf(state, 'la-panel').derived.state, 'blocked');
+  assert.equal(taskOf(state, 'la-boss').derived.state, 'accepted');
+});
+
+test('lane accounting: a judge- or boss-cast FAIL is not a FAIL, and a checker-cast OVERRULE is not a vote — escalation triggers follow', () => {
+  const dir = makeSwarmDir();
+  writeLedger(dir, [
+    ['la-jf', '1', 'a11y', 'accepted', '2', 'w', 'r'],
+    ['la-bf', '1', 'a11y', 'accepted', '2', 'w', 'r'],
+    ['la-cv', '1', 'a11y', 'accepted', '2', 'w', 'r'],
+    ['la-bo', '1', 'a11y', 'accepted', '2', 'w', 'r'],
+  ]);
+  const attempt2 = [['checker-second', 'adversarial', 'FAIL'], ['checker-a11y', 'anthropic', 'PASS']];
+  // la-jf / la-bf: attempt 1's only FAIL is judge-/boss-cast (invalid), so attempt 2's FAIL is not the second in a row
+  writeVerdicts(dir, 'la-jf', 1, [['judge-x', 'adversarial', 'FAIL']]);
+  writeVerdicts(dir, 'la-bf', 1, [['boss', 'anthropic', 'FAIL']]);
+  // la-cv: attempt 1's genuine FAIL is "set aside" by two judges and a checker-cast OVERRULE — only two valid votes, so it stays unresolved
+  writeVerdicts(dir, 'la-cv', 1, [
+    ['checker-second', 'adversarial', 'FAIL'],
+    ['judge-claude', 'anthropic', 'OVERRULE'],
+    ['judge-standards', 'adversarial', 'OVERRULE'],
+    ['checker-rogue', 'impact', 'OVERRULE'],
+  ]);
+  // la-bo: `boss-2` / `Boss` cast nothing, so no checker-overruled trigger
+  writeVerdicts(dir, 'la-bo', 1, [['boss-2', 'anthropic', 'OVERRULE'], ['Boss', 'adversarial', 'OVERRULE']]);
+  for (const id of ['la-jf', 'la-bf', 'la-cv', 'la-bo']) writeVerdicts(dir, id, 2, attempt2);
+  const state = parse(dir);
+  assert.equal(taskOf(state, 'la-jf').derived.state, 'accepted');
+  assert.equal(taskOf(state, 'la-bf').derived.state, 'accepted');
+  assert.equal(taskOf(state, 'la-bo').derived.state, 'accepted');
+  assert.equal(taskOf(state, 'la-cv').derived.state, 'flagged');
+  assert.deepEqual(mismatchesOf(state, 'la-cv'), [
+    'task la-cv: ledger says accepted but escalation trigger (two-consecutive-fails) and no flag — run gate.sh escalate-scan',
+  ]);
+});
+
+// ---------------------------------------------------------------------------
 // differential run against swarm/gate.sh — the anti-lie property, tested
 // mechanically: for every fixture below (all rows ledgered 'accepted'),
 // `gate.sh check <task>` exits 0 exactly when derived.state === 'accepted'.
@@ -1732,6 +1905,141 @@ const DIFFERENTIAL_SCENARIOS = [
     writeFile(dir, 'critical.globs', '# header\r\nswarm/**\rlib/**\r\n');
     return ['e21', 'e21b'];
   }],
+
+  // --- lane accounting (run CD, CD2): who may cast which verdict -------------
+  // Every PASS below is fingerprinted (writeVerdict stamps it), so a rejection
+  // can only come from the VERDICT/CHECKER pairing rule, never from a missing
+  // MANIFEST_SHA256. The reproduced hole (GH-29f) is the first scenario.
+  ['tier-3 checker PASS + judge-named PASS supplying the second lane (GH-29f, no fingerprint)', (dir) => {
+    writeLedger(dir, [['la1', '3', 'tests', 'accepted', '1', 'w', 'r']]);
+    writeVerdicts(dir, 'la1', 1, [['checker-tests', 'anthropic', 'PASS']]);
+    writeVerdict(dir, { task: 'la1', attempt: 1, checker: 'judge-x', verdict: 'PASS', family: 'adversarial', fingerprint: false });
+    writeOracle(dir, 'la1');
+    writeFile(dir, 'tier3/la1/oracle.1.log', 'ORACLE PASS\n');
+    return ['la1'];
+  }],
+  ['tier-3 checker PASS + fingerprinted judge-named PASS supplying the second lane', (dir) => {
+    writeLedger(dir, [['la2', '3', 'tests', 'accepted', '1', 'w', 'r']]);
+    writeVerdicts(dir, 'la2', 1, [['checker-tests', 'anthropic', 'PASS'], ['judge-x', 'adversarial', 'PASS']]);
+    writeOracle(dir, 'la2');
+    writeFile(dir, 'tier3/la2/oracle.1.log', 'ORACLE PASS\n');
+    return ['la2'];
+  }],
+  ['tier-2 second named, same-lane checker PASSes + judge-named PASS in the other lane', (dir) => {
+    writeLedger(dir, [['la3', '2', 'tests,second', 'accepted', '1', 'w', 'r']]);
+    writeVerdicts(dir, 'la3', 1, [
+      ['checker-tests', 'anthropic', 'PASS'],
+      ['checker-second', 'anthropic', 'PASS'],
+      ['judge-x', 'adversarial', 'PASS'],
+    ]);
+    return ['la3'];
+  }],
+  ['tier-3 two genuine checker lanes (control)', (dir) => {
+    writeLedger(dir, [['la4', '3', 'tests,second', 'accepted', '1', 'w', 'r']]);
+    writeDualLanePasses(dir, 'la4', 1);
+    writeOracle(dir, 'la4');
+    writeFile(dir, 'tier3/la4/oracle.1.log', 'ORACLE PASS\n');
+    return ['la4'];
+  }],
+  // the allow-list with exact identity boundaries, each beside a genuine PASS
+  ...INVALID_PAIRINGS.map(([who, v], i) => [`tier-2 ${v} from '${who}' beside a checker PASS`, (dir) => {
+    const t = `lb${i}`;
+    writeLedger(dir, [[t, '2', 'tests', 'accepted', '1', 'w', 'r']]);
+    writeVerdicts(dir, t, 1, [['checker-tests', 'anthropic', 'PASS'], [who, 'impact', v]]);
+    return [t];
+  }]),
+  ['tier-1 named checker file casting OVERRULE', (dir) => {
+    writeLedger(dir, [['lc1', '1', 'tests', 'accepted', '1', 'w', 'r']]);
+    writeVerdicts(dir, 'lc1', 1, [['checker-tests', 'anthropic', 'OVERRULE']]);
+    return ['lc1'];
+  }],
+  ['tier-1 named checker PASS + unnamed mis-paired judge-named PASS (control: never read)', (dir) => {
+    writeLedger(dir, [['lc2', '1', 'tests', 'accepted', '1', 'w', 'r']]);
+    writeVerdicts(dir, 'lc2', 1, [['checker-tests', 'anthropic', 'PASS'], ['judge-x', 'adversarial', 'PASS']]);
+    return ['lc2'];
+  }],
+  ['tier-3 two genuine lanes + a checker-cast UPHOLD', (dir) => {
+    writeLedger(dir, [['lc3', '3', 'tests,second', 'accepted', '1', 'w', 'r']]);
+    writeDualLanePasses(dir, 'lc3', 1);
+    writeVerdicts(dir, 'lc3', 1, [['checker-a11y', 'impact', 'UPHOLD']]);
+    writeOracle(dir, 'lc3');
+    writeFile(dir, 'tier3/lc3/oracle.1.log', 'ORACLE PASS\n');
+    return ['lc3'];
+  }],
+  ['tier-2 mis-paired file at an OLD attempt beside a genuine current PASS (control)', (dir) => {
+    writeLedger(dir, [['lc4', '2', 'tests', 'accepted', '2', 'w', 'r']]);
+    writeVerdicts(dir, 'lc4', 1, [['judge-x', 'adversarial', 'PASS']]);
+    writeVerdicts(dir, 'lc4', 2, [['checker-tests', 'anthropic', 'PASS']]);
+    return ['lc4'];
+  }],
+  // the panel that sets a FAIL aside
+  ['tier-2 FAIL, two judge OVERRULEs + a checker-cast OVERRULE (two valid votes)', (dir) => {
+    writeLedger(dir, [['ld1', '2', 'tests', 'accepted', '1', 'w', 'r']]);
+    writeVerdicts(dir, 'ld1', 1, [
+      ['checker-tests', 'anthropic', 'FAIL'],
+      ['judge-claude', 'anthropic', 'OVERRULE'],
+      ['judge-standards', 'adversarial', 'OVERRULE'],
+      ['checker-rogue', 'impact', 'OVERRULE'],
+    ]);
+    return ['ld1'];
+  }],
+  ['tier-2 FAIL, two judge OVERRULEs + a boss UPHOLD (three valid votes, control)', (dir) => {
+    writeLedger(dir, [['ld2', '2', 'tests', 'accepted', '1', 'w', 'r']]);
+    writeVerdicts(dir, 'ld2', 1, [
+      ['checker-tests', 'anthropic', 'FAIL'],
+      ['judge-standards', 'adversarial', 'OVERRULE'],
+      ['judge-impact', 'impact', 'OVERRULE'],
+      ['boss', 'anthropic', 'UPHOLD'],
+    ]);
+    return ['ld2'];
+  }],
+  // escalation mirrors: FAILs and OVERRULEs cast by the wrong identities
+  ['tier-1 attempt-1 judge-cast FAIL, attempt-2 genuine FAIL beside the named PASS', (dir) => {
+    writeLedger(dir, [['le1', '1', 'a11y', 'accepted', '2', 'w', 'r']]);
+    writeVerdicts(dir, 'le1', 1, [['judge-x', 'adversarial', 'FAIL']]);
+    writeVerdicts(dir, 'le1', 2, [['checker-second', 'adversarial', 'FAIL'], ['checker-a11y', 'anthropic', 'PASS']]);
+    return ['le1'];
+  }],
+  ['tier-1 attempt-1 boss-cast FAIL, attempt-2 genuine FAIL beside the named PASS', (dir) => {
+    writeLedger(dir, [['le2', '1', 'a11y', 'accepted', '2', 'w', 'r']]);
+    writeVerdicts(dir, 'le2', 1, [['boss', 'anthropic', 'FAIL']]);
+    writeVerdicts(dir, 'le2', 2, [['checker-second', 'adversarial', 'FAIL'], ['checker-a11y', 'anthropic', 'PASS']]);
+    return ['le2'];
+  }],
+  ['tier-1 attempt-1 FAIL "set aside" with a checker-cast OVERRULE as the third vote, genuine FAIL at attempt 2', (dir) => {
+    writeLedger(dir, [['le3', '1', 'a11y', 'accepted', '2', 'w', 'r']]);
+    writeVerdicts(dir, 'le3', 1, [
+      ['checker-second', 'adversarial', 'FAIL'],
+      ['judge-claude', 'anthropic', 'OVERRULE'],
+      ['judge-standards', 'adversarial', 'OVERRULE'],
+      ['checker-rogue', 'impact', 'OVERRULE'],
+    ]);
+    writeVerdicts(dir, 'le3', 2, [['checker-second', 'adversarial', 'FAIL'], ['checker-a11y', 'anthropic', 'PASS']]);
+    return ['le3'];
+  }],
+  ['tier-1 attempt-1 FAIL set aside by two judge OVERRULEs + a boss UPHOLD, genuine FAIL at attempt 2 (control)', (dir) => {
+    writeLedger(dir, [['le4', '1', 'a11y', 'accepted', '2', 'w', 'r']]);
+    writeVerdicts(dir, 'le4', 1, [
+      ['checker-second', 'adversarial', 'FAIL'],
+      ['judge-standards', 'adversarial', 'OVERRULE'],
+      ['judge-impact', 'impact', 'OVERRULE'],
+      ['boss', 'anthropic', 'UPHOLD'],
+    ]);
+    writeVerdicts(dir, 'le4', 2, [['checker-second', 'adversarial', 'FAIL'], ['checker-a11y', 'anthropic', 'PASS']]);
+    return ['le4'];
+  }],
+  ['tier-1 attempt-1 `boss-2` / `Boss` OVERRULE cast nothing, so no checker-overruled trigger', (dir) => {
+    writeLedger(dir, [['le5', '1', 'a11y', 'accepted', '2', 'w', 'r']]);
+    writeVerdicts(dir, 'le5', 1, [['boss-2', 'anthropic', 'OVERRULE'], ['Boss', 'adversarial', 'OVERRULE']]);
+    writeVerdicts(dir, 'le5', 2, [['checker-a11y', 'anthropic', 'PASS']]);
+    return ['le5'];
+  }],
+  ['tier-1 attempt-1 genuine boss OVERRULE still triggers checker-overruled (control)', (dir) => {
+    writeLedger(dir, [['le6', '1', 'a11y', 'accepted', '2', 'w', 'r']]);
+    writeVerdicts(dir, 'le6', 1, [['boss', 'anthropic', 'OVERRULE']]);
+    writeVerdicts(dir, 'le6', 2, [['checker-a11y', 'anthropic', 'PASS']]);
+    return ['le6'];
+  }],
 ];
 
 test('differential: gate.sh check agrees with derived.state for every fixture', () => {
@@ -1749,6 +2057,776 @@ test('differential: gate.sh check agrees with derived.state for every fixture', 
         `${name}: gate.sh check ${taskId} ${gateOk ? 'accepts' : 'rejects'} but derived.state is '${task.derived.state}'`
       );
     }
+  }
+});
+
+// ---------------------------------------------------------------------------
+// critical-glob evaluation fails CLOSED (run CD, CD3) — mirrors gate.sh
+// manifest_hits_glob. critical.globs, test.globs and every <task>.*.files
+// manifest that is PRESENT but not a readable regular file of valid UTF-8 make
+// the evaluation UNREADABLE: it counts as a hit with the reason
+// `critical-glob-unreadable` (never "no hit"), so `accepted` is refused exactly
+// as the gate refuses it. Absent inputs keep their old meaning.
+// ---------------------------------------------------------------------------
+
+const UNREADABLE_TOKEN = 'critical-glob-unreadable';
+const BAD_UTF8 = Buffer.from([0x73, 0x77, 0xff, 0xfe, 0x2f, 0x2a, 0x2a, 0x0a]); // "sw\xff\xfe/**\n"
+const IS_ROOT = typeof process.getuid === 'function' && process.getuid() === 0;
+const NEEDS_NON_ROOT = { skip: IS_ROOT ? 'mode-000 fixtures are readable by root' : false };
+
+// A row that would otherwise accept (PASS + fingerprint at tier 1/2), whose one
+// manifest matches nothing critical, under critical.globs = swarm/**.
+function acceptableRow(dir, id, tier = 2) {
+  writeLedger(dir, [[id, String(tier), 'tests', 'accepted', '1', 'w', 'r']]);
+  writeManifest(dir, id, 1, ['src/ok.txt']);
+  writeVerdicts(dir, id, 1, [['checker-tests', 'anthropic', 'PASS']]);
+  writeFile(dir, 'critical.globs', 'swarm/**\n');
+}
+
+// [name, break-one-input(dir, id), skip-options]
+const UNREADABLE_INPUTS = [
+  ['critical.globs is a directory', (d) => {
+    fs.rmSync(path.join(d, 'critical.globs')); fs.mkdirSync(path.join(d, 'critical.globs'));
+  }],
+  ['critical.globs is a dangling symlink', (d) => {
+    fs.rmSync(path.join(d, 'critical.globs')); fs.symlinkSync('nowhere.globs', path.join(d, 'critical.globs'));
+  }],
+  ['critical.globs is a symlink loop', (d) => {
+    fs.rmSync(path.join(d, 'critical.globs')); fs.symlinkSync('critical.globs', path.join(d, 'critical.globs'));
+  }],
+  ['critical.globs is not valid UTF-8', (d) => { writeFile(d, 'critical.globs', BAD_UTF8); }],
+  ['critical.globs is mode 000', (d) => { fs.chmodSync(path.join(d, 'critical.globs'), 0o000); }, NEEDS_NON_ROOT],
+  ['test.globs is a directory (not the defaults)', (d) => { fs.mkdirSync(path.join(d, 'test.globs')); }],
+  ['test.globs is not valid UTF-8', (d) => { writeFile(d, 'test.globs', BAD_UTF8); }],
+  ['test.globs is mode 000', (d) => { writeFile(d, 'test.globs', 'x\n'); fs.chmodSync(path.join(d, 'test.globs'), 0o000); }, NEEDS_NON_ROOT],
+  ['test.globs is a FIFO (never opened)', (d) => {
+    const r = spawnSync('mkfifo', [path.join(d, 'test.globs')]);
+    assert.equal(r.status, 0, 'mkfifo is needed for this case');
+  }],
+  ['the current attempt manifest is not valid UTF-8', (d, id) => { writeFile(d, `manifests/${id}.1.files`, BAD_UTF8); }],
+  ['the current attempt manifest is mode 000', (d, id) => { fs.chmodSync(path.join(d, `manifests/${id}.1.files`), 0o000); }, NEEDS_NON_ROOT],
+  ['an OLDER attempt manifest is not valid UTF-8', (d, id) => { writeFile(d, `manifests/${id}.0.files`, BAD_UTF8); }],
+  ['an OLDER attempt manifest is mode 000', (d, id) => { writeFile(d, `manifests/${id}.0.files`, 'x\n'); fs.chmodSync(path.join(d, `manifests/${id}.0.files`), 0o000); }, NEEDS_NON_ROOT],
+  ['a directory matches <task>.*.files', (d, id) => { fs.mkdirSync(path.join(d, `manifests/${id}.0.files`)); }],
+  ['a dangling symlink matches <task>.*.files', (d, id) => { fs.symlinkSync('nowhere', path.join(d, `manifests/${id}.0.files`)); }],
+  ['the manifests directory cannot be listed (mode 000)', (d) => { fs.chmodSync(path.join(d, 'manifests'), 0o000); }, NEEDS_NON_ROOT],
+];
+
+// Everything a mode-000 fixture or a FIFO leaves behind: make it deletable,
+// then delete this test's own directory.
+function disposeFixture(dir) {
+  spawnSync('chmod', ['-R', 'u+rwX', dir]);
+  fs.rmSync(dir, { recursive: true, force: true });
+}
+
+// parse() in a child with a hard timeout: an implementation that opens a FIFO
+// blocks forever, and a synchronous parse() cannot be interrupted in-process.
+const PARSE_MJS = fileURLToPath(new URL('../lib/parse.mjs', import.meta.url));
+function parseInChild(dir) {
+  const r = spawnSync(
+    process.execPath,
+    ['--input-type=module', '-e',
+      `import { parse } from ${JSON.stringify(new URL(`file://${PARSE_MJS}`).href)};` +
+      `process.stdout.write(JSON.stringify(parse(${JSON.stringify(dir)})));`],
+    { encoding: 'utf8', timeout: 20000 }
+  );
+  assert.equal(r.status, 0, `parse() must neither throw nor block: ${r.error ?? ''}${r.stderr}`);
+  return JSON.parse(r.stdout);
+}
+
+for (const [name, breakInput, opts] of UNREADABLE_INPUTS) {
+  test(`unreadable, fail closed (parse): ${name} -> flagged with ${UNREADABLE_TOKEN}, never no hit`, opts ?? {}, () => {
+    const dir = makeSwarmDir();
+    try {
+      acceptableRow(dir, 'uf');
+      breakInput(dir, 'uf');
+      const state = parseInChild(dir);
+      const task = state.tasks.find((t) => t.id === 'uf');
+      assert.equal(task.derived.state, 'flagged');
+      const msgs = state.errors.filter((e) => e.message.startsWith('task uf:')).map((e) => e.message);
+      assert.deepEqual(msgs, [
+        `task uf: ledger says accepted but escalation trigger (${UNREADABLE_TOKEN}) and no flag — run gate.sh escalate-scan`,
+      ]);
+    } finally {
+      disposeFixture(dir);
+    }
+  });
+}
+
+test('unreadable, fail closed (parse): an unreadable input beats a real critical-glob hit', () => {
+  const dir = makeSwarmDir();
+  try {
+    writeLedger(dir, [['ub', '2', 'tests', 'accepted', '2', 'w', 'r']]);
+    writeManifest(dir, 'ub', 2, ['swarm/x.sh']); // a genuine hit ...
+    writeVerdicts(dir, 'ub', 2, [['checker-tests', 'anthropic', 'PASS']]);
+    writeFile(dir, 'critical.globs', 'swarm/**\n');
+    writeFile(dir, 'manifests/ub.1.files', BAD_UTF8); // ... beside one nobody can read
+    const state = parse(dir);
+    assert.equal(taskOf(state, 'ub').derived.state, 'flagged');
+    assert.deepEqual(mismatchesOf(state, 'ub'), [
+      `task ub: ledger says accepted but escalation trigger (${UNREADABLE_TOKEN}) and no flag — run gate.sh escalate-scan`,
+    ]);
+  } finally {
+    disposeFixture(dir);
+  }
+});
+
+test('unreadable, fail closed (parse): absent and clean inputs keep their old meaning (controls)', () => {
+  const dir = makeSwarmDir();
+  try {
+    writeLedger(dir, [
+      ['uc-absent', '2', 'tests', 'accepted', '1', 'w', 'r'],
+      ['uc-clean', '2', 'tests', 'accepted', '1', 'w', 'r'],
+      ['uc-nomanifest', '2', 'tests', 'accepted', '1', 'w', 'r'],
+      ['uc-utf8', '2', 'tests', 'accepted', '1', 'w', 'r'],
+    ]);
+    for (const id of ['uc-absent', 'uc-clean', 'uc-utf8']) {
+      writeManifest(dir, id, 1, [id === 'uc-utf8' ? 'docs/café.md' : 'src/ok.txt']);
+      writeVerdicts(dir, id, 1, [['checker-tests', 'anthropic', 'PASS']]);
+    }
+    // No critical.globs: absent, never unreadable.
+    assert.equal(taskOf(parse(dir), 'uc-absent').derived.state, 'accepted');
+    // A directory at critical.globs would be unreadable — but only for a row
+    // that has started: uc-nomanifest has no manifest, so it is never flagged.
+    fs.mkdirSync(path.join(dir, 'critical.globs'));
+    const withDir = parse(dir);
+    assert.equal(taskOf(withDir, 'uc-nomanifest').derived.state, 'blocked');
+    assert.doesNotMatch(mismatchesOf(withDir, 'uc-nomanifest').join(' '), /unreadable/);
+    assert.equal(taskOf(withDir, 'uc-clean').derived.state, 'flagged');
+    fs.rmdirSync(path.join(dir, 'critical.globs'));
+    // Readable, valid UTF-8 (BOM, CRLF, non-ASCII manifest path): read, not unreadable.
+    writeFile(dir, 'critical.globs', Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), Buffer.from('swarm/**\r\n')]));
+    writeFile(dir, 'test.globs', 'nomatch\n');
+    const clean = parse(dir);
+    for (const id of ['uc-clean', 'uc-utf8']) assert.equal(taskOf(clean, id).derived.state, 'accepted', id);
+    assert.deepEqual(clean.errors.filter((e) => /unreadable/.test(e.message)), []);
+    // A symlink to a readable critical.globs is a regular file after following it.
+    fs.rmSync(path.join(dir, 'critical.globs'));
+    writeFile(dir, 'real.globs', 'swarm/**\n');
+    fs.symlinkSync('real.globs', path.join(dir, 'critical.globs'));
+    assert.equal(taskOf(parse(dir), 'uc-clean').derived.state, 'accepted');
+  } finally {
+    disposeFixture(dir);
+  }
+});
+
+test('unreadable, fail closed (parse): tier 3 is never blocked inline (target tier is capped at 3)', () => {
+  const dir = makeSwarmDir();
+  try {
+    writeLedger(dir, [['u3', '3', 'tests,second', 'accepted', '1', 'w', 'r']]);
+    writeDualLanePasses(dir, 'u3', 1);
+    writeOracle(dir, 'u3');
+    writeFile(dir, 'tier3/u3/oracle.1.log', 'ORACLE PASS\n');
+    writeFile(dir, 'critical.globs', BAD_UTF8);
+    assert.equal(taskOf(parse(dir), 'u3').derived.state, 'accepted');
+  } finally {
+    disposeFixture(dir);
+  }
+});
+
+// The CURRENT attempt's manifest and sidecar must not make parse() throw
+// (today's readFileIfExists rethrows EACCES/EISDIR -> an HTTP 500 upstream).
+// gate.sh check_fingerprint tests `[[ -f ]]` and reads both, so it refuses the
+// row either way; the dashboard's derived state must agree.
+const CURRENT_EVIDENCE_KINDS = [
+  ['the current manifest is mode 000', (d, id) => { fs.chmodSync(path.join(d, `manifests/${id}.1.files`), 0o000); }, NEEDS_NON_ROOT],
+  ['the current manifest is a directory', (d, id) => {
+    fs.rmSync(path.join(d, `manifests/${id}.1.files`)); fs.mkdirSync(path.join(d, `manifests/${id}.1.files`));
+  }],
+  ['the current sidecar is mode 000', (d, id) => { fs.chmodSync(path.join(d, `manifests/${id}.1.sha256`), 0o000); }, NEEDS_NON_ROOT],
+  ['the current sidecar is a directory', (d, id) => {
+    fs.rmSync(path.join(d, `manifests/${id}.1.sha256`)); fs.mkdirSync(path.join(d, `manifests/${id}.1.sha256`));
+  }],
+  ['the current sidecar is a FIFO (never opened)', (d, id) => {
+    fs.rmSync(path.join(d, `manifests/${id}.1.sha256`));
+    assert.equal(spawnSync('mkfifo', [path.join(d, `manifests/${id}.1.sha256`)]).status, 0);
+  }],
+  ['the current manifest is a dangling symlink', (d, id) => {
+    fs.rmSync(path.join(d, `manifests/${id}.1.files`)); fs.symlinkSync('nowhere', path.join(d, `manifests/${id}.1.files`));
+  }],
+];
+for (const [name, breakInput, opts] of CURRENT_EVIDENCE_KINDS) {
+  test(`unreadable, fail closed (parse): ${name} -> parse() does not throw and the row is blocked`, opts ?? {}, () => {
+    const dir = makeSwarmDir();
+    try {
+      writeLedger(dir, [['ue', '2', 'tests', 'accepted', '1', 'w', 'r']]);
+      writeManifest(dir, 'ue', 1, ['src/ok.txt']);
+      writeVerdicts(dir, 'ue', 1, [['checker-tests', 'anthropic', 'PASS']]);
+      breakInput(dir, 'ue');
+      const state = parseInChild(dir);
+      const task = state.tasks.find((t) => t.id === 'ue');
+      assert.equal(task.derived.state, 'blocked');
+      assert.equal(gateCheck(dir, 'ue'), false, 'gate.sh check refuses the same row');
+    } finally {
+      disposeFixture(dir);
+    }
+  });
+}
+
+// The anti-lie property over every unreadable kind, at tiers 1 and 2: the gate
+// refuses inline, names critical-glob-unreadable on stdout, prints ONE
+// `unreadable` stderr line, and derived.state agrees with the mismatch naming
+// the same reason.
+function gateRun(swarmDir, taskId, env = {}) {
+  const res = spawnSync('bash', [GATE_SH, 'check', taskId], {
+    env: { ...process.env, SWARM_DIR: swarmDir, SWARM_TREE: path.join(swarmDir, 'tree'), ...env },
+    encoding: 'utf8',
+    timeout: 30000,
+  });
+  assert.notEqual(res.status, null, `gate.sh did not finish: ${res.error}`);
+  assert.ok(res.status === 0 || res.status === 1, `gate.sh exit ${res.status}: ${res.stdout}${res.stderr}`);
+  return { ok: res.status === 0, out: res.stdout.trim(), err: res.stderr.trim() };
+}
+for (const [name, breakInput, opts] of UNREADABLE_INPUTS) {
+  test(`unreadable, fail closed (differential): ${name} -> gate check and derived.state both refuse, naming ${UNREADABLE_TOKEN}`, opts ?? {}, () => {
+    for (const tier of [1, 2]) {
+      const dir = makeSwarmDir();
+      try {
+        const id = `ud${tier}`;
+        acceptableRow(dir, id, tier);
+        breakInput(dir, id);
+        const g = gateRun(dir, id);
+        const state = parseInChild(dir);
+        const task = state.tasks.find((t) => t.id === id);
+        const where = `tier ${tier}: gate ${g.ok ? 'accepts' : 'rejects'}, dashboard '${task.derived.state}' (${g.out})`;
+        assert.equal(g.ok, false, `the gate must refuse (${where})`);
+        assert.equal(task.derived.state === 'accepted', g.ok, where);
+        assert.ok(g.out.includes(UNREADABLE_TOKEN), `the gate's FAIL line names the reason: ${g.out}`);
+        assert.equal(g.err.split('\n').filter((l) => /unreadable/i.test(l)).length, 1, `one unreadable stderr line: ${g.err}`);
+        const msgs = state.errors.filter((e) => e.message.startsWith(`task ${id}:`)).map((e) => e.message).join(' | ');
+        assert.ok(msgs.includes(UNREADABLE_TOKEN), `the dashboard mismatch names the reason: ${msgs}`);
+      } finally {
+        disposeFixture(dir);
+      }
+    }
+  });
+}
+
+test('unreadable, fail closed (differential): valid inputs behave exactly as before, non-ASCII UTF-8 included, under LC_ALL=C', () => {
+  const dir = makeSwarmDir();
+  try {
+    writeLedger(dir, [
+      ['ur1', '2', 'tests', 'accepted', '1', 'w', 'r'],
+      ['ur2', '2', 'tests', 'accepted', '1', 'w', 'r'],
+    ]);
+    writeManifest(dir, 'ur1', 1, ['docs/café.md']);
+    writeVerdicts(dir, 'ur1', 1, [['checker-tests', 'anthropic', 'PASS']]);
+    writeManifest(dir, 'ur2', 1, ['swarm/x.sh']); // a real hit: plain critical-glob, not unreadable
+    writeVerdicts(dir, 'ur2', 1, [['checker-tests', 'anthropic', 'PASS']]);
+    writeFile(dir, 'critical.globs', 'swarm/**\n');
+    const state = parse(dir);
+    const c = { LC_ALL: 'C', LANG: 'C', PYTHONUTF8: '0' };
+    const g1 = gateRun(dir, 'ur1', c);
+    assert.equal(g1.ok, true, `readable UTF-8 is no hit: ${g1.out}`);
+    assert.equal(taskOf(state, 'ur1').derived.state, 'accepted');
+    assert.doesNotMatch(g1.err, /unreadable/i);
+    const g2 = gateRun(dir, 'ur2', c);
+    assert.equal(g2.ok, false);
+    assert.ok(g2.out.includes('critical-glob') && !g2.out.includes(UNREADABLE_TOKEN), g2.out);
+    assert.equal(taskOf(state, 'ur2').derived.state, 'flagged');
+    assert.deepEqual(mismatchesOf(state, 'ur2'), [
+      'task ur2: ledger says accepted but escalation trigger (critical-glob) and no flag — run gate.sh escalate-scan',
+    ]);
+  } finally {
+    disposeFixture(dir);
+  }
+});
+
+// ---------------------------------------------------------------------------
+// the Codex lane (run CD, CD4) — mirrors gate.sh. swarm/codex-check.sh writes
+// one outcome per (task, attempt): a checker-codex verdict (FAMILY crossvendor)
+// or a checker-codex.skip record. Trial rule (D2): a Codex FAIL counts, a Codex
+// PASS never does, an outage never blocks; `codex` in the checks column is not
+// a named checker, it demands exactly ONE valid outcome at the CURRENT attempt.
+// Gate `check` exits 0 <=> derived.state === 'accepted', at every tier.
+// ---------------------------------------------------------------------------
+
+const CODEX_EVIDENCE = 'missing checker-codex evidence';
+const CODEX_SKIP_REASONS = [
+  'no-exclude-policy', 'no-criteria', 'no-evidence', 'no-codex', 'docker-unavailable', 'unsafe-tree',
+  'fingerprint-mismatch', 'container-error', 'auth', 'quota', 'timeout', 'schema-invalid',
+  'evidence-free-pass', 'secret-leak', 'codex-error',
+];
+
+function writeCodex(dir, task, attempt, verdict, opts = {}) {
+  writeVerdict(dir, { task, attempt, checker: 'checker-codex', verdict, family: 'crossvendor', ...opts });
+}
+function writeCodexSkip(dir, task, attempt, reason = 'quota', { detail = 'probe detail', taskHdr = task, attemptHdr = attempt } = {}) {
+  writeFile(
+    dir,
+    `verdicts/${task}.${attempt}.checker-codex.skip`,
+    `REASON: ${reason}\nDETAIL: ${detail}\nTASK: ${taskHdr}\nATTEMPT: ${attemptHdr}\n`
+  );
+}
+// A row ledgered accepted at attempt 1 whose real checkers PASS (tests; second
+// too when named; a passing oracle at tier 3). Codex evidence is the test's job.
+function codexRow(dir, id, tier, checks) {
+  writeLedger(dir, [[id, String(tier), checks, 'accepted', '1', 'w', 'r']]);
+  writeVerdicts(dir, id, 1, [['checker-tests', 'anthropic', 'PASS']]);
+  if (checks.split(',').includes('second')) writeVerdicts(dir, id, 1, [['checker-second', 'adversarial', 'PASS']]);
+  if (tier === 3) {
+    writeOracle(dir, id);
+    writeFile(dir, `tier3/${id}/oracle.1.log`, 'ORACLE PASS\n');
+  }
+}
+function codexPanel(dir, id) {
+  writeVerdicts(dir, id, 1, [
+    ['judge-claude', 'anthropic', 'OVERRULE'],
+    ['judge-standards', 'adversarial', 'OVERRULE'],
+    ['judge-impact', 'impact', 'UPHOLD'],
+  ]);
+}
+
+test('codex identity: crossvendor is valid ONLY with checker-codex, and checker-codex ONLY with crossvendor', () => {
+  const dir = makeSwarmDir();
+  writeLedger(dir, [
+    ['ci-ok', '2', 'tests', 'checking', '1', 'w', 'r'],
+    ['ci-fam', '2', 'tests', 'checking', '1', 'w', 'r'],
+    ['ci-chk', '2', 'tests', 'checking', '1', 'w', 'r'],
+    ['ci-judge', '2', 'tests', 'checking', '1', 'w', 'r'],
+  ]);
+  writeCodex(dir, 'ci-ok', 1, 'FAIL');
+  writeVerdict(dir, { task: 'ci-fam', attempt: 1, checker: 'checker-codex', verdict: 'PASS', family: 'adversarial' });
+  writeVerdict(dir, { task: 'ci-chk', attempt: 1, checker: 'checker-tests', verdict: 'PASS', family: 'crossvendor' });
+  writeVerdict(dir, { task: 'ci-judge', attempt: 1, checker: 'judge-x', verdict: 'OVERRULE', family: 'crossvendor' });
+  const state = parse(dir);
+  assert.deepEqual(taskOf(state, 'ci-ok').verdicts.map((v) => `${v.checker}:${v.family}:${v.verdict}`), ['checker-codex:crossvendor:FAIL']);
+  for (const [id, checker, family] of [['ci-fam', 'checker-codex', 'adversarial'], ['ci-chk', 'checker-tests', 'crossvendor'], ['ci-judge', 'judge-x', 'crossvendor']]) {
+    const t = taskOf(state, id);
+    assert.deepEqual(t.verdicts, [], `${checker}/${family} must be excluded`);
+    assert.deepEqual(t.invalidVerdicts, [`${id}.1.${checker}.verdict`]);
+    const hit = state.errors.find((e) => e.file === `verdicts/${id}.1.${checker}.verdict`);
+    assert.ok(hit, `${checker}/${family} must be reported in errors[]`);
+    assert.equal(
+      hit.message,
+      `FAMILY 'crossvendor' and CHECKER 'checker-codex' are valid only together (got CHECKER '${checker}', FAMILY '${family}')`
+    );
+  }
+});
+
+test('codex lane: derived.familiesPassed excludes a Codex PASS and equals the gate lane set', () => {
+  const dir = makeSwarmDir();
+  codexRow(dir, 'cf1', 2, 'tests,second,codex');
+  writeCodex(dir, 'cf1', 1, 'PASS');
+  const t = taskOf(parse(dir), 'cf1');
+  assert.equal(t.derived.state, 'accepted');
+  assert.deepEqual([...t.derived.familiesPassed].sort(), ['adversarial', 'anthropic']);
+  assert.ok(!t.derived.familiesPassed.includes('crossvendor'), 'a Codex PASS is no lane');
+  // a Codex PASS alone in a row: no lane at all
+  const dir2 = makeSwarmDir();
+  writeLedger(dir2, [['cf2', '2', 'tests,codex', 'checking', '1', 'w', 'r']]);
+  writeCodex(dir2, 'cf2', 1, 'PASS');
+  assert.deepEqual(taskOf(parse(dir2), 'cf2').derived.familiesPassed, []);
+});
+
+test('codex lane: parse() never throws on a directory, FIFO or mode-000 skip record — it counts as absent', () => {
+  const dir = makeSwarmDir();
+  try {
+    writeLedger(dir, [
+      ['sk-dir', '2', 'tests,codex', 'accepted', '1', 'w', 'r'],
+      ['sk-fifo', '2', 'tests,codex', 'accepted', '1', 'w', 'r'],
+      ['sk-000', '2', 'tests,codex', 'accepted', '1', 'w', 'r'],
+      ['sk-ok', '2', 'tests,codex', 'accepted', '1', 'w', 'r'],
+    ]);
+    for (const id of ['sk-dir', 'sk-fifo', 'sk-000', 'sk-ok']) writeVerdicts(dir, id, 1, [['checker-tests', 'anthropic', 'PASS']]);
+    fs.mkdirSync(path.join(dir, 'verdicts/sk-dir.1.checker-codex.skip'));
+    assert.equal(spawnSync('mkfifo', [path.join(dir, 'verdicts/sk-fifo.1.checker-codex.skip')]).status, 0);
+    writeCodexSkip(dir, 'sk-000', 1);
+    // mode-000 fixtures are readable by root, so that case only runs as non-root
+    if (!IS_ROOT) fs.chmodSync(path.join(dir, 'verdicts/sk-000.1.checker-codex.skip'), 0o000);
+    writeCodexSkip(dir, 'sk-ok', 1);
+    const state = parseInChild(dir);
+    for (const id of IS_ROOT ? ['sk-dir', 'sk-fifo'] : ['sk-dir', 'sk-fifo', 'sk-000']) {
+      assert.equal(taskOf(state, id).derived.state, 'blocked', id);
+      assert.equal(taskOf(state, id).codexSkip, null, id);
+      assert.ok(mismatchesOf(state, id).join(' ').includes(CODEX_EVIDENCE), id);
+    }
+    assert.equal(taskOf(state, 'sk-ok').derived.state, 'accepted');
+    assert.deepEqual(taskOf(state, 'sk-ok').codexSkip, { reason: 'quota' });
+  } finally {
+    disposeFixture(dir);
+  }
+});
+
+// [name, expected acceptance, tier, checks, setup(dir, id)] — each row is run
+// through the gate AND the dashboard; both must agree with the expectation.
+const CODEX_SCENARIOS = [];
+for (const tier of [1, 2, 3]) {
+  const all = 'tests,second,codex';
+  CODEX_SCENARIOS.push(
+    [`tier ${tier}: codex named, no outcome -> refused (evidence)`, false, tier, all, () => {}, CODEX_EVIDENCE],
+    [`tier ${tier}: codex named, a Codex PASS -> accepted`, true, tier, all, (d, id) => writeCodex(d, id, 1, 'PASS')],
+    [`tier ${tier}: codex named, a valid skip record -> accepted (an outage never blocks)`, true, tier, all, (d, id) => writeCodexSkip(d, id, 1)],
+    [`tier ${tier}: codex named, a verdict AND a skip record -> refused`, false, tier, all, (d, id) => { writeCodex(d, id, 1, 'PASS'); writeCodexSkip(d, id, 1); }, 'checker-codex'],
+    [`tier ${tier}: checks = codex only -> refused like a blank column`, false, tier, 'codex', (d, id) => writeCodex(d, id, 1, 'PASS'), 'requires named checkers'],
+  );
+}
+for (const reason of CODEX_SKIP_REASONS) {
+  CODEX_SCENARIOS.push([`skip reason '${reason}' is evidence`, true, 2, 'tests,codex', (d, id) => writeCodexSkip(d, id, 1, reason)]);
+}
+CODEX_SCENARIOS.push(
+  ['a skip with an unknown REASON is not evidence', false, 2, 'tests,codex', (d, id) => writeCodexSkip(d, id, 1, 'bogus-reason'), CODEX_EVIDENCE],
+  ['a skip REASON of two adjacent valid ones is not evidence', false, 2, 'tests,codex', (d, id) => writeCodexSkip(d, id, 1, 'auth quota'), CODEX_EVIDENCE],
+  ['a skip whose TASK header disagrees is not evidence', false, 2, 'tests,codex', (d, id) => writeCodexSkip(d, id, 1, 'quota', { taskHdr: 'other' }), CODEX_EVIDENCE],
+  ['a skip whose ATTEMPT header disagrees is not evidence', false, 2, 'tests,codex', (d, id) => writeCodexSkip(d, id, 1, 'quota', { attemptHdr: 2 }), CODEX_EVIDENCE],
+  ['a skip with an empty DETAIL is not evidence', false, 2, 'tests,codex', (d, id) => writeCodexSkip(d, id, 1, 'quota', { detail: '' }), CODEX_EVIDENCE],
+  ['a skip with no DETAIL line is not evidence', false, 2, 'tests,codex', (d, id) => writeFile(d, `verdicts/${id}.1.checker-codex.skip`, `REASON: quota\nTASK: ${id}\nATTEMPT: 1\n`), CODEX_EVIDENCE],
+  ['a skip with a NUL byte is not evidence', false, 2, 'tests,codex', (d, id) => writeFile(d, `verdicts/${id}.1.checker-codex.skip`, `REASON: qu\0ota\nDETAIL: d\nTASK: ${id}\nATTEMPT: 1\n`), CODEX_EVIDENCE],
+  ['first-match headers: a valid REASON first, a bogus one later -> evidence', true, 2, 'tests,codex', (d, id) => writeFile(d, `verdicts/${id}.1.checker-codex.skip`, `REASON: quota\nDETAIL: d\nTASK: ${id}\nATTEMPT: 1\nREASON: bogus\n`)],
+  ['first-match headers: a bogus REASON first, a valid one later -> not evidence', false, 2, 'tests,codex', (d, id) => writeFile(d, `verdicts/${id}.1.checker-codex.skip`, `REASON: bogus\nDETAIL: d\nTASK: ${id}\nATTEMPT: 1\nREASON: quota\n`), CODEX_EVIDENCE],
+  ['first-match headers: an indented REASON line is not the header', false, 2, 'tests,codex', (d, id) => writeFile(d, `verdicts/${id}.1.checker-codex.skip`, ` REASON: quota\nDETAIL: d\nTASK: ${id}\nATTEMPT: 1\n`), CODEX_EVIDENCE],
+  ['a skip REASON with trailing whitespace is not one of the 15', false, 2, 'tests,codex', (d, id) => writeFile(d, `verdicts/${id}.1.checker-codex.skip`, `REASON: quota \nDETAIL: d\nTASK: ${id}\nATTEMPT: 1\n`), CODEX_EVIDENCE],
+  ['codex not named: a skip record is ignored', true, 2, 'tests', (d, id) => writeCodexSkip(d, id, 1)],
+  ['codex not named: a bogus skip record is ignored', true, 2, 'tests', (d, id) => writeCodexSkip(d, id, 1, 'bogus')],
+  // D2: a Codex PASS never counts — no named-checker requirement, no lane
+  ['tier 3: a Codex PASS supplies no second lane', false, 3, 'tests,codex', (d, id) => writeCodex(d, id, 1, 'PASS'), 'famil'],
+  ['tier 3, codex not named: an unnamed Codex PASS supplies no lane either', false, 3, 'tests', (d, id) => writeCodex(d, id, 1, 'PASS'), 'famil'],
+  ['tier 2: a Codex PASS does not stand in for a missing checker-second', false, 2, 'tests,second,codex', (d, id) => { fs.rmSync(path.join(d, `verdicts/${id}.1.checker-second.verdict`)); writeCodex(d, id, 1, 'PASS'); }, 'checker-second'],
+  ['tier 2: a Codex PASS does not widen a same-lane second', false, 2, 'tests,second,codex', (d, id) => { writeVerdicts(d, id, 1, [['checker-second', 'anthropic', 'PASS']]); writeCodex(d, id, 1, 'PASS'); }, 'lane'],
+  ['a Codex PASS without MANIFEST_SHA256 is refused like any checker PASS', false, 2, 'tests,codex', (d, id) => writeCodex(d, id, 1, 'PASS', { fingerprint: false }), 'MANIFEST_SHA256'],
+  // D2: a Codex FAIL counts wherever it is loaded
+  ['tier 1, codex named: a Codex FAIL is refused', false, 1, 'tests,codex', (d, id) => writeCodex(d, id, 1, 'FAIL'), 'checker-codex returned FAIL'],
+  ['tier 1, codex not named: a Codex FAIL is ignored', true, 1, 'tests', (d, id) => writeCodex(d, id, 1, 'FAIL')],
+  ['tier 2, codex named: a Codex FAIL opens a dispute', false, 2, 'tests,codex', (d, id) => writeCodex(d, id, 1, 'FAIL'), 'dispute'],
+  ['tier 2, codex NOT named: a Codex FAIL still opens a dispute', false, 2, 'tests', (d, id) => writeCodex(d, id, 1, 'FAIL'), 'dispute'],
+  ['tier 2: a Codex FAIL set aside by a panel -> accepted', true, 2, 'tests,codex', (d, id) => { writeCodex(d, id, 1, 'FAIL'); codexPanel(d, id); }],
+  ['tier 3: a Codex FAIL opens a dispute', false, 3, 'tests,second,codex', (d, id) => writeCodex(d, id, 1, 'FAIL'), 'dispute'],
+  ['tier 3: a Codex FAIL set aside by a panel -> accepted', true, 3, 'tests,second,codex', (d, id) => { writeCodex(d, id, 1, 'FAIL'); codexPanel(d, id); }],
+  ['a named FAIL set aside by a panel still needs Codex evidence', false, 2, 'tests,codex', (d, id) => { writeVerdicts(d, id, 1, [['checker-tests', 'anthropic', 'FAIL']]); codexPanel(d, id); }, CODEX_EVIDENCE],
+  ['evidence only at an OLDER attempt does not count', false, 2, 'tests,codex', (d, id) => {
+    writeLedger(d, [[id, '2', 'tests,codex', 'accepted', '2', 'w', 'r']]);
+    writeCodex(d, id, 1, 'PASS'); writeCodexSkip(d, id, 1);
+    writeVerdicts(d, id, 2, [['checker-tests', 'anthropic', 'PASS']]);
+  }, CODEX_EVIDENCE]
+);
+
+// CD4 attempt 2. U+2003 and friends are built from code points, never typed.
+const EMSP = String.fromCodePoint(0x2003);
+const NBSP = String.fromCodePoint(0xa0);
+const IDSP = String.fromCodePoint(0x3000);
+const rawSkip = (d, id, text) => writeFile(d, `verdicts/${id}.1.checker-codex.skip`, text);
+const skipText = (id, { reason = 'quota', detail = 'probe', task = id, attempt = '1' } = {}) =>
+  `REASON:${reason}\nDETAIL:${detail}\nTASK:${task}\nATTEMPT:${attempt}\n`;
+const mode000 = (d, rel) => fs.chmodSync(path.join(d, rel), 0o000);
+const CODEX_INVALID = 'invalid verdict checker-codex';
+CODEX_SCENARIOS.push(
+  // the NUL rule: a NUL byte ANYWHERE in a skip record makes it invalid (gate AND dashboard)
+  ['a NUL inside DETAIL makes the skip record invalid', false, 2, 'tests,codex', (d, id) => rawSkip(d, id, `REASON: quota\nDETAIL: pro\0be\nTASK: ${id}\nATTEMPT: 1\n`), CODEX_EVIDENCE],
+  ['a NUL on a line that is no header makes the skip record invalid', false, 2, 'tests,codex', (d, id) => rawSkip(d, id, `REASON: quota\nDETAIL: probe\nTASK: ${id}\nATTEMPT: 1\nnote: a\0b\n`), CODEX_EVIDENCE],
+  ['a trailing NUL makes the skip record invalid', false, 2, 'tests,codex', (d, id) => rawSkip(d, id, `REASON: quota\nDETAIL: probe\nTASK: ${id}\nATTEMPT: 1\n\0`), CODEX_EVIDENCE],
+  // a header value loses LEADING ASCII whitespace only
+  ['DETAIL:<U+2003> is a non-empty DETAIL (valid skip)', true, 2, 'tests,codex', (d, id) => rawSkip(d, id, skipText(id, { detail: EMSP }))],
+  ['DETAIL: <NBSP> is a non-empty DETAIL (valid skip)', true, 2, 'tests,codex', (d, id) => rawSkip(d, id, skipText(id, { detail: ` ${NBSP}` }))],
+  ['DETAIL:<VT> strips to empty (invalid skip)', false, 2, 'tests,codex', (d, id) => rawSkip(d, id, skipText(id, { detail: '\v' })), CODEX_EVIDENCE],
+  ['REASON:<U+2003>quota is no known reason', false, 2, 'tests,codex', (d, id) => rawSkip(d, id, skipText(id, { reason: `${EMSP}quota` })), CODEX_EVIDENCE],
+  ['REASON:<U+3000>auth is no known reason (tier 1)', false, 1, 'tests,codex', (d, id) => rawSkip(d, id, skipText(id, { reason: `${IDSP}auth` })), CODEX_EVIDENCE],
+  ['TASK:<U+2003><id> does not match the filename', false, 2, 'tests,codex', (d, id) => rawSkip(d, id, skipText(id, { task: `${EMSP}${id}` })), CODEX_EVIDENCE],
+  ['ATTEMPT:<U+2003>1 does not match the filename', false, 2, 'tests,codex', (d, id) => rawSkip(d, id, skipText(id, { attempt: `${EMSP}1` })), CODEX_EVIDENCE],
+  ['REASON: quota<U+2003> (trailing whitespace is never stripped) is no known reason', false, 2, 'tests,codex', (d, id) => rawSkip(d, id, skipText(id, { reason: ` quota${EMSP}` })), CODEX_EVIDENCE],
+  ['leading TAB and several spaces are stripped (valid skip)', true, 2, 'tests,codex', (d, id) => rawSkip(d, id, `REASON:\t  quota\nDETAIL:\t d\nTASK:   ${id}\nATTEMPT: \t1\n`)],
+  // tier 1, codex named: a non-regular or invalid verdict entry refuses the row, even beside a valid skip
+  ['tier 1 named: an INVALID Codex verdict (no ---) beside a valid skip is refused', false, 1, 'tests,codex', (d, id) => {
+    writeCodexSkip(d, id, 1);
+    writeFile(d, `verdicts/${id}.1.checker-codex.verdict`, `VERDICT: PASS\nCHECKER: checker-codex\nFAMILY: crossvendor\nTASK: ${id}\nATTEMPT: 1\n`);
+  }, CODEX_INVALID],
+  ['tier 1 named: a Codex verdict with a bad FAMILY beside a valid skip is refused', false, 1, 'tests,codex', (d, id) => {
+    writeCodexSkip(d, id, 1);
+    writeVerdict(d, { task: id, attempt: 1, checker: 'checker-codex', verdict: 'PASS', family: 'adversarial' });
+  }, CODEX_INVALID],
+  ['tier 1 named: a DANGLING-symlink Codex verdict entry beside a valid skip is refused', false, 1, 'tests,codex', (d, id) => {
+    writeCodexSkip(d, id, 1); fs.symlinkSync('nowhere', path.join(d, `verdicts/${id}.1.checker-codex.verdict`));
+  }, CODEX_INVALID],
+  ['tier 1 named: a dangling-symlink Codex verdict entry and no skip is refused as invalid', false, 1, 'tests,codex', (d, id) => {
+    fs.symlinkSync('nowhere', path.join(d, `verdicts/${id}.1.checker-codex.verdict`));
+  }, CODEX_INVALID],
+  ['tier 1 named: a symlink-LOOP Codex verdict entry beside a valid skip is refused', false, 1, 'tests,codex', (d, id) => {
+    writeCodexSkip(d, id, 1); fs.symlinkSync(`${id}.1.checker-codex.verdict`, path.join(d, `verdicts/${id}.1.checker-codex.verdict`));
+  }, CODEX_INVALID],
+  ['tier 1 named: a DIRECTORY named as the Codex verdict beside a valid skip is refused', false, 1, 'tests,codex', (d, id) => {
+    writeCodexSkip(d, id, 1); fs.mkdirSync(path.join(d, `verdicts/${id}.1.checker-codex.verdict`));
+  }, CODEX_INVALID],
+  ['tier 1 named: a FIFO named as the Codex verdict (never opened) beside a valid skip is refused', false, 1, 'tests,codex', (d, id) => {
+    writeCodexSkip(d, id, 1); assert.equal(spawnSync('mkfifo', [path.join(d, `verdicts/${id}.1.checker-codex.verdict`)]).status, 0);
+  }, CODEX_INVALID],
+  ['tier 1 NOT named: a dangling-symlink Codex verdict entry is ignored', true, 1, 'tests', (d, id) => {
+    fs.symlinkSync('nowhere', path.join(d, `verdicts/${id}.1.checker-codex.verdict`));
+  }],
+  // tiers 2/3: any non-regular verdict entry is an invalid verdict file that blocks the row, whatever the checker
+  ['tier 2: a DIRECTORY named as another checker\'s verdict blocks the row', false, 2, 'tests', (d, id) => { fs.mkdirSync(path.join(d, `verdicts/${id}.1.checker-other.verdict`)); }, 'invalid verdict'],
+  ['tier 2: a FIFO named as another checker\'s verdict blocks the row (no hang)', false, 2, 'tests', (d, id) => { assert.equal(spawnSync('mkfifo', [path.join(d, `verdicts/${id}.1.checker-other.verdict`)]).status, 0); }, 'invalid verdict'],
+  ['tier 2: a symlink LOOP named as another checker\'s verdict blocks the row', false, 2, 'tests', (d, id) => { fs.symlinkSync(`${id}.1.checker-other.verdict`, path.join(d, `verdicts/${id}.1.checker-other.verdict`)); }, 'invalid verdict'],
+  ['tier 3 named: a FIFO named as the Codex verdict beside a valid skip blocks the row', false, 3, 'tests,second,codex', (d, id) => {
+    writeCodexSkip(d, id, 1); assert.equal(spawnSync('mkfifo', [path.join(d, `verdicts/${id}.1.checker-codex.verdict`)]).status, 0);
+  }, 'invalid verdict'],
+);
+if (!IS_ROOT) {
+  // mode-000 fixtures are readable by root, so these only run as non-root
+  CODEX_SCENARIOS.push(
+    ['tier 1 named: a MODE-000 Codex verdict beside a valid skip is refused', false, 1, 'tests,codex', (d, id) => {
+      writeCodexSkip(d, id, 1); writeCodex(d, id, 1, 'PASS'); mode000(d, `verdicts/${id}.1.checker-codex.verdict`);
+    }, CODEX_INVALID],
+    ['tier 2: a MODE-000 regular file named as another checker\'s verdict blocks the row', false, 2, 'tests', (d, id) => {
+      writeVerdicts(d, id, 1, [['checker-other', 'anthropic', 'PASS']]); mode000(d, `verdicts/${id}.1.checker-other.verdict`);
+    }, 'invalid verdict'],
+  );
+}
+
+test('codex differential: gate.sh check agrees with derived.state for every Codex scenario, and names the evidence defect', () => {
+  for (const [name, expectAccepted, tier, checks, setup, needle] of CODEX_SCENARIOS) {
+    const dir = makeSwarmDir();
+    try {
+      const id = 'cxd';
+      codexRow(dir, id, tier, checks);
+      setup(dir, id);
+      const g = gateRun(dir, id);
+      const state = parseInChild(dir);
+      const task = taskOf(state, id);
+      const where = `${name}: gate ${g.ok ? 'accepts' : 'rejects'} (${g.out}), dashboard '${task.derived.state}' (${mismatchesOf(state, id).join(' | ')})`;
+      assert.equal(task.derived.state === 'accepted', g.ok, where);
+      assert.equal(g.ok, expectAccepted, `expected ${expectAccepted ? 'accept' : 'reject'}: ${where}`);
+      assert.doesNotMatch(g.out, /invalid FAMILY/, `refused for the pre-CD4 reason: ${where}`);
+      if (needle) {
+        assert.ok(g.out.includes(needle), `the gate's FAIL line should mention '${needle}': ${where}`);
+        if (needle === CODEX_EVIDENCE) {
+          assert.ok(mismatchesOf(state, id).join(' | ').includes(CODEX_EVIDENCE), `the dashboard mismatch should name the evidence defect: ${where}`);
+        }
+      }
+      if (g.ok && checks.includes('codex')) {
+        assert.ok(!task.derived.familiesPassed.includes('crossvendor'), `familiesPassed must not count a Codex PASS: ${where}`);
+      }
+    } finally {
+      disposeFixture(dir);
+    }
+  }
+});
+
+test('codex escalation: two consecutive Codex FAILs trigger two-consecutive-fails, named or not (gate and dashboard agree)', () => {
+  for (const checks of ['tests', 'tests,codex']) {
+    const dir = makeSwarmDir();
+    try {
+      writeLedger(dir, [['cxe', '1', checks, 'accepted', '2', 'w', 'r']]);
+      writeCodex(dir, 'cxe', 1, 'FAIL');
+      writeCodex(dir, 'cxe', 2, 'FAIL');
+      writeVerdicts(dir, 'cxe', 2, [['checker-tests', 'anthropic', 'PASS']]);
+      const g = gateRun(dir, 'cxe');
+      const state = parseInChild(dir);
+      assert.equal(g.ok, false, `checks=${checks}: ${g.out}`);
+      assert.equal(taskOf(state, 'cxe').derived.state, 'flagged', `checks=${checks}`);
+      assert.ok(g.out.includes('two-consecutive-fails'), g.out);
+      assert.deepEqual(mismatchesOf(state, 'cxe'), [
+        'task cxe: ledger says accepted but escalation trigger (two-consecutive-fails) and no flag — run gate.sh escalate-scan',
+      ]);
+    } finally {
+      disposeFixture(dir);
+    }
+  }
+});
+
+// A UTF-8 locale the TEST sets itself for the gate child (LC_ALL), so a gate
+// that parses headers in the CALLER's locale is caught whatever locale this
+// suite runs under. null when the host has none.
+function utf8Locale() {
+  const r = spawnSync('locale', ['-a'], { encoding: 'utf8' });
+  const names = (r.stdout ?? '').split('\n');
+  return names.find((n) => /^c\.utf-?8$/i.test(n)) ?? names.find((n) => /^en_US\.utf-?8$/i.test(n)) ?? null;
+}
+const UTF8_LOCALE = utf8Locale();
+
+test('codex skip headers: the gate gives the same answer under C and a UTF-8 locale, and the dashboard agrees', { skip: UTF8_LOCALE ? false : 'no UTF-8 locale on this host' }, () => {
+  const cases = [
+    ['DETAIL:<U+2003>', (id) => skipText(id, { detail: EMSP }), true],
+    ['DETAIL:<U+3000>', (id) => skipText(id, { detail: IDSP }), true],
+    ['DETAIL: <NBSP>', (id) => skipText(id, { detail: ` ${NBSP}` }), true],
+    ['DETAIL:<VT> (stripped: empty)', (id) => skipText(id, { detail: '\v' }), false],
+    ['REASON:<U+2003>quota', (id) => skipText(id, { reason: `${EMSP}quota` }), false],
+    ['REASON:<U+3000>auth', (id) => skipText(id, { reason: `${IDSP}auth` }), false],
+    ['TASK:<U+2003><id>', (id) => skipText(id, { task: `${EMSP}${id}` }), false],
+    ['ATTEMPT:<U+2003>1', (id) => skipText(id, { attempt: `${EMSP}1` }), false],
+    ['REASON: quota<U+2003>', (id) => skipText(id, { reason: ` quota${EMSP}` }), false],
+    ['TAB and spaces before every value', (id) => `REASON:\t  quota\nDETAIL:\t d\nTASK:   ${id}\nATTEMPT: \t1\n`, true],
+  ];
+  for (const [name, text, expectAccepted] of cases) {
+    const dir = makeSwarmDir();
+    try {
+      codexRow(dir, 'lh', 2, 'tests,codex');
+      rawSkip(dir, 'lh', text('lh'));
+      const state = parseInChild(dir);
+      const dash = taskOf(state, 'lh').derived.state === 'accepted';
+      assert.equal(dash, expectAccepted, `${name}: dashboard should ${expectAccepted ? 'accept' : 'refuse'}`);
+      for (const loc of ['C', UTF8_LOCALE]) {
+        const g = gateRun(dir, 'lh', { LC_ALL: loc, LANG: loc });
+        assert.equal(g.ok, expectAccepted, `${name}: the gate under ${loc} should ${expectAccepted ? 'accept' : 'refuse'} (${g.out})`);
+      }
+    } finally {
+      disposeFixture(dir);
+    }
+  }
+});
+
+// parse() must NEVER open a non-regular *.verdict entry and never throw or
+// hang on one: a directory, FIFO, symlink loop, dangling link, or an entry it
+// cannot read is an INVALID verdict file — reported in errors[], excluded from
+// quorum, blocking at tiers 2/3 (gate.sh load_verdict's `[[ -f ]]`). Each case
+// runs parse() in a child with a timeout, so a throw or a hang fails the test.
+const NON_REGULAR_ENTRIES = [
+  ['a directory', (p) => fs.mkdirSync(p)],
+  ['a FIFO', (p) => assert.equal(spawnSync('mkfifo', [p]).status, 0)],
+  ['a symlink loop', (p) => fs.symlinkSync(path.basename(p), p)],
+  ['a dangling symlink', (p) => fs.symlinkSync('nowhere', p)],
+  ['a symlink to a FIFO', (p) => { assert.equal(spawnSync('mkfifo', [`${p}.fifo`]).status, 0); fs.symlinkSync(path.basename(`${p}.fifo`), p); }],
+  ['a mode-000 regular file', (p) => { fs.writeFileSync(p, 'VERDICT: PASS\n---\n'); fs.chmodSync(p, 0o000); }, NEEDS_NON_ROOT],
+];
+for (const [kind, make, opts] of NON_REGULAR_ENTRIES) {
+  test(`codex verdict entries: parse() neither throws nor hangs on ${kind} named *.verdict — an invalid verdict file`, opts ?? {}, () => {
+    const dir = makeSwarmDir();
+    try {
+      writeLedger(dir, [
+        ['nr-t2', '2', 'tests', 'accepted', '1', 'w', 'r'],
+        ['nr-t1n', '1', 'tests', 'accepted', '1', 'w', 'r'],
+        ['nr-t1u', '1', 'tests', 'accepted', '1', 'w', 'r'],
+        ['nr-cx', '1', 'tests,codex', 'accepted', '1', 'w', 'r'],
+      ]);
+      for (const id of ['nr-t2', 'nr-t1n', 'nr-t1u', 'nr-cx']) writeVerdicts(dir, id, 1, [['checker-tests', 'anthropic', 'PASS']]);
+      writeCodexSkip(dir, 'nr-cx', 1);
+      make(path.join(dir, 'verdicts/nr-t2.1.checker-other.verdict'));   // tier 2: any checker's entry blocks the row
+      fs.rmSync(path.join(dir, 'verdicts/nr-t1n.1.checker-tests.verdict'), { force: true });
+      make(path.join(dir, 'verdicts/nr-t1n.1.checker-tests.verdict'));  // tier 1: the NAMED checker's entry is never a PASS
+      make(path.join(dir, 'verdicts/nr-t1u.1.checker-other.verdict'));  // tier 1: an unnamed entry is ignored
+      make(path.join(dir, 'verdicts/nr-cx.1.checker-codex.verdict'));   // tier 1, codex named: invalid beside a valid skip
+      const state = parseInChild(dir);
+      for (const [id, checker] of [['nr-t2', 'checker-other'], ['nr-t1n', 'checker-tests'], ['nr-t1u', 'checker-other'], ['nr-cx', 'checker-codex']]) {
+        const name = `${id}.1.${checker}.verdict`;
+        const hit = state.errors.find((e) => e.file === `verdicts/${name}`);
+        assert.ok(hit, `${kind} as ${name} must be reported in errors[]`);
+        assert.ok(taskOf(state, id).invalidVerdicts.includes(name), `${name} must be listed as an invalid verdict file`);
+        assert.ok(!taskOf(state, id).verdicts.some((v) => v.filename === name), `${name} must be excluded from quorum`);
+      }
+      assert.equal(taskOf(state, 'nr-t2').derived.state, 'blocked');
+      assert.equal(taskOf(state, 'nr-t1n').derived.state, 'blocked');
+      assert.equal(taskOf(state, 'nr-t1u').derived.state, 'accepted', 'an unnamed tier-1 entry is ignored, as the gate ignores it');
+      assert.equal(taskOf(state, 'nr-cx').derived.state, 'blocked');
+      assert.ok(mismatchesOf(state, 'nr-cx').join(' ').includes('invalid verdict checker-codex'), mismatchesOf(state, 'nr-cx').join(' | '));
+      // and the gate refuses / accepts exactly the same rows
+      for (const id of ['nr-t2', 'nr-t1n', 'nr-t1u', 'nr-cx']) {
+        assert.equal(gateRun(dir, id).ok, taskOf(state, id).derived.state === 'accepted', `${kind}: gate and dashboard disagree on ${id}`);
+      }
+    } finally {
+      disposeFixture(dir);
+    }
+  });
+}
+
+// ---------------------------------------------------------------------------
+// codex: parse() NEVER OPENS a non-regular entry (CD4.1 rule 3 / CD4.2 item 2b).
+// readVerdictEntry and parseCodexSkip stat the entry and return BEFORE any open
+// when it is not a regular file; the O_NONBLOCK open + fstat re-check behind them
+// would still keep a FIFO from hanging and classify the entry invalid, so no
+// no-throw / no-hang test can tell the guard from its absence. This one counts the
+// opens. The child is CommonJS (`node -e`): it patches fs.openSync and
+// fs.readFileSync to count calls whose path argument is THE ENTRY, calls
+// syncBuiltinESMExports() so named-import openers see the patch too, and only THEN
+// imports parse.mjs. (An ESM child that imported fs first would miss them; this is
+// not the ESM parseInChild helper.) A regular file is opened by design, so a
+// mode-000 file is not one of the kinds.
+// ---------------------------------------------------------------------------
+
+const PARSE_MJS_URL = new URL('../lib/parse.mjs', import.meta.url).href;
+
+function parseCountingOpens(dir, entryPath) {
+  const code = `
+    const fs = require('node:fs');
+    const ENTRY = ${JSON.stringify(entryPath)};
+    let n = 0;
+    const hit = (p) => { try { if (typeof p === 'string' || p instanceof URL || Buffer.isBuffer(p)) { if (String(p) === ENTRY) n += 1; } } catch {} };
+    const openSync = fs.openSync, readFileSync = fs.readFileSync;
+    fs.openSync = function (p, ...a) { hit(p); return openSync.call(fs, p, ...a); };
+    fs.readFileSync = function (p, ...a) { hit(p); return readFileSync.call(fs, p, ...a); };
+    require('node:module').syncBuiltinESMExports();
+    import(${JSON.stringify(PARSE_MJS_URL)}).then((m) => {
+      const s = m.parse(${JSON.stringify(dir)});
+      const t = s.tasks[0];
+      process.stdout.write(JSON.stringify({
+        opens: n,
+        state: t && t.derived.state,
+        invalidVerdicts: t ? t.invalidVerdicts : null,
+        codexSkip: t ? t.codexSkip : null,
+        errors: s.errors,
+      }));
+    }).catch((e) => process.stdout.write(JSON.stringify({ threw: String((e && e.message) || e) })));`;
+  const r = spawnSync(process.execPath, ['-e', code], { encoding: 'utf8', timeout: 20000 });
+  assert.ok(!r.error && !r.signal, `parse() must neither throw nor hang (timeout/signal: ${r.error ?? r.signal})`);
+  const out = JSON.parse(r.stdout);
+  assert.equal(out.threw, undefined, `parse() threw: ${out.threw}`);
+  return out;
+}
+
+// The seven non-regular kinds. make(entryPath) creates the entry; a symlink's
+// target sits beside it under a name that is neither *.verdict nor *.skip.
+const NEVER_OPENS_KINDS = [
+  ['a FIFO', (p) => assert.equal(spawnSync('mkfifo', [p]).status, 0)],
+  ['a directory', (p) => fs.mkdirSync(p)],
+  ['a dangling symlink', (p) => fs.symlinkSync('nowhere', p)],
+  ['a symlink loop', (p) => fs.symlinkSync(path.basename(p), p)],
+  ['a symlink to a FIFO', (p) => { assert.equal(spawnSync('mkfifo', [`${p}.target`]).status, 0); fs.symlinkSync(path.basename(`${p}.target`), p); }],
+  ['a symlink to a directory', (p) => { fs.mkdirSync(`${p}.dir`); fs.symlinkSync(path.basename(`${p}.dir`), p); }],
+  ['a symlink to /dev/null (a device)', (p) => fs.symlinkSync('/dev/null', p)],
+];
+
+for (const [kind, make] of NEVER_OPENS_KINDS) {
+  test(`codex: parse() never opens ${kind} named as a verdict entry (0 opens; entry invalid; row blocked)`, () => {
+    const dir = makeSwarmDir();
+    try {
+      writeLedger(dir, [['no-v', '2', 'tests', 'accepted', '1', 'w', 'r']]);
+      writeVerdicts(dir, 'no-v', 1, [['checker-tests', 'anthropic', 'PASS']]);
+      const name = 'no-v.1.checker-other.verdict';
+      const entry = path.join(dir, 'verdicts', name);
+      make(entry);
+      const out = parseCountingOpens(dir, entry);
+      assert.equal(out.opens, 0, `parse() opened ${kind} ${name} ${out.opens} time(s): it must never open a non-regular verdict entry`);
+      assert.equal(out.state, 'blocked', 'the row stays refused');
+      assert.ok(out.invalidVerdicts.includes(name), `${name} must be listed as an invalid verdict file: ${JSON.stringify(out.invalidVerdicts)}`);
+      assert.ok(out.errors.some((e) => e.file === `verdicts/${name}`), `${name} must be reported in errors[]`);
+    } finally {
+      disposeFixture(dir);
+    }
+  });
+
+  test(`codex: parse() never opens ${kind} named as the Codex skip record (0 opens; no evidence; row blocked)`, () => {
+    const dir = makeSwarmDir();
+    try {
+      writeLedger(dir, [['no-s', '2', 'tests,codex', 'accepted', '1', 'w', 'r']]);
+      writeVerdicts(dir, 'no-s', 1, [['checker-tests', 'anthropic', 'PASS']]);
+      const entry = path.join(dir, 'verdicts', 'no-s.1.checker-codex.skip');
+      make(entry);
+      const out = parseCountingOpens(dir, entry);
+      assert.equal(out.opens, 0, `parse() opened ${kind} as the skip record ${out.opens} time(s): it must never open a non-regular skip record`);
+      assert.equal(out.state, 'blocked', 'the row stays refused');
+      assert.equal(out.codexSkip, null, 'a non-regular skip record counts as absent');
+      assert.ok(
+        out.errors.some((e) => e.file === 'ledger.tsv' && e.message.includes('task no-s:') && e.message.includes('missing checker-codex evidence')),
+        `the dashboard mismatch names the missing evidence: ${JSON.stringify(out.errors)}`
+      );
+    } finally {
+      disposeFixture(dir);
+    }
+  });
+}
+
+test('codex: the opens counter sees a regular verdict entry and a regular skip record (control: the counter works)', () => {
+  const dir = makeSwarmDir();
+  try {
+    writeLedger(dir, [['no-c', '2', 'tests,codex', 'accepted', '1', 'w', 'r']]);
+    writeVerdicts(dir, 'no-c', 1, [['checker-tests', 'anthropic', 'PASS']]);
+    writeCodexSkip(dir, 'no-c', 1);
+    const verdictEntry = path.join(dir, 'verdicts', 'no-c.1.checker-tests.verdict');
+    const skipEntry = path.join(dir, 'verdicts', 'no-c.1.checker-codex.skip');
+    const v = parseCountingOpens(dir, verdictEntry);
+    const sk = parseCountingOpens(dir, skipEntry);
+    assert.ok(v.opens >= 1, 'a regular verdict file is opened by design — the counter must see it');
+    assert.ok(sk.opens >= 1, 'a regular skip record is opened by design — the counter must see it');
+    assert.equal(v.state, 'accepted');
+  } finally {
+    disposeFixture(dir);
   }
 });
 

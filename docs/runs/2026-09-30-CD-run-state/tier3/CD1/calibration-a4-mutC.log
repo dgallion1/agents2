@@ -1,0 +1,10 @@
+# CD1 oracle: TREE=/tmp/claude-1000/-home-darrell-work-agents2--claude-worktrees-unifi-camera-streaming-7be695/480338d9-8e6c-42d1-8681-c9e4d1acdcaf/scratchpad/mutC
+ok   - H positive control: the oracle's host listener answers on 172.17.0.1:55281
+ok   - H positive control: the host listener answers on the host's own address 192.168.1.90
+ok   - A4 the traced run wrote its verdict
+ok   - A4 the trace followed the harness's children (tools.py execs are in it)
+ok   - A4 no argv carries a secret; only tools.py processes get it in their environment (strace -v)
+FAIL - K a valid last.json, then /out set to mode 000 (unsearchable dir → last.json counts as present) → want skip schema-invalid, got rc=0 skip='' verdict=yes :: codex-check: wrote /tmp/cd1-oracle.RFJdyr/k2/swarm/verdicts/T.1.checker-codex.verdict 
+grep: /tmp/cd1-oracle.RFJdyr/k2/swarm/verdicts/T.1.checker-codex.skip: No such file or directory
+ok   - A4 lockout: no secret in the audit dir or the skip record
+excerpt: NFAIL=1

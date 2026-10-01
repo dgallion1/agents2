@@ -1,0 +1,84 @@
+# The Codex check sandbox (run CD, task CD1). Driven ONLY by
+# swarm/codex-check.sh, which sets every CD_* variable, names a unique project
+# per run and tears it down on every exit path.
+#
+#   isolated (internal: true)  no route out and NO host address on it; the checker and the proxy
+#   egress                     the proxy alone
+#
+# The checker's mounts are exactly these — nothing else of the host is visible:
+#   /work         the data-free copy of the tree (rw)
+#   /opt/codex/*  the Codex binary (ro); compose.host.yaml adds its helper
+#   /codex-home   a fresh private dir: empty config.toml + the given auth file (ro)
+#   /out          a PRIVATE dir inside the run's temp dir (rw) — never the audit dir;
+#                 only clean, flat, small files are later COPIED out (keep-or-drop)
+#   /schema/verdict.schema.json   that one file (ro) — Codex has no need to read the harness
+#   /gomodcache   compose.go.yaml only: a per-run module-cache SUBSET (ro)
+services:
+  proxy:
+    image: agents2-codex-proxy:local
+    build:
+      context: ./proxy
+    pull_policy: never
+    networks: [isolated, egress]
+    healthcheck:
+      # listening on 0.0.0.0:8888 (0x22B8), read from the kernel — no probe
+      # connection, so nothing extra reaches proxy.log
+      test: ["CMD-SHELL", "grep -q ':22B8 00000000:0000 0A' /proc/net/tcp"]
+      interval: 1s
+      timeout: 3s
+      retries: 30
+  checker:
+    image: agents2-codex-check:local
+    build:
+      context: .
+    pull_policy: never
+    user: "1000:1000"
+    working_dir: /work
+    networks: [isolated]
+    depends_on:
+      proxy:
+        condition: service_healthy
+    environment:
+      HTTPS_PROXY: http://proxy:8888
+      HTTP_PROXY: http://proxy:8888
+      CODEX_HOME: /codex-home
+      HOME: /tmp/home
+    volumes:
+      - type: bind
+        source: ${CD_WORK:?set by swarm/codex-check.sh}
+        target: /work
+        bind: {create_host_path: false}
+      - type: bind
+        source: ${CD_CODEX_BIN:?set by swarm/codex-check.sh}
+        target: /opt/codex/codex
+        read_only: true
+        bind: {create_host_path: false}
+      - type: bind
+        source: ${CD_CODEX_HOME:?set by swarm/codex-check.sh}
+        target: /codex-home
+        bind: {create_host_path: false}
+      - type: bind
+        source: ${CD_AUTH:?set by swarm/codex-check.sh}
+        target: /codex-home/auth.json
+        read_only: true                 # nothing may ever change the user's real login (ruling CD-j)
+        bind: {create_host_path: false}
+      - type: bind
+        source: ${CD_OUT:?set by swarm/codex-check.sh}
+        target: /out
+        bind: {create_host_path: false}
+      - type: bind
+        source: ${CD_SCHEMA:?set by swarm/codex-check.sh}
+        target: /schema/verdict.schema.json
+        read_only: true
+        bind: {create_host_path: false}
+networks:
+  isolated:
+    internal: true
+    enable_ipv6: false
+    driver_opts:
+      # A plain internal network still gives the HOST its gateway address on the
+      # bridge — and every host service listening on *:<port> (budget2 on :8080)
+      # is reachable at it (SPEC ruling CD-l). Inhibiting the bridge's IPv4
+      # address leaves the host no address here; checker -> proxy still works.
+      com.docker.network.bridge.inhibit_ipv4: "true"
+  egress: {}

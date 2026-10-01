@@ -1,0 +1,16 @@
+swarm/codex-check.sh
+swarm/codex/.dockerignore
+swarm/codex/Dockerfile
+swarm/codex/brief.md
+swarm/codex/compose.go.yaml
+swarm/codex/compose.host.yaml
+swarm/codex/compose.yaml
+swarm/codex/proxy/Dockerfile
+swarm/codex/proxy/filter
+swarm/codex/proxy/tinyproxy.conf
+swarm/codex/tools.py
+swarm/codex/verdict.schema.json
+smoketest/codex/run_tests.sh
+smoketest/codex/stub-codex
+smoketest/codex/unit_tests.py
+smoketest/codex/trace_check.py

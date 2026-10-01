@@ -1,0 +1,30 @@
+# CD2 oracle: TREE=/home/darrell/work/agents2/.claude/worktrees/unifi-camera-streaming-7be695
+ok   - S render.mjs byte-identical to base
+ok   - S only CD2-territory files changed (CD1 territory and SPEC.md ignored)
+    FAIL - L1 tier-3: a judge-named PASS no longer supplies the second lane: both accept, expected reject (gate: OK: l1 accepted at tier 3 (attempt 1))
+    FAIL - L2 tier-2: a boss PASS is invalid: both accept, expected reject (gate: OK: l2 accepted at tier 2 (attempt 1))
+    FAIL - L3 tier-2: a checker casting OVERRULE is invalid: both accept, expected reject (gate: OK: l3 accepted at tier 2 (attempt 1))
+    FAIL - L7 tier-2: a judge casting FAIL is invalid: gate rejects but not for an invalid verdict: FAIL: l7: dispute needs >=3 judge verdicts, have 0
+    FAIL - L10 tier-3: an UPHOLD cast by a checker is invalid: both accept, expected reject (gate: OK: l10 accepted at tier 3 (attempt 1))
+    FAIL - L11 tier-2: PASS from 'worker-coder' is invalid: both accept, expected reject (gate: OK: m0 accepted at tier 2 (attempt 1))
+    FAIL - L12 tier-2: UPHOLD from 'lead' is invalid: both accept, expected reject (gate: OK: m1 accepted at tier 2 (attempt 1))
+    FAIL - L13 tier-2: FAIL from 'boss' is invalid: gate rejects but not for an invalid verdict: FAIL: m2: dispute needs >=3 judge verdicts, have 0
+    FAIL - L14 tier-2: PASS from 'judge-claude' is invalid: both accept, expected reject (gate: OK: m3 accepted at tier 2 (attempt 1))
+    FAIL - L15 tier-2: PASS from 'checker' is invalid: both accept, expected reject (gate: OK: m4 accepted at tier 2 (attempt 1))
+    FAIL - L16 tier-2: PASS from 'checkerx-y' is invalid: both accept, expected reject (gate: OK: m5 accepted at tier 2 (attempt 1))
+    FAIL - L17 tier-2: OVERRULE from 'judge' is invalid: both accept, expected reject (gate: OK: m6 accepted at tier 2 (attempt 1))
+    FAIL - L18 tier-2: OVERRULE from 'boss-2' is invalid: both accept, expected reject (gate: OK: m7 accepted at tier 2 (attempt 1))
+    FAIL - L19 tier-2: OVERRULE from 'Boss' is invalid: both accept, expected reject (gate: OK: m8 accepted at tier 2 (attempt 1))
+    differential: 6/20 ok
+FAIL - D differential battery: differential: 6/20 ok
+FAIL - E1 escalate-scan did not flag e1: 
+FAIL - E2 escalate-scan flagged e2 from a judge-cast FAIL: TARGET_TIER: 3
+REASON: two-consecutive-fails
+FAIL - E3 stats counted a judge-cast FAIL: stats: e3 tier=2 first-attempt=1 failed (now: status=checking attempt=1) elapsed=n/a
+FAIL - E4 done accepted a row with a judge-cast PASS
+ok   - C1 smoketest/gate/run_tests.sh passes
+ok   - C2 dashboard tests pass (ℹ tests 66)
+ok   - C3 demo fixture parses with no new errors
+FAIL - M1 smoketest suite still passes against the base gate.sh (does not pin the rule)
+FAIL - M2 dashboard suite does not catch the base parse.mjs (fail=0)
+ORACLE FAIL: 7 check(s) failed

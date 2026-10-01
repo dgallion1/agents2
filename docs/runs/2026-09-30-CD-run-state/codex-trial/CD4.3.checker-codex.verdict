@@ -1,0 +1,59 @@
+VERDICT: PASS
+CHECKER: checker-codex
+FAMILY: crossvendor
+TASK: CD4
+ATTEMPT: 3
+MANIFEST_SHA256: d1664d360d514850c6ec0c48a2c3080c55f43f7a3ee18904e42873e4c9034900
+CODEX_MODEL: gpt-6-sol
+CODEX_VERSION: codex-cli 0.159.0
+---
+criterion b: PASS
+    attack: Run every gate sub-suite and identify failures caused by the data-free copy.
+    command: bash smoketest/gate/run_tests.sh
+    result: The aggregate exited 1. The Codex gate, done, and documentation sub-suites reported ALL PASS. The failing agent and layout checks require omitted .claude/agents files or .env.example; no failure was attributable to the work under review.
+criterion c: PASS
+    attack: Run the complete dashboard test suite.
+    command: node --test dashboard/test/*.test.mjs
+    result: 141 passed, 0 failed, 0 skipped.
+criterion d: PASS
+    attack: Exercise gate/dashboard disagreement across Codex evidence, skip headers, tiers, escalation, and done.
+    command: node --test --test-name-pattern='codex differential|codex skip headers|codex escalation' dashboard/test/parse.test.mjs; bash smoketest/gate/run_check.sh; bash smoketest/gate/run_done.sh
+    result: The three focused dashboard tests passed; run_check.sh and run_done.sh each reported ALL PASS. The differential test compares gate exit status with derived.state on the Codex scenarios, including invalid and stale evidence.
+criterion f: PASS
+    attack: Check that the documentation pins the Codex trial, family pairing, escalation, and stats claims.
+    command: bash smoketest/doc_test.sh
+    result: ALL PASS, including the Codex, critical-glob-unreadable, and unnamed Tier-1 Codex FAIL assertions.
+criterion i: PASS
+    attack: Apply each specified regression alone in a disposable copy and run the relevant shipped suite.
+    command: python3 - <<'PY'
+        from pathlib import Path
+        from concurrent.futures import ThreadPoolExecutor
+        import tempfile, shutil, subprocess
+        root=Path('/work')
+        cases=[('stats-from-one','gate','for (( a=0; a<=last; a++ )); do','for (( a=1; a<=last; a++ )); do'),('stats-invalid-second','gate','if [[ -f "$f" ]] && load_verdict "$f" "$1" "$2"; then echo "$_vv"; else echo none; fi','if [[ -f "$f" ]]; then echo FAIL; else echo none; fi'),('skip-locale','gate','LC_ALL=C sed "s/^$2:[[:space:]]*//"','sed "s/^$2:[[:space:]]*//"'),('parse-no-nul','parse','  if (buf.includes(0)) return null;','')]
+        def run(c):
+         name,typ,old,new=c; d=Path(tempfile.mkdtemp(prefix='cd4-mut-',dir=root))
+         try:
+          if typ=='gate':
+           (d/'swarm').mkdir(); (d/'smoketest/gate').mkdir(parents=True)
+           shutil.copy2(root/'swarm/gate.sh',d/'swarm/gate.sh')
+           for f in ['_lib.sh','run_check.sh']: shutil.copy2(root/'smoketest/gate'/f,d/'smoketest/gate'/f)
+           p=d/'swarm/gate.sh'; cmd=['bash',str(d/'smoketest/gate/run_check.sh')]
+          else:
+           shutil.copytree(root/'dashboard/lib',d/'lib'); shutil.copytree(root/'dashboard/test',d/'test')
+           p=d/'lib/parse.mjs'; cmd=['node','--test','--test-name-pattern=codex differential|NUL',str(d/'test/parse.test.mjs')]
+          s=p.read_text(); assert old in s; p.write_text(s.replace(old,new,1))
+          q=subprocess.run(cmd,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True,timeout=180)
+          print(name,q.returncode,sum(x.startswith(('FAIL -','not ok')) for x in q.stdout.splitlines()))
+         finally: shutil.rmtree(d)
+        with ThreadPoolExecutor(max_workers=4) as ex:
+         for out in ex.map(run,cases): pass
+        PY
+    result: The scratch mutations failed their shipped suites: attempt-1 stats had 1 failed assertion; invalid checker-second stats had 8; caller-locale skip parsing had 12; removed dashboard NUL check had 1. A separate scratch run bypassing tier-1 Codex verdict validation produced 18 failed gate assertions, including acceptance of a verdict beside a skip.
+criterion j: PASS
+    attack: Check all seven non-regular entry types for both verdict and skip paths, then remove or weaken each pre-open guard in scratch copies.
+    command: node --test dashboard/test/*.test.mjs
+    result: All 14 “never opens” cases passed, as did the regular-file counter control. Scratch-copy mutations gave nonzero test exits: removing the verdict guard failed 7 tests, narrowing it to directories failed 3, and removing the skip guard failed 7.
+observations:
+    - The aggregate gate command cannot report every sub-suite ALL PASS in this copy because .claude/agents and .env.example were explicitly omitted. Its agent and layout failures are copy artefacts.
+    - Mode-000 permission fixtures are ineffective when run as root; the shipped gate tests skip those assertions under root.

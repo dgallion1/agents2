@@ -19,7 +19,9 @@ TESTGLOBS="$SWARM_DIR/test.globs"
 # Fallback used ONLY when $SWARM_DIR/test.globs is absent, so an existing
 # .swarm directory keeps working (test-code exemption still applies) without
 # being edited. If test.globs exists, its contents are used instead and this
-# list is ignored entirely.
+# list is ignored entirely — and if it exists but cannot be read (not a regular
+# file, not valid UTF-8, permission denied) the critical-glob evaluation is
+# UNREADABLE, never a silent fall back to this list (see manifest_hits_glob).
 DEFAULT_TEST_GLOBS='**/*_test.go
 **/*_test.py
 **/test_*.py
@@ -62,18 +64,37 @@ verdict_files() {                                                    # task atte
 # SPEC.md §2a: KEY: value headers (VERDICT, CHECKER, FAMILY, TASK, ATTEMPT),
 # then a `---` separator, then evidence. Filename must agree with headers.
 # VERDICT ∈ {PASS,FAIL,UPHOLD,OVERRULE}; FAMILY ∈ {anthropic,adversarial,impact,
-# glm,local}. FAMILY names an INDEPENDENCE LANE, not a vendor: two verdicts in
-# the same lane are treated as correlated and do not satisfy a dual-lane quorum.
-# glm and local are retained only so verdicts written before 2026-08-19 still
-# validate; no current agent writes them.
+# crossvendor,glm,local}. FAMILY names an INDEPENDENCE LANE, not a vendor: two
+# verdicts in the same lane are treated as correlated and do not satisfy a
+# dual-lane quorum. glm and local are retained only so verdicts written before
+# 2026-08-19 still validate; no current agent writes them.
+#
+# Lane accounting (run CD, CD2): the VERDICT/CHECKER pairing is part of the
+# schema. PASS and FAIL are valid only from a CHECKER that starts with
+# `checker-`; UPHOLD and OVERRULE only from one that starts with `judge-` or is
+# exactly `boss`. Anything else (a judge-cast PASS, a checker-cast OVERRULE,
+# `worker-coder`, `lead`, `boss-2`, `Boss`) makes the file INVALID here, so
+# every consumer of load_verdict — the tier walks, has_fail_at,
+# judges_overruled_at, overrule_exists, any_verdict_exists, stats, done —
+# sees the same rule. Otherwise a judge-named file could supply a lane the
+# checkers never earned (ruling GH-29f).
+#
+# Codex lane (run CD, CD4): `crossvendor` is valid ONLY together with CHECKER
+# `checker-codex`, and `checker-codex` ONLY with FAMILY `crossvendor` — any other
+# pairing makes the file invalid, like CD2's VERDICT/CHECKER pairing. Trial rule
+# (D2): a checker-codex FAIL counts wherever the file is loaded; a checker-codex
+# PASS never counts (no named-checker requirement, no lane) — its only effect is
+# as evidence of presence when the ledger `checks` column names `codex` (see
+# codex_evidence_or_fail). `.skip` records are the harness's other outcome.
 #
 # Lean Tier-2 contract (experiment, 2026-08-31): Tier 2 requires a PASS from
 # every checker named in the ledger `checks` column (which must be non-empty at
-# tier 2). The two-lane span is enforced only when `second` is among the named
-# checks. Tier 3 keeps the unconditional dual-lane quorum. The dispute path is
-# unchanged at both tiers: any FAIL replaces the PASS requirement with the
-# judge-panel quorum (>=3 judge verdicts, unique identity AND unique lane,
-# strict OVERRULE majority).
+# tier 2; `codex` is never such a checker — see named_checkers). The two-lane
+# span is enforced only when `second` is among the named checks. Tier 3 keeps
+# the unconditional dual-lane quorum. The dispute path is unchanged at both
+# tiers: any FAIL replaces the PASS requirement with the judge-panel quorum
+# (>=3 judge verdicts, unique identity AND unique lane, strict OVERRULE
+# majority).
 #
 # Fingerprint header (2026-09-18): MANIFEST_SHA256 is the sha256 of the
 # manifest's .sha256 sidecar — the hash of the fingerprint set the checker
@@ -132,7 +153,7 @@ load_verdict() {                                                     # file [exp
     *) _verr="$base: invalid VERDICT '$verdict'"; return 1 ;;
   esac
   case "$family" in
-    anthropic|adversarial|impact|glm|local) ;;
+    anthropic|adversarial|impact|crossvendor|glm|local) ;;
     *) _verr="$base: invalid FAMILY '$family'"; return 1 ;;
   esac
   [[ "$attempt" =~ ^[0-9]+$ ]] || { _verr="$base: invalid ATTEMPT '$attempt'"; return 1; }
@@ -148,19 +169,122 @@ load_verdict() {                                                     # file [exp
     _verr="$base: ATTEMPT '$attempt' != filename/ledger attempt '$exp_attempt'"; return 1
   }
 
+  # Identity (run CD, CD4): the crossvendor lane is the Codex checker's alone.
+  if [[ "$family" == crossvendor || "$checker" == checker-codex ]]; then
+    [[ "$family" == crossvendor && "$checker" == checker-codex ]] || {
+      _verr="$base: FAMILY 'crossvendor' and CHECKER 'checker-codex' are valid only together (got CHECKER '$checker', FAMILY '$family')"; return 1
+    }
+  fi
+
+  # Lane accounting: who may cast which verdict (exact prefixes / exact name).
+  case "$verdict" in
+    PASS|FAIL)
+      [[ "$checker" == checker-* ]] || {
+        _verr="$base: VERDICT $verdict not allowed from CHECKER '$checker' (PASS/FAIL come from checker-*; UPHOLD/OVERRULE from judge-* or boss)"; return 1
+      } ;;
+    UPHOLD|OVERRULE)
+      [[ "$checker" == judge-* || "$checker" == boss ]] || {
+        _verr="$base: VERDICT $verdict not allowed from CHECKER '$checker' (PASS/FAIL come from checker-*; UPHOLD/OVERRULE from judge-* or boss)"; return 1
+      } ;;
+  esac
+
   _vv=$verdict; _vc=$checker; _vf=$family; _vt=$task; _va=$attempt
   _vm=$(field_of "$f" MANIFEST_SHA256)
   return 0
 }
 
+# --- the Codex lane (run CD, CD4) --------------------------------------------
+# swarm/codex-check.sh writes exactly one outcome per (task, attempt):
+#   verdicts/<t>.<a>.checker-codex.verdict  — a schema-valid verdict (load_verdict), or
+#   verdicts/<t>.<a>.checker-codex.skip     — REASON / DETAIL / TASK / ATTEMPT lines,
+#                                             no `---` (an outage or refusal).
+# Trial rule (D2): a Codex FAIL counts, a Codex PASS never does, an outage never
+# blocks. `codex` in the ledger checks column is therefore NOT a named checker:
+# it only demands that the current attempt holds an outcome (evidence of
+# presence). named_checkers fills _named with the column's entries that must
+# PASS — everything except `codex`.
+checks_name_codex() { [[ ",$1," == *,codex,* ]]; }                   # checks
+named_checkers() {                                                   # checks
+  local -a all; local c
+  _named=()
+  IFS=',' read -ra all <<<"$1"
+  for c in "${all[@]}"; do [[ "$c" == codex ]] || _named+=("$c"); done
+}
+# skip_field file KEY — the FIRST `KEY:` line's value with LEADING ASCII
+# whitespace (space, \t \n \v \f \r) removed and nothing else: no trailing
+# whitespace, never a non-ASCII character (U+00A0, U+2003 ... stay in the
+# value). BOTH grep and sed run under LC_ALL=C, so the answer never depends on
+# the caller's locale (under UTF-8 glibc [[:space:]] would also strip U+2003).
+# parse.mjs skipField mirrors it byte for byte.
+skip_field() { LC_ALL=C grep -a -m1 -- "^$2:" "$1" 2>/dev/null | LC_ALL=C sed "s/^$2:[[:space:]]*//"; }
+# codex_skip_valid file task attempt — 0 when FILE is a valid skip record: a
+# REGULAR file (anything else is never opened), no NUL byte, whose first REASON
+# is one of the harness's 15, a non-empty DETAIL, and TASK / ATTEMPT equal to the
+# filename's. Sets _skreason. Anything else counts as absent.
+codex_skip_valid() {
+  local f="$1" task="$2" attempt="$3" reason detail t a
+  _skreason=""
+  [[ -f "$f" ]] || return 1
+  tr -d '\0' < "$f" 2>/dev/null | cmp -s - "$f" 2>/dev/null || return 1
+  reason=$(skip_field "$f" REASON); detail=$(skip_field "$f" DETAIL)
+  t=$(skip_field "$f" TASK);        a=$(skip_field "$f" ATTEMPT)
+  case "$reason" in
+    no-exclude-policy|no-criteria|no-evidence|no-codex|docker-unavailable|unsafe-tree|fingerprint-mismatch|container-error|auth|quota|timeout|schema-invalid|evidence-free-pass|secret-leak|codex-error) ;;
+    *) return 1 ;;
+  esac
+  [[ -n "$detail" && "$t" == "$task" && "$a" == "$attempt" ]] || return 1
+  _skreason="$reason"
+  return 0
+}
+# codex_outcome task attempt — sets _cxv (PASS/FAIL of a VALID checker-codex
+# verdict, else "") and _cxs (the REASON of a VALID skip record, else ""). Reads
+# exactly this task's two files, so a dot-prefix sibling can never leak in.
+codex_outcome() {
+  local task="$1" attempt="$2" vf sf
+  _cxv=""; _cxs=""
+  vf="$VERDICTS/$task.$attempt.checker-codex.verdict"
+  sf="$VERDICTS/$task.$attempt.checker-codex.skip"
+  if [[ -f "$vf" ]] && load_verdict "$vf" "$task" "$attempt"; then _cxv=$_vv; fi
+  if codex_skip_valid "$sf" "$task" "$attempt"; then _cxs=$_skreason; fi
+  return 0
+}
+# codex_evidence_or_fail task attempt — the evidence rule for a row that names
+# `codex`: the CURRENT attempt must hold exactly one valid outcome. Runs at every
+# tier, before any PASS/dispute logic; a Codex PASS satisfies nothing else. ANY
+# directory entry named <t>.<a>.checker-codex.verdict that is not a valid verdict
+# — a dangling symlink, a symlink loop, a directory, a FIFO (never opened: the
+# -f test fails first), a mode-000 file, a malformed file — is an INVALID verdict
+# and refuses the row, even beside a valid skip record (walk_verdicts does the
+# same at tiers 2/3; this is the tier-1 path, where the file is named). Leaves
+# _cxv set.
+codex_evidence_or_fail() {
+  local task="$1" attempt="$2" vf="$VERDICTS/$1.$2.checker-codex.verdict"
+  if [[ -e "$vf" || -L "$vf" ]]; then
+    [[ -f "$vf" ]] || fail "$task: invalid verdict checker-codex: $(basename "$vf") is not a regular file"
+    load_verdict "$vf" "$task" "$attempt" || fail "$task: invalid verdict checker-codex: $_verr"
+  fi
+  codex_outcome "$task" "$attempt"
+  [[ -n "$_cxv" || -n "$_cxs" ]] || \
+    fail "$task: missing checker-codex evidence (attempt $attempt)"
+  [[ -z "$_cxv" || -z "$_cxs" ]] || \
+    fail "$task: checker-codex has both a verdict and a skip record at attempt $attempt (one outcome only)"
+}
+
 # --- per-tier acceptance ----------------------------------------------------
 # A blank checks column hard-fails at every tier (2026-09-18; it used to
-# accept a tier-1 row with zero verdicts).
+# accept a tier-1 row with zero verdicts). A column naming only `codex` is
+# blank too: codex never counts as a named checker (run CD, CD4).
 check_tier1() {                                                      # task attempt checks
   local task="$1" attempt="$2" checks="$3" c f
   [[ "$checks" == "-" || -z "$checks" ]] && \
     fail "$task: tier 1 requires named checkers in the ledger checks column"
-  IFS=',' read -ra req <<<"$checks"
+  named_checkers "$checks"
+  (( ${#_named[@]} )) || fail "$task: tier 1 requires named checkers in the ledger checks column"
+  local -a req=("${_named[@]}")
+  if checks_name_codex "$checks"; then
+    codex_evidence_or_fail "$task" "$attempt"
+    [[ "$_cxv" != FAIL ]] || fail "$task: checker-codex returned FAIL"
+  fi
   for c in "${req[@]}"; do
     f="$VERDICTS/$task.$attempt.checker-$c.verdict"
     [[ -f "$f" ]] || fail "$task: missing verdict from checker-$c (attempt $attempt)"
@@ -170,9 +294,12 @@ check_tier1() {                                                      # task atte
 }
 # Shared verdict walk for tier 2 and the tier-3 dual-lane check. Loads every
 # verdict at (task, attempt) into the caller's passfam/passchecker/judge maps
-# and up/ov counters, failing loudly on any malformed file. Callers declare
-# the maps; this only fills them (bash 4.3+ namerefs are avoided on purpose —
-# the maps are plain globals scoped by the calling function's declare -A).
+# and up/ov counters, failing loudly on any malformed file — a mis-paired
+# VERDICT/CHECKER (see load_verdict) is malformed, so PASS/FAIL below are
+# always checker-* casts and UPHOLD/OVERRULE always judge-* or boss casts.
+# Callers declare the maps; this only fills them (bash 4.3+ namerefs are
+# avoided on purpose — the maps are plain globals scoped by the calling
+# function's declare -A).
 walk_verdicts() {                                                    # task attempt
   local task="$1" attempt="$2" f
   local files; mapfile -t files < <(verdict_files "$task" "$attempt")
@@ -182,6 +309,10 @@ walk_verdicts() {                                                    # task atte
     load_verdict "$f" "$task" "$attempt" || fail "$task: invalid verdict $(basename "$f"): $_verr"
     case "$_vv" in
       PASS)
+        # D2: a Codex PASS never counts — not a named-checker PASS, not a lane.
+        # (Its evidence-of-presence role is codex_evidence_or_fail's; its
+        # MANIFEST_SHA256 is still checked by check_fingerprint.)
+        [[ "$_vc" == checker-codex ]] && continue
         if [[ -n "${passchecker[$_vc]:-}" ]]; then
           fail "$task: duplicate PASS checker '$_vc'"
         fi
@@ -221,6 +352,9 @@ check_tier2() {                                                      # task atte
   local task="$1" attempt="$2" checks="${3:-}" c has_fail=0
   [[ "$checks" == "-" || -z "$checks" ]] && \
     fail "$task: tier 2 requires named checkers in the ledger checks column"
+  named_checkers "$checks"
+  (( ${#_named[@]} )) || fail "$task: tier 2 requires named checkers in the ledger checks column"
+  local -a req=("${_named[@]}")
 
   declare -A passfam=()       # family -> 1
   declare -A passchecker=()   # checker -> family|fail
@@ -228,10 +362,11 @@ check_tier2() {                                                      # task atte
   declare -A judgechecker=()  # checker -> UPHOLD|OVERRULE
   local up=0 ov=0
   walk_verdicts "$task" "$attempt"
+  # `codex` named: the attempt needs a Codex outcome BEFORE any PASS/dispute
+  # logic (a panel that set a FAIL aside does not supply one).
+  ! checks_name_codex "$checks" || codex_evidence_or_fail "$task" "$attempt"
 
   if (( has_fail == 0 )); then
-    local -a req
-    IFS=',' read -ra req <<<"$checks"
     for c in "${req[@]}"; do
       [[ -n "${passchecker[checker-$c]:-}" ]] || \
         fail "$task: missing PASS from checker-$c (attempt $attempt)"
@@ -253,6 +388,9 @@ check_tier3() {                                                     # task attem
   local oracle="$dir/accept.sh" olog="$dir/oracle.$attempt.log"
   [[ "$checks" == "-" || -z "$checks" ]] && \
     fail "$task: tier 3 requires named checkers in the ledger checks column"
+  named_checkers "$checks"
+  (( ${#_named[@]} )) || fail "$task: tier 3 requires named checkers in the ledger checks column"
+  local -a req=("${_named[@]}")
   [[ -f "$dir/report.md" ]] && \
     fail "$task: stale blind-arm report.md in $dir — the legacy contract was removed 2026-09-18; delete it (never reuse a tier3 dir)"
   # Oracle-first contract (user decision 2026-08-26, CLAUDE.md Tier 3):
@@ -271,9 +409,8 @@ check_tier3() {                                                     # task attem
   declare -A judgechecker=()
   local up=0 ov=0
   walk_verdicts "$task" "$attempt"
+  ! checks_name_codex "$checks" || codex_evidence_or_fail "$task" "$attempt"
   if (( has_fail == 0 )); then
-    local -a req
-    IFS=',' read -ra req <<<"$checks"
     for c in "${req[@]}"; do
       [[ -n "${passchecker[checker-$c]:-}" ]] || \
         fail "$task: missing PASS from checker-$c (attempt $attempt)"
@@ -286,6 +423,8 @@ check_tier3() {                                                     # task attem
 
 # --- escalation helpers -----------------------------------------------------
 has_fail_at() {                                                    # task attempt
+  # Only a valid FAIL counts, and load_verdict admits FAIL only from a
+  # checker-* identity: a judge- or boss-cast FAIL is invalid and skipped.
   local f
   for f in "$VERDICTS/$1.$2."*.verdict; do
     [[ -f "$f" ]] || continue
@@ -314,7 +453,9 @@ overrule_exists() {                                                # task
 # judges_overruled_at — 0 when a judge panel set aside the FAIL(s) at this
 # attempt. Uses the SAME quorum check_tier2 uses to accept a disputed attempt
 # (>=3 judge verdicts, strict OVERRULE majority), so the two halves of this
-# tool cannot disagree about whether an attempt failed.
+# tool cannot disagree about whether an attempt failed. Only valid
+# UPHOLD/OVERRULE files count, and load_verdict admits those only from judge-*
+# or boss: a checker-cast UPHOLD/OVERRULE is invalid and never joins the panel.
 judges_overruled_at() {                                            # task attempt
   local f up=0 ov=0
   for f in "$VERDICTS/$1.$2."*.verdict; do
@@ -334,32 +475,80 @@ unresolved_fail_at() {                                             # task attemp
   judges_overruled_at "$1" "$2" && return 1
   return 0
 }
-manifest_hits_glob() {                # task -> 0 if any NON-TEST path matches a critical glob
-  # A path counts toward escalation only when it matches critical.globs AND
-  # matches no test.globs entry. One production-file match is enough to
-  # escalate even when the same manifest also contains test files — a test
-  # glob only exempts the test path itself, never the whole manifest.
-  [[ -f "$GLOBS" ]] || return 1
-  local mans=() m
-  for m in "$MANIFESTS/$1."*.files; do [[ -f "$m" ]] && mans+=("$m"); done
-  (( ${#mans[@]} )) || return 1
-  local tglobs_file tmp_tglobs=""
-  if [[ -f "$TESTGLOBS" ]]; then
-    tglobs_file="$TESTGLOBS"
-  else
-    tmp_tglobs=$(mktemp)
-    printf '%s\n' "$DEFAULT_TEST_GLOBS" > "$tmp_tglobs"
-    tglobs_file="$tmp_tglobs"
+# manifest_hits_glob task — how the critical-glob trigger evaluates. Exit 0 = a
+# NON-TEST path in the task's manifests matches critical.globs, 1 = no hit,
+# 2 = UNREADABLE (run CD, CD3: the evaluation fails CLOSED, never open).
+#
+# A path counts toward escalation only when it matches critical.globs AND
+# matches no test.globs entry. One production-file match is enough to
+# escalate even when the same manifest also contains test files — a test
+# glob only exempts the test path itself, never the whole manifest.
+#
+# Evaluation order (pinned, census CD3.1):
+#   1. critical.globs ABSENT (no directory entry at all) -> no hit; no
+#      manifests/<task>.*.files entry -> no hit (a row that has not started is
+#      never flagged). Only after both is anything read.
+#   2. PRESENT means a directory entry exists — a dangling symlink or a symlink
+#      loop is present. Every present input (critical.globs, test.globs, each
+#      matching manifest) must be a regular file after following symlinks;
+#      anything else (directory, dangling link, FIFO, device) is UNREADABLE and
+#      is never opened, so a FIFO cannot block the gate. test.globs ABSENT falls
+#      back to DEFAULT_TEST_GLOBS. A manifests/ directory that exists but cannot
+#      be listed is UNREADABLE too: "no entry matches" cannot be established.
+#   3. Decoding is explicit strict UTF-8 (BOM kept), never the locale's
+#      default: a valid UTF-8 file reads the same under LC_ALL=C.
+#   4. Any unreadable input makes the whole evaluation UNREADABLE, even when
+#      another input produced a hit.
+#   5. The evaluator failing (python3 missing or killed, an uncaught error, any
+#      exit status other than the hit / no-hit codes) is UNREADABLE — never
+#      "no hit". The embedded python therefore uses exit codes that a python
+#      traceback (1) cannot produce: 10 = hit, 11 = no hit, 12 = unreadable.
+#   6. One stderr line per unreadable evaluation, naming the first offending
+#      path (or the evaluator failure); nothing on clean inputs.
+manifest_hits_glob() {                # task -> 0 hit / 1 no hit / 2 UNREADABLE
+  [[ -e "$GLOBS" || -L "$GLOBS" ]] || return 1
+  local mans=() m had_ng=0 out rc detail
+  shopt -q nullglob && had_ng=1
+  shopt -s nullglob
+  if [[ -e "$MANIFESTS" || -L "$MANIFESTS" ]] && ! [[ -d "$MANIFESTS" && -r "$MANIFESTS" && -x "$MANIFESTS" ]]; then
+    (( had_ng )) || shopt -u nullglob
+    echo "gate: critical-glob evaluation unreadable: $MANIFESTS (not a listable directory)" >&2
+    return 2
   fi
-  python3 - "$GLOBS" "$tglobs_file" "${mans[@]}" <<'PY'
-import sys, fnmatch
-def load(path):
-    return [l.strip() for l in open(path) if l.strip() and not l.startswith('#')]
-critical = load(sys.argv[1])
-testglobs = load(sys.argv[2])
-paths=[]
-for p in sys.argv[3:]:
-    paths += [l.strip() for l in open(p) if l.strip()]
+  for m in "$MANIFESTS/$1."*.files; do mans+=("$m"); done
+  (( had_ng )) || shopt -u nullglob
+  (( ${#mans[@]} )) || return 1
+  local tglobs_file=""
+  [[ -e "$TESTGLOBS" || -L "$TESTGLOBS" ]] && tglobs_file="$TESTGLOBS"
+  out=$(python3 - "$GLOBS" "$tglobs_file" "$DEFAULT_TEST_GLOBS" "${mans[@]}" 2>/dev/null <<'PY'
+import sys, os, stat, fnmatch
+HIT, NOHIT, UNREADABLE = 10, 11, 12
+class Unreadable(Exception):
+    pass
+def read_lines(path):
+    # A regular file (symlinks followed), read as strict UTF-8 with the BOM
+    # kept. Non-regular inputs are rejected BEFORE opening, and the open is
+    # O_NONBLOCK + re-checked on the descriptor so a FIFO swapped in after the
+    # stat cannot block either.
+    try:
+        if not stat.S_ISREG(os.stat(path).st_mode):
+            raise Unreadable(path + ' (not a regular file)')
+        fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK)
+        try:
+            if not stat.S_ISREG(os.fstat(fd).st_mode):
+                raise Unreadable(path + ' (not a regular file)')
+            with os.fdopen(fd, 'r', encoding='utf-8') as fh:
+                fd = -1
+                return fh.readlines()
+        finally:
+            if fd >= 0:
+                os.close(fd)
+    except Unreadable:
+        raise
+    except Exception as e:
+        raise Unreadable('%s (%s)' % (path, type(e).__name__))
+def load(lines):
+    return [l.strip() for l in lines if l.strip() and not l.startswith('#')]
 def matches(path, g):
     cands = {g}
     if g.startswith('**/'):
@@ -369,28 +558,70 @@ def matches(path, g):
     return any(fnmatch.fnmatch(path, c) for c in cands)
 def matches_any(path, globs):
     return any(matches(path, g) for g in globs)
-for path in paths:
-    if matches_any(path, critical) and not matches_any(path, testglobs):
-        sys.exit(0)
-sys.exit(1)
+def evaluate():
+    crit_path, test_path, default_tests = sys.argv[1], sys.argv[2], sys.argv[3]
+    problems = []
+    def get(path):
+        try:
+            return read_lines(path)
+        except Unreadable as e:
+            problems.append(str(e))
+            return []
+    critical_lines = get(crit_path)
+    test_lines = get(test_path) if test_path else default_tests.split('\n')
+    paths = []
+    for p in sys.argv[4:]:
+        paths += [l.strip() for l in get(p) if l.strip()]
+    if problems:                         # unreadable beats a hit
+        print(problems[0].replace('\n', ' '))
+        return UNREADABLE
+    critical = load(critical_lines)
+    testglobs = load(test_lines)
+    for path in paths:
+        if matches_any(path, critical) and not matches_any(path, testglobs):
+            return HIT
+    return NOHIT
+try:
+    rc = evaluate()
+except Exception as e:
+    print('evaluator failed (%s)' % type(e).__name__)
+    rc = UNREADABLE
+sys.exit(rc)
 PY
-  local rc=$?
-  [[ -n "$tmp_tglobs" ]] && rm -f "$tmp_tglobs"
-  return $rc
+)
+  rc=$?
+  case "$rc" in
+    10) return 0 ;;
+    11) return 1 ;;
+    12) detail="${out%%$'\n'*}" ;;
+    *)  detail="evaluator failed (python3 exit status $rc)" ;;
+  esac
+  echo "gate: critical-glob evaluation unreadable: $detail" >&2
+  return 2
 }
 
 # escalation_reasons — prints the live escalation triggers for a row
 # ("two-consecutive-fails checker-overruled critical-glob", space-separated,
-# possibly empty). ONE definition shared by escalate-scan (which writes the
-# flag) and check_task (which refuses a row the scan has not seen), so the
-# two cannot disagree about what counts as a trigger.
+# possibly empty). The reason tokens are: two-consecutive-fails,
+# checker-overruled, critical-glob, and critical-glob-unreadable — the last is
+# the fail-CLOSED outcome of manifest_hits_glob (an input it needs cannot be
+# read, run CD / CD3) and replaces critical-glob for that evaluation, so a
+# glob file that cannot be read never silently drops the trigger. ONE
+# definition shared by escalate-scan (which writes the flag) and check_task
+# (which refuses a row the scan has not seen), so the two cannot disagree
+# about what counts as a trigger.
 escalation_reasons() {                                             # task attempt
-  local task="$1" attempt="$2" reasons=""
+  local task="$1" attempt="$2" reasons="" hit
   if (( attempt >= 1 )) && unresolved_fail_at "$task" "$attempt" && unresolved_fail_at "$task" "$((attempt-1))"; then
     reasons+="two-consecutive-fails "
   fi
   overrule_exists "$task"    && reasons+="checker-overruled "
-  manifest_hits_glob "$task" && reasons+="critical-glob "
+  manifest_hits_glob "$task"; hit=$?
+  case "$hit" in
+    0) reasons+="critical-glob " ;;
+    1) ;;
+    *) reasons+="critical-glob-unreadable " ;;   # 2, and anything unexpected: fail closed
+  esac
   printf '%s' "${reasons% }"
 }
 escalation_target() { local t=$(( $1 + 1 )); (( t > 3 )) && t=3; echo "$t"; }   # tier
@@ -403,6 +634,8 @@ escalation_target() { local t=$(( $1 + 1 )); (( t > 3 )) && t=3; echo "$t"; }   
 #                                        a removed file)
 # and every checker-* PASS verdict at that attempt must carry
 #   MANIFEST_SHA256: <sha256 of the .sha256 file>
+# (a valid PASS is always a checker-* PASS — load_verdict rejects the pairing
+# otherwise — so no PASS can dodge this check by carrying another identity)
 # i.e. the hash of the fingerprint set the checker verified. `check`
 # additionally re-hashes every path against SWARM_TREE (rehash=1): the tree
 # being accepted must be the tree that was fingerprinted and verified. `done`
@@ -486,7 +719,8 @@ any_verdict_exists() {                                              # task -> 0/
   # ownership with load_verdict's own best-effort <task>.<attempt>.<checker>
   # parse (the same one filenameless calls like overrule_exists rely on)
   # rather than trusting the glob alone. A file the parser cannot make sense
-  # of at all still blocks, conservatively, since we cannot rule it out.
+  # of at all still blocks, conservatively, since we cannot rule it out — that
+  # includes a mis-paired VERDICT/CHECKER file, which load_verdict rejects.
   local f
   for f in "$VERDICTS/$1."*.verdict; do
     [[ -f "$f" ]] || continue
@@ -520,7 +754,8 @@ check_task() {                                                       # task reha
   # The escalation flag is not a tier check — it applies to every status,
   # no-change included. Checking it first means a row already flagged for
   # mandatory re-verification (two-consecutive-fails / checker-overruled /
-  # critical-glob) cannot be closed out from under the flag by relabeling it
+  # critical-glob / critical-glob-unreadable) cannot be closed out from under
+  # the flag by relabeling it
   # no-change; the gate would otherwise report "no unresolved flags" while
   # one sits unread on disk.
   if [[ -f "$FLAGS/$task.flag" ]]; then
@@ -590,6 +825,17 @@ cmd_escalate_scan() {
 # fail-overruled). Also reported: escalations (a flag file on disk) and
 # elapsed time per task from evidence mtimes (earliest manifest or oracle log
 # to latest verdict or oracle log) — a cheap wall-clock proxy, not cost.
+#
+# Run CD (CD4) — the Codex trial's measurement. Each first-attempt-shaped line
+# ends ` codex=<PASS|FAIL|skip:<reason>|none> second=<PASS|FAIL|none>` for the
+# ledger's CURRENT attempt (valid files only; a valid Codex verdict wins over a
+# skip record), and one more line follows the summary:
+#   codex: ran <n>/<m>, FAIL <k>, same-verdict-as-second <j>, codex-only FAIL <c>
+# over every (row, attempt) pair, attempt 0 up to the ledger attempt, that holds
+# a valid checker-codex verdict or skip record (no-change rows excluded, like
+# first-attempt counting): m = pairs, n = with a verdict, k = verdict FAIL,
+# j = a valid checker-second verdict at the same attempt with the same VERDICT,
+# c = Codex FAIL and no checker-second FAIL at that attempt.
 mtime()  { stat -c %Y "$1" 2>/dev/null; }
 fmt_dur() { local s=$1; printf '%dh%02dm' $(( s / 3600 )) $(( (s % 3600) / 60 )); }
 task_elapsed() {                                                   # task -> seconds or ""
@@ -610,10 +856,32 @@ task_elapsed() {                                                   # task -> sec
   done
   [[ -n "$lo" && -n "$hi" && "$hi" -ge "$lo" ]] && echo $(( hi - lo ))
 }
+second_at() {                                                      # task attempt -> PASS|FAIL|none
+  local f="$VERDICTS/$1.$2.checker-second.verdict"
+  if [[ -f "$f" ]] && load_verdict "$f" "$1" "$2"; then echo "$_vv"; else echo none; fi
+}
+# codex_tally task attempt — adds the row's Codex pairs to the cx_* counters of
+# the calling cmd_stats (bash dynamic scope).
+codex_tally() {
+  local task="$1" last=$((10#$2)) a sec
+  for (( a=0; a<=last; a++ )); do
+    codex_outcome "$task" "$a"
+    [[ -n "$_cxv" || -n "$_cxs" ]] || continue
+    cx_m=$((cx_m+1))
+    [[ -n "$_cxv" ]] || continue
+    cx_n=$((cx_n+1))
+    sec=$(second_at "$task" "$a")
+    [[ "$_cxv" == FAIL ]] && cx_k=$((cx_k+1))
+    [[ "$sec" == "$_cxv" ]] && cx_j=$((cx_j+1))
+    [[ "$_cxv" == FAIL && "$sec" != FAIL ]] && cx_c=$((cx_c+1))
+  done
+  return 0
+}
 cmd_stats() {
   validate_ledger
-  local row task tier status attempt f n first fa el
+  local row task tier status attempt f n first fa el cx sec
   local total=0 clean=0 nfailed=0 noev=0 nesc=0 eltotal=0
+  local cx_m=0 cx_n=0 cx_k=0 cx_j=0 cx_c=0
   while IFS= read -r row || [[ -n "$row" ]]; do
     [[ -z "$row" || "$row" == \#* ]] && continue
     task=$(col "$row" 1); tier=$(col "$row" 2)
@@ -622,6 +890,7 @@ cmd_stats() {
       echo "stats: $task tier=$tier no-change (excluded)"
       continue
     fi
+    codex_tally "$task" "$attempt"
     first=""
     for f in "$VERDICTS/$task."*.verdict; do
       [[ -f "$f" ]] || continue
@@ -647,13 +916,17 @@ cmd_stats() {
     if [[ -f "$f" && "$(tail -n1 "$f")" != "ORACLE PASS" ]]; then fa=failed; fi
     [[ -f "$FLAGS/$task.flag" ]] && nesc=$((nesc+1))
     el=$(task_elapsed "$task")
-    echo "stats: $task tier=$tier first-attempt=$first $fa (now: status=$status attempt=$attempt) elapsed=$( [[ -n "$el" ]] && fmt_dur "$el" || echo n/a )"
+    codex_outcome "$task" "$attempt"
+    cx=none; [[ -n "$_cxs" ]] && cx="skip:$_cxs"; [[ -n "$_cxv" ]] && cx=$_cxv
+    sec=$(second_at "$task" "$attempt")
+    echo "stats: $task tier=$tier first-attempt=$first $fa (now: status=$status attempt=$attempt) elapsed=$( [[ -n "$el" ]] && fmt_dur "$el" || echo n/a ) codex=$cx second=$sec"
     total=$((total+1)); [[ -n "$el" ]] && eltotal=$((eltotal+el))
     if [[ "$fa" == clean* ]]; then clean=$((clean+1)); else nfailed=$((nfailed+1)); fi
   done < "$LEDGER"
   echo "first-attempt clean: $clean/$total (no-evidence rows: $noev)"
   echo "escalated: $nesc/$total"
   echo "elapsed total: $(fmt_dur "$eltotal") (sum of per-task evidence spans)"
+  echo "codex: ran $cx_n/$cx_m, FAIL $cx_k, same-verdict-as-second $cx_j, codex-only FAIL $cx_c"
 }
 
 cmd_done() {

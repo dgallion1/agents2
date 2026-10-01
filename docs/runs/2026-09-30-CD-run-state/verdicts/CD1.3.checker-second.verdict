@@ -1,0 +1,107 @@
+VERDICT: FAIL
+CHECKER: checker-second
+FAMILY: adversarial
+TASK: CD1
+ATTEMPT: 3
+MANIFEST_SHA256: d3ef275bb43656019eee317490b4d61b66a39500d0a4922992da34aa8d543159
+---
+Tree confirmed first: sha256sum -c .swarm/manifests/CD1.3.sha256 -> 15/15 OK (re-run just before this write; sidecar hash above is sha256sum of that file).
+All work ran in a copy WITHOUT .git (scratch: .../scratchpad/cd1a3-second.xVE3LQ; harness copy t/, remedy copy t2/), real harness + real containers
++ stub Codex + FAKE auth files only, every image/container command under the shared flock, nice -n 10. The real ~/.codex/auth.json was never read or mounted
+(oracle re-run used HOME=<fake dir>); the real Codex binary was never run. At the end: 0 agents2-codex containers/networks/volumes and 0 dangling images left
+(I removed my 11 leaked networks by name after attributing them by creation time to my runs; no dangling tinyproxy image remained).
+
+FAIL BASIS (one defect, criterion (b), steps 4 and 7): the cleanup does not survive further PROCESS-GROUP signals. It leaks the run's compose network.
+No secret, no unchecked file, no live Codex was found anywhere (every run below: leak scan of audit dir + verdicts = clean).
+
+F1. Group SIGINT/SIGTERM during cleanup kills the docker children of teardown(); the compose project is left behind.
+  Contract: step 4 "torn down on every exit path (containers, networks, volumes)"; step 7 "INT, TERM and HUP each lead into cleanup; once cleanup starts it ignores
+  them"; the brief names SIGKILL as the ONLY case that may leave the project ("A SIGKILL (untrappable) can leave behind the private temp dir and the run's compose
+  project"); attempt-3 reopen scope item (4) "cleanup ignores further signals" (SPEC ruling CD-n); the lead's own oracle invariant "H no networks left behind by any
+  trappable run".
+  Mechanism (measured): cleanup() does trap '' INT TERM HUP, so bash and Python children inherit SIG_IGN (the 264-run fake sweep and Python keep survive), but the Go docker CLI reinstalls INT and TERM handlers.
+     bash -c 'trap "" TERM INT HUP; exec docker events' -> /proc/PID/status SigIgn=0000000000000001 (HUP only); kill -TERM and kill -INT kill it, kill -HUP does not.
+     A terminal Ctrl-C (and coreutils timeout without --foreground) delivers to the whole process group, i.e. to whichever docker child is running (known behaviour; I emulated it with kill -SIG -- -PGID).
+  Repro (real docker, harness started with setsid so kill -SIG -- -PGID is a terminal-style group signal; trigger = the run's own "docker compose -p <project> ... down"
+     process appears; scenario = stub plants a fake token file + event, writes a valid last.json, exits; measured docker network ls before/after):
+     3 x group TERM, 0.4 s apart:    g03, h1, h2, h3, h4, p1, p2      -> 7/7 runs leave one <project>_isolated network (containers unchanged, verdict written, rc=0)
+     3 x group INT:                  p3                               -> leaves one network
+     2 x group TERM, 0.4 s apart:    p4                               -> leaves one network
+     2 x group INT,  0.4 s apart:    d1                               -> leaves one network
+     INT then 5 group INTs (s2), 8 group INTs (s4), both started mid-run:       -> leave one network each
+     NOT leaking (controls): ONE group INT/TERM on compose down (g01, d4, d5); two group INTs 1.0 s / 2.0 s apart (d2, d3); a single-PID TERM during compose down (c01) and
+     during tools.py keep (c03) (rc=0, verdict, 0 leftovers); plain runs (ev, net, aw); barrages whose signals landed on other steps (m01-m03 = 10 group INT/TERM, s1, s3).
+     (c02 and g04 aimed at compose logs never saw the trigger and are not evidence.) No run left a container or a live Codex (LIVE_CHECKER=0 in every run that measured it).
+  Remedy verified against the defect (rule 6b): in my copy t2 the six docker invocations of stop_container()/teardown() run under "setsid -w" (docker rm -f -v,
+     compose logs, compose down, docker ps -aq, docker rm, docker network ls/rm). Same barrage, same trigger: q1 (3 x gTERM), q2 (3 x gTERM), q3 (3 x gINT), q4 (2 x gTERM)
+     -> 0 leftover networks (agents2-codex-* count 8 -> 8), verdict written, rc=0. The fix is inside CD1 territory (swarm/codex-check.sh), a few lines.
+  Why the oracle passes: its TERM/INT/HUP cases signal the harness PID only (kill PID), never the process group; H-checks compare counts after those runs.
+  Severity, stated plainly: an empty docker network (each holds a subnet from Docker's address pools). Needs
+  >=2 group signals within ~1 s during the ~1-2 s compose down window (a fast double Ctrl-C). A judge may weigh that low; it is real, reproduced in all 12 fast multi-signal runs, and covered by the written text. Whether repeated leaks exhaust Docker's address pools was not tested.
+
+CRITERION (a) accept.sh ends ORACLE PASS -- PASS
+  - Lead's log .swarm/tier3/CD1/oracle.3.log: 162 lines, last line exactly "ORACLE PASS"; mtime 10:09 is after the manifest (09:50) and every worker file (<= 09:24).
+  - Independent re-run on my copy: HOME=<fake> GOMODCACHE=/home/darrell/go/pkg/mod TMPDIR=<scratch> nice -n 10 flock LOCK bash t/.swarm/tier3/CD1/accept.sh t
+    -> 159 ok / 0 FAIL, last line "ORACLE PASS" (territory check self-skips: no git base; I did (c) separately). A first run WITHOUT GOMODCACHE failed exactly the 5
+    Go-scenario checks: with a fake HOME "go env GOMODCACHE" is under the fake HOME, so the harness correctly skips container-error ce-nocache. Environment artefact, not a defect.
+  - Attack "a check that passes for the wrong reason against THIS implementation": read every A3/K/R/H check against the code. The secret-NAME check is decided only by
+    the name-secret test (the fake secret is 35 chars and fullmatches the name rule, so nothing else could drop it); "many" passes only if the 64 limit is exact; "big" pins
+    1 048 576/1 048 577; rotate-old/new are decided by the pre-run set and the live-file union respectively; deep-path really plants (stub-deep-planted) and the harness never
+    descends; host probes have positive controls (172.17.0.1 and the host's own address). I found no vacuous pass. Gaps (not failures of (a)): signals are PID-directed only
+    (the hole behind F1); "many" asserts a count of 64, not that last.json is among them (unit_tests.py does assert it); I did not run implementation mutants against
+    the oracle (docker lock queue of 10+ minutes per run with several concurrent users of the one docker host).
+
+CRITERION (b) every step holds as written -- FAIL on F1 only. Everything else was attacked and REFUTED (command -> result):
+  Secrets in file CONTENT (tools.py keep, fake secret 35 chars, 29 planted files): DROPPED = raw, UTF-16LE, UTF-16BE, BOM+LE, odd-aligned LE, \uXXXX lower/upper/all/
+    partial, escaped KEY, double- and triple-escaped, json.dumps nested 2-3 levels, pretty-printed JSON (url-quote and UTF-7 of this ASCII token equal the raw token, so they are dropped trivially). KEPT (all out of scope per brief,
+    reported as observations): 4-level escape, base64, hex, reversed, upper-cased, secret split by LF/CRLF/NUL, gzip, prefix-only, suffix-only. Escape-decoder differential:
+    9,238 random JSON-escaped bodies vs json.loads -> 0 misses, 0 over-detections; nesting depth 1-3 detected, 4-5 not (exactly the 3-pass rule); 200,000 random byte fuzz -> 0 exceptions.
+  Secrets in NAMES/dotfiles/links/odd entries (real run "ev" + k2): names .git/.gitignore/.env/.hidden/dot-auth -> dropped "name not allowed" (printed <unprintable name>); name =
+    secret, secret.txt, "pre-"+secret -> "name holds a secret"; 64-char name kept, 65 dropped; newline/tab/space/non-ASCII names dropped; symlink (to auth, /etc), dir (incl. a mode-000
+    dir holding the secret), FIFO, unix socket -> dropped, never opened; hard link of a secret file (same mount) -> dropped by content; 700 MB sparse and 1 MiB+1 -> "larger than 1 MiB"
+    without reading; mode-000 file -> unreadable; 64 entries max; nothing under out/ is other than a flat regular file; grep -rF for every auth secret (raw+UTF-16) over audit dir + verdicts: 0 hits.
+  last.json shapes (fake-docker full-harness runs): FIFO, directory, 5 MiB sparse, symlink to the auth file -> skip schema-invalid, no hang, no leak; copy/hard link of auth.json ->
+    secret-leak; secret as a KEY -> secret-leak; secret escaped twice -> secret-leak; FAIL that quotes the token -> secret-leak (skip, not a verdict); stderr+event with the token -> skip
+    quota with the fixed DETAIL. tools.py verdict matrix (24 shapes incl. BOM, NaN, 100k-deep, duplicate keys, header forgery, lone surrogate, NUL): secret never in the rendered file;
+    header-forging text stays indented; id newline collapses to one line. Split secret across two fields -> verdict written (out of scope, observation).
+  TOCTOU / Codex writing after "stop": 794 racing runs of tools.py keep + verdict against a thread swapping the target between clean file, secret file and symlink to the auth file
+    (os.replace loop): 0 leaks (each file is read once, checked and written from the same bytes; lstat+O_NOFOLLOW+fstat). Container is removed (docker rm -f -v) before any read.
+  Signals, single PID and fake docker (cheap, 264 runs = 33 timings 0..4.8 s x TERM/INT/HUP/TERM+TERM/gTERM/gINT/INT+HUP+TERM/KILL, 10 parallel): 0 leaks, 0 hangs, private temp dir
+    removed every time except KILL, exit codes 143/130/129/137 as expected; only the t=0 signals (before traps are installed) leave no output at all (killed by default action, nothing created).
+    KILL left the temp dir (allowed) and in 4 late-KILL runs a hidden .T.A.checker-codex.verdict.<pid> beside the verdict (checked content). Real docker single-PID: c01-c03 rc=0, verdict, clean.
+  Rotation / read-before-run: oracle rotate-old/rotate-new pass in my re-run; my "aw" run: host auth unchanged.
+  Host / LAN reach from the container ("net" run, canary TCP/UDP/TCP6 listeners on the docker host, strace on the harness): container has only eth0 172.25.0.x/16, no default route, CapEff 0,
+    Seccomp 2; for all 11 host IPv4s (192.168.1.90, 100.73.80.36, 172.17-24.0.1, 192.168.122.1) plus .254/.1 candidates: TCP to canary port, :8080, 22, 53, 80, 443, 3000 -> ENETUNREACH (errno 101)
+    (only 172.25.0.1:8888 = the proxy connects); SO_BINDTODEVICE=eth0 TCP -> timeouts, UDP sendto to the canary -> canary log: 0 hits (listening lines only). Proxy pivot (raw sockets to proxy:8888):
+    CONNECT h:443/8080/canary, absolute-URI GET, "chatgpt.com@h" GET, Host-mismatch for every host IP, 172.26.0.1, localhost, 127.0.0.1, 0.0.0.0, [::1], host.docker.internal -> 403 Filtered / 403 Access
+    violation; Host-mismatch to chatgpt.com -> 301 from chatgpt.com (the URL host wins, consistent). DNS: only "proxy" resolves; host.docker.internal, gateway.docker.internal, chatgpt.com, example.com fail.
+    Mounts (mountinfo): exactly /codex-home, /out, /work, /codex-home/auth.json (ro), /schema/verdict.schema.json (ro), /opt/codex/codex (ro), /opt/codex/codex-code-mode-host (ro) + runtime files.
+  Host auth file from the container ("aw" run): 20 attempts (hard link to /out and /codex-home, symlink-replace, mv away/over, cp /dev/null, truncate, >, >>, dd notrunc, sed -i, chmod, touch, rm,
+    /proc/self/root write, rename /codex-home, remount rw, su root, python r+, utime) all refused; only cat succeeded; host sha256, inode, mtime, size, mode identical before/after.
+  Verdict laundering and exit codes: existing verdict never replaced (oracle R + step 0 before any work); 0 args / 3 args / attempt -1 / "1\n" / "x" / task ".", "-x", "a/b" -> exit 2, nothing written;
+    task id 230 chars, attempt of 300 digits -> exit 1, nothing written; 200-char id works; verdicts/ read-only or a plain file -> exit 1; auth = directory / FIFO / mode 000 -> skip auth, exit 0;
+    SWARM_DIR/SWARM_TREE/TMPDIR containing spaces, $ and ' work; CODEX_TIMEOUT=abc/0 -> default with a note.
+  Freshness gate (tools.py auth, 49 shapes): 7-day boundary and exp < now+timeout+600 boundary correct; Z / z / +00:00 / +0000 / space / 9-digit fraction / leading whitespace / year 0001 / year 9999 /
+    JWT urlsafe, std-base64, padded, 2-part, exp float / negative -> gated as written; date-only, epoch number/string, exp as string/null/bool/inf, non-string access_token -> no gating (unparseable per
+    brief); BOM, UTF-16, truncated, empty, 3000-deep, duplicate-key-only, key-only, number-only, 19-char values -> skip auth/nosecret (fail-closed). 900-deep nesting still yields the secret.
+  DETAIL rule: every code used by codex-check.sh and tools.py is in the DETAILS table (script check: used-not-in-table = none); no run produced a DETAIL with Codex text, docker/go stderr, host path or
+    symlink target (my last-* / stderr-secret runs and the oracle's K scenarios); the only free element is one path matching ^[A-Za-z0-9._/-]{1,200}$ from the tree or manifest.
+  Argv / disk: no secret in any execve of docker; SECRETS_JSON is not exported; no file in the private temp dir holds a secret during the run (oracle); see observations O2/O3.
+
+CRITERION (c) only CD1-territory files exist/changed -- PASS
+  - git ls-files --others --exclude-standard | sort == sort .swarm/manifests/CD1.3.files (diff empty, 15 paths); none gitignored (git check-ignore rc=1). git diff --name-only 12f6413: SPEC.md (lead) and
+    CD2/CD3 territory only (swarm/gate.sh, dashboard/lib/parse.mjs, dashboard/test/parse.test.mjs, smoketest/gate/_lib.sh run_check.sh run_done.sh run_escalate.sh). smoketest/gate/run_tests.sh unchanged, mentions no codex.
+    CODEX_TESTS=unit bash smoketest/codex/run_tests.sh on my copy: ALL PASS. No __pycache__/.pytest_cache in the tree.
+
+OBSERVATIONS (not grounds for FAIL)
+  O1. Recognised-forms net only: a name that is the first 60 chars of the JWT was kept as out/<name> (partial secret), a secret split across two verdict fields was written to the verdict, and base64/hex/split/upper-cased
+      copies are kept. All are outside the brief's forms; a deliberately encoding Codex is not stopped, only accidental disclosure is.
+  O2. tools.py is fed the secret list as env CD_SECRETS=<JSON list of every auth string> through the external command env, so the whole list is in argv of three short-lived env processes (copy, keep, verdict):
+      strace -f -e trace=execve shows execve("/usr/bin/env", ["env", "CD_SECRETS=[\"...\", ...]", ...]); readable via /proc/PID/cmdline for ~1 ms (my poller never caught the window). Not a file; the brief says "environment or pipes".
+      A bash prefix assignment (CD_SECRETS=... python3 ...) would keep it out of argv.
+  O3. bash 5.2 here-strings use a pipe up to 64 KiB but an unlinked temp file in $TMPDIR above it (strace: sh-thd.*): a secret JSON over 64 KiB (never a real auth.json) would touch disk in the IFS read; over 128 KiB the exec fails E2BIG and every step skips (fail-closed).
+  O4. dropped.txt is unbounded (39,939 lines for 40,000 planted entries; names are capped, count is not); an events.jsonl over 16 MiB is dropped wholesale.
+  O5. The noline DETAIL echoes a manifest path even when absolute: printf 'src/a.txt\n/etc/shadow\n' as manifest without a sidecar line -> "skip fingerprint-mismatch noline /etc/shadow" (the regex allows a leading /); manifest text, not a harness-derived host path.
+  O6. Duplicate JSON keys: {"tokens":{"access_token":"<S>","access_token":"short"}} -> json.loads keeps the last, the first value is not in the secret set (with no other string: skip nosecret; with another secret present it would not be covered).
+  O7. Exclusion is by name: a hard link of data/live.csv named src/hardlink.txt is copied with its content (attempt-1 O2, unchanged); container mountinfo still shows host source paths (user name, temp dirs) (attempt-2 observation).
+  O8. First-batch caveat: my earliest signal batch (b01-b14) used a pgrep trigger that matched my own command line, so it fired at t=0; I discarded it and redid everything with a session-scoped/project-scoped trigger. Numbers above are from the redone runs.

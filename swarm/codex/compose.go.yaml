@@ -1,0 +1,17 @@
+# Overlay, used only when the tree has a root go.mod: a PER-RUN subset of the
+# host module cache (only the target's own dependencies, built by
+# `go mod download`), read-only, with the network proxy switched off. The
+# host's whole module cache is never mounted.
+services:
+  checker:
+    environment:
+      GOMODCACHE: /gomodcache
+      GOPROXY: "off"
+      GOFLAGS: -mod=mod
+      GOCACHE: /tmp/gocache
+    volumes:
+      - type: bind
+        source: ${CD_GOMOD:?set by swarm/codex-check.sh}
+        target: /gomodcache
+        read_only: true
+        bind: {create_host_path: false}

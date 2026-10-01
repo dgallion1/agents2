@@ -1,0 +1,165 @@
+VERDICT: FAIL
+CHECKER: checker-tests
+FAMILY: anthropic
+TASK: CD1
+ATTEMPT: 1
+MANIFEST_SHA256: b4e51570998af298902a4494bc435affc0767767ce08eb33716cef38677299f1
+---
+Tree: sha256sum -c .swarm/manifests/CD1.1.sha256 -> all 14 paths OK (at start and again before writing).
+Contract verified: .swarm/briefs/CD1.1.md AS DISPATCHED for attempt 1 (11138 bytes, private copy
+taken 21:51). The lead rewrote that file in place at 22:21:24 for attempt 2 (ruling CD-j), and
+accept.sh/stub-codex at 22:21:54; results below use the attempt-1 oracle (sha 268396cd...) only.
+Work was done in private copies without .git; all Docker work under the shared flock.
+
+FAIL SUMMARY (what is missing)
+F1 [NEW - not in CD-j] The Codex container can reach the HOST, incl. live budget2 :8080 (SPEC D3).
+   The checker sits only on the internal network, but the network's own bridge gateway address
+   is the host. Probe stub, harness run from TREE (run-probe.sh, probe2):
+     container ip 172.26.0.3, gateway 172.26.0.1
+     curl -s --noproxy '*' http://172.26.0.1:<port>/  -> "hostprobe"  (verifier's listener bound
+       0.0.0.0 on the host), curl rc=0
+     TCP connect only (no request bytes) to 172.26.0.1:8080 -> "TCP CONNECTED" (budget2 listens *:8080)
+     172.17.0.1 / LAN / tailnet addresses: "Network is unreachable"; external DNS: fails.
+   So Codex, with its sandbox bypassed, can curl http://<gateway>:8080/ and read live household
+   data, which then leaves in the conversation. This contradicts SPEC §1 D3 ("no host
+   filesystem, no budget2 :8080 (it binds *:8080), no LAN"), the CD1 task-table criterion
+   ("172.17.0.1:8080 ... unreachable" = budget2 on the docker host) and what step 4's "ONLY on an
+   internal network" is for. Missing: no host address may be reachable from the checker
+   container, the isolated network's gateway included. The oracle check "P a host service on the
+   docker host is unreachable" passes for the wrong reason: it only probes 172.17.0.1 (docker0),
+   which is off-link. The oracle needs a probe of the checker subnet's own gateway (lead's item).
+F2 [= CD-j F1a, reproduced independently] Step 7 "every occurrence ... in out/ is replaced ...
+   on every path" does not hold. probe5 "ro": the stub writes the fake secret to /out/ro.txt
+   (chmod 444) and /out/locked/in.txt (dir chmod 000). The harness wrote a PASS verdict. Afterwards
+   grep -rlF <secret> finds: out/locked/in.txt and out/ro.txt (redact_path gives up on a failed
+   O_RDWR open; os.walk cannot enter the 000 dir).
+F3 [= CD-j F1b, reproduced independently] Step 7 "any secret appearing in last.json -> skip
+   secret-leak" can be defeated. probe5 "trunc": the stub runs ": > /codex-home/auth.json"
+   (reports "truncated") and puts the token in last.json. Result: VERDICT: PASS is written with the
+   full token in it; the token is also left in out/last.json; the HOST auth file is now 0 bytes.
+   The secret set is read from $CODEX_AUTH after the run, and the rw mount lets the container
+   empty it.
+
+(a) ORACLE - PASS (with the F1 caveat about its host probe)
+  flock <lock> nice -n 10 bash .swarm/tier3/CD1/accept.sh <TREE>, 21:51:01-21:52:37:
+  113 "ok" lines, 0 FAIL, last line "ORACLE PASS", rc=0. The H territory check ran against the real
+  git tree. Afterwards the tree hash snapshot was unchanged and the manifest still verified.
+  Not vacuous: in private copies, 11 single-edit mutants, each run through the attempt-1 oracle,
+  and every one was caught (ORACLE FAIL, exit 1):
+   m01 drop '.agents' exclusion class -> 3 fails (P /work, files.txt, excluded.txt)
+   m02 proxy filter un-anchored -> "P lookalike evilchatgpt.com refused"
+   m03 FilterDefaultDeny No -> 7 fails (non-allowlisted host, plain-HTTP, proxy.log ...)
+   m04 secret-leak check skipped -> "K an auth secret in last.json" (a verdict was written)
+   m05 existing verdict re-run/replaced -> "R an existing verdict is never replaced"
+   m06 build only when tags are missing -> 66 fails (the stale-proxy-tag trap, CD-g)
+   m07 mount the host's WHOLE GOMODCACHE -> "G ... subset", "G the subset is small"
+   m08 6b removed -> "K Codex could not run commands" (a verdict was written)
+   m09 isolated network internal:false -> "P a host service ... unreachable", "P no direct egress"
+   m10 redaction removed -> 2 fails (secret-leak redaction, echoed secret)
+   m11 ConnectPort 443 removed -> "P CONNECT ... port 80 ... refused"
+  The m12+ runs were discarded: the oracle file was rewritten under a running bash (a syntax
+  error at line 244), so later runs used the attempt-2 oracle.
+  Worker's own suite (private copy, under lock): smoketest/codex/run_tests.sh -> 145 ok, "ALL
+  PASS", rc=0. CODEX_TESTS=unit -> ALL PASS.
+
+(b) STEP BY STEP (attempt-1 brief)
+ 0 PASS. Args "", "T", "T 1 x", "T x", "T -1", "T 1.0", "T ''", "T 01a" -> rc=2, and verdicts/ and
+   the audit dir stay empty. With an existing verdict (also a dangling-symlink verdict): rc=0,
+   the stderr line "already exists - left untouched, nothing run"; the old skip record and an old
+   events.jsonl are byte-unchanged; no audit dir is created (the oracle's R check and m05 agree).
+ 1 PASS. Each case removes one item plus every later item, so the earliest check must win:
+   no-exclude-policy, no-criteria, no-evidence, no-codex (a non-executable file), auth (mode 000,
+   and a directory), docker-unavailable (DOCKER_HOST bogus); a non-git SWARM_TREE with docker
+   down -> docker-unavailable (preconditions run before step 2). Extra check: docker compose
+   version is folded into docker-unavailable (compatible).
+ 2 PASS (copy). tools.py cmd_copy uses git ls-files -z --cached --others --exclude-standard
+   verbatim. The oracle's exact /work, files.txt and excluded.txt lists match. My tools.py
+   probes: DATA/ is kept and a root FILE "data" is excluded; a policy line "private" (no slash)
+   keeps private/x (brief semantics); "sub/**" works; a tracked-but-deleted file is skipped; a
+   symlink named .env pointing at /etc/passwd is excluded by name and never followed; a non-UTF-8
+   name is copied; a FIFO never reaches the copy; exec bits are kept.
+   Symlinks: a link to a gitignored file, to .git/config, absolute, dangling, to a directory,
+   escaping, into data/, or a chain through an excluded link -> unsafe-tree, with DETAIL naming
+   the link. sub/l -> ../src/app.txt is copied as a link.
+ 3 PASS. SIDECAR_LINE is the gate's regex. Blank lines are ignored, as in the gate. Deleted-must-be-
+   absent, drift, missing path, unparseable line and path-without-line -> fingerprint-mismatch
+   (oracle K and unit U). "hash *path" is accepted. "./src/app.txt" is normalised. An excluded
+   manifest path is listed and skipped. MANIFEST_SHA256 is the sha256 of the sidecar bytes (the
+   oracle P check; my probe verdict carries ce890ed5... = sha256 of that sidecar).
+ 4 FAIL - see F1. Everything else in step 4 holds:
+   - mountinfo (probe stub, /proc/self/mountinfo in full): the only non-runtime mounts are
+     /work rw, /codex-home rw (the private temp dir), /codex-home/auth.json rw (the given
+     CODEX_AUTH), /out rw, /schema ro (TREE/swarm/codex), /opt/codex/codex ro, and
+     /opt/codex/codex-code-mode-host ro. The rest is docker's own resolv.conf, hostname, hosts,
+     /proc, /dev and /sys. Nothing else.
+   - env is exactly HTTPS_PROXY, HTTP_PROXY, CODEX_HOME, HOME plus the image defaults. uid/gid are
+     1000, CapEff 0. /codex-home holds only auth.json and config.toml (0 bytes).
+   - proxy (raw requests from the container): CONNECT chatgpt.com:443 -> 200; chatgpt.com.,
+     xchatgpt.com, ab.chatgpt.com and api.openai.com.evil.invalid -> 403 Filtered; CONNECT to
+     port 80 or 8443 -> 403 Access violation; GET to host IPs or to example.com -> 403 Filtered;
+     userinfo trick -> 403. proxy.log has one "Request" line per request, with the host, plus a
+     refusal line.
+   - The fixed-name images are rebuilt every run (oracle S check, m06).
+   - Go subset (probe4, a go.mod requiring google/uuid): /gomodcache is ro with 37 files, only
+     github.com/google/uuid@v1.6.0, and no dgallion1 modules. GOMODCACHE, GOPROXY=off,
+     GOFLAGS=-mod=mod and GOCACHE are as specified. go build offline rc=0. The go.mod and go.sum
+     in the copy are byte-identical to the fixture.
+   - An image build failure (RUN false) and a proxy that cannot start (bad directive, exit 70)
+     both give skip container-error, leaving 0 containers and 0 networks behind.
+   - Teardown on SIGTERM mid-run: exit 143, skip container-error "terminated", container,
+     network and volume deltas all 0, the private temp dir deleted.
+ 5 PASS. The probe's argv is exactly "exec --dangerously-bypass-approvals-and-sandbox --ephemeral
+   --ignore-rules --skip-git-repo-check -m gpt-6-astra -C /work --json --output-schema
+   /schema/verdict.schema.json -o /out/last.json -". The prompt starts with brief.md verbatim
+   (python check True), then "## About this copy" (the class list, "Omitted paths (1): -
+   PLANNING_LOG.md", and the artefact sentence), then the criteria file. The timeout is covered
+   by the oracle's hang case.
+ 6 PASS. Timeout is checked first, then quota > auth > codex-error (oracle K cases). Words in
+   ordinary events never count (oracle incidental case, and my item.completed probe). Case-
+   insensitive (LOG IN -> auth). Observation O2.
+ 6b PASS. item.type=error "Code Mode is unavailable..." -> codex-error "tool execution unavailable"
+   even with last.json present (oracle, m08). The same words in agent_message or command output
+   -> no effect.
+ 7 FAIL - see F2 and F3. What holds: a secret in last.json (raw, JSON-escaped, non-JSON) ->
+   secret-leak; only VALUES >= 20 chars count; echoed secrets in events.jsonl are redacted;
+   on SIGTERM, events.jsonl and out/ were redacted.
+ 8 PASS. The schema validator rejects a bad enum, empty criteria, missing or extra keys at both
+   levels, and wrong types (unit T, oracle K). A PASS with a blank command or result ->
+   evidence-free-pass. The verdict headers are in brief order, then "---" and the indented
+   evidence. The skip format is REASON/DETAIL/TASK/ATTEMPT, DETAIL on one line. Every reason used
+   is in the brief's list.
+ 9 PASS. grep brief.md: census 0, .swarm 0, sha256 0, manifest 0. It has /work and data-free,
+   "never write a verdict file", "refuted attack" (2), "Default to FAIL", "no access to anything
+   else", "exact command"; it answers only in the schema.
+ Extras, all compatible hardening (none contradicts the brief): task-id regex -> exit 2 (stops
+   path traversal in output names); CODEX_TIMEOUT fallback; GOTOOLCHAIN=local (no toolchain
+   fetch, a failure is container-error); leading-/ strip (excludes more); newline paths ->
+   unsafe-tree (fails closed); nested repos listed as "dir/" and excluded; a symlinked parent ->
+   unsafe-tree; absolute or ".." manifest paths -> fingerprint-mismatch; stale audit clearing
+   (after the existing-verdict exit, so a verdict's audit is kept); container-error on interrupt
+   (verified); indented verdict body (header forging blocked, unit T); a relative link that
+   re-enters the tree by its own dir name -> unsafe-tree; "the checker did not start" ->
+   container-error.
+
+(c) SCOPE - PASS. git ls-files --others --exclude-standard lists exactly the 14 manifest paths,
+  none gitignored. git diff --name-only 12f6413 shows only SPEC.md (the lead's) and CD2/CD3
+  territory (swarm/gate.sh, dashboard/lib/parse.mjs, dashboard/test/parse.test.mjs,
+  smoketest/gate/_lib.sh, run_check.sh, run_done.sh, run_escalate.sh). smoketest/gate/run_tests.sh:
+  0 diff lines, no "codex" references. In a private copy, smoketest/gate/run_tests.sh -> ALL PASS.
+  Territory touches critical glob swarm/**, which is allowed at Tier 3.
+
+OBSERVATIONS (not grounds for FAIL)
+ O1 /proc/self/mountinfo in the container shows the host SOURCE paths of every bind (the user
+    name, the worktree path, the scratch path). This is metadata only, but it leaves the machine.
+ O2 classify/tools read every string field of an error/turn.failed event, not only the message:
+    {"type":"error","message":"boom","request_id":"req_4291"} -> quota. This only changes which
+    skip reason is given.
+ O3 exit 2 is also used when $SWARM_DIR/verdicts cannot be created, which is not a usage error.
+ O4 codex.exclude lines are whitespace-stripped, and "  #x" counts as a comment. This mostly errs
+    toward excluding more.
+ O5 Plain-HTTP GETs to allowlisted hosts are forwarded (GET / Host: chatgpt.com -> 301). This is
+    within the brief's CONNECT-only-443 wording.
+ O6 A policy line without a trailing "/" does not exclude a directory's contents. CD4 docs should
+    say "dir/".
+ O7 Each oracle run leaves one dangling tinyproxy image (known). I removed mine by ID; container,
+    network and volume counts are back to baseline (12/10/8).

@@ -1,0 +1,357 @@
+# Orchestration rules — boss/worker/checker swarm
+
+You are the lead. Your job is judgment, not typing: design, specs, dispatch,
+review, adjudication. Delegate implementation by default (see Dispatch rules
+for the lead-direct exception).
+
+## ACTIVE EXPERIMENT — lean verification (2026-08-31)
+
+This run tests whether a stronger lead/worker model makes the heavier
+verification machinery redundant. What changed and why:
+
+- **Tier 2 defaults to ONE verifier.** The 2026-08-26 retro showed every real
+  catch came from the oracle or a checker — never from redundant generation —
+  and the surviving defects were spec-level (rounding paths, threshold
+  sources, surface enumeration), not capability-level. With all lanes on
+  Claude since 2026-08-19, a same-family adversarial second opinion on a
+  routine task adds little. `checker-second` is now RESERVED for tasks
+  touching the documented defect-history surfaces (see Tier 2).
+- **What is deliberately NOT weakened:** the Tier-3 oracle discipline, the
+  mechanical gate, and non-author verification. Those catch the brief's own
+  errors and the lead's own optimism — failure modes no model strength fixes.
+- **Measurement:** the gate now has a `stats` subcommand. At the end of the
+  run, run `swarm/gate.sh stats` and report the first-attempt clean rate to
+  the user verbatim (since 2026-09-18 a first-attempt FAIL the judge panel
+  overruled counts as clean — a checker false alarm is not a worker miss —
+  and the report includes escalations and an mtime-based elapsed span).
+  Decision rule agreed with the user: if first attempts
+  are ~all clean over ~10 tasks, the process shrinks further next run; if
+  oracle/checker failures persist on first attempts, the catches were never
+  about model strength and the machinery stays.
+- Record every catch this run in SPEC.md "Rulings" with WHICH mechanism
+  caught it (census / oracle / primary checker / second checker / judge /
+  gate) — that attribution is the experiment's real output.
+- Record in the run record the model IDs the subagents actually ran on (the
+  `model` field in their transcripts), not the frontmatter alias. `sonnet`
+  ran `claude-sonnet-5` through 2026-09-27 and `claude-sonnet-5-5` first
+  appears 2026-09-29; a before/after comparison must not mix a model change
+  with a process change.
+
+## Phase 0 — Constitution before code
+Before any build work, write the contract and get user sign-off. The
+ceremony scales with the run; the sign-off gate does not.
+- `SPEC.md` — always. For a one-task run that is a task block: the change,
+  numbered acceptance criteria, the tier with its one-line justification,
+  the named checkers, and the oracle (executable at Tier 3). For a multi-task
+  run add the task table and any shared design decisions. This is what the
+  runs since 2026-09 actually produce; a page inventory or brand section
+  belongs only in a site build.
+- `ACCESSIBILITY.md` — only when a task can touch markup, styles, or
+  interactive behaviour. It is the numbered standard (WCAG 2.2 AA baseline
+  plus project points) that `checker-a11y` audits against, so a Go-only or
+  data-only run does not need one (TX/TY precedent). If the target repo
+  already carries one, reuse it — do not write a per-run copy.
+- `SOURCES.md` — only when content is migrated or quoted, mapping every
+  content block to its canonical source.
+
+## Superpowers skills — front half only (2026-09-18)
+The `superpowers` plugin stays enabled and yields to this document (its
+own rule: CLAUDE.md overrides skills). A 2026-09-18 transcript audit
+found three of its skills earn their place, all before or beside the
+swarm, never inside it:
+- `brainstorming` is HOW Phase 0 surveys: classify, measure the live
+  build, present a short design, stop for sign-off. Its artifact is
+  SPEC.md (plus ACCESSIBILITY.md / SOURCES.md), never a new
+  `docs/superpowers/specs` file — existing ones are history to read.
+  "Bounded" shortens the design, not the verification: the task still
+  gets a SPEC.md row, a tier and a ledger line.
+- `systematic-debugging` opens a bug session: root cause and a
+  reproduction before any fix or dispatch.
+- `receiving-code-review`: verify each claim in a review against the
+  code before conceding or rebutting it.
+Never follow `subagent-driven-development`, `executing-plans`,
+`writing-plans`, `verification-before-completion` or
+`finishing-a-development-branch` in a swarm repo — each is a weaker
+parallel of this document (same-lane LLM reviewer, no mechanical gate,
+no tiers, no hard stop, a "don't pause" rule that contradicts Phase 0
+sign-off). The plan is SPEC.md's task table plus the ledger; "verified"
+means `gate.sh check` exited 0; a branch finishes by the user's
+commit → push → PR → merge → pull rhythm. `test-driven-development` is
+a worker's own discipline (subagents never see the plugin's session
+injection); the lead's version is Tier 3's oracle-first rule. Never
+invoke a skill for ceremony — the meta-skill's "1% chance" rule yields
+here (it once produced a TDD invocation after the work was already
+built). Codex runs the same plugin; its gitignored `.superpowers/` notes
+in a target repo are codex's records, not this run's evidence.
+
+## Dispatch rules
+- Implementation goes to `worker-coder` (or `worker-local` for bulk
+  mechanical work) by default. **Lean exception (2026-08-31):** the lead MAY
+  implement a task directly when it is small, well-specified, and Tier 1–2.
+  Record `lead` in the ledger's `worker` column. The verification contract is
+  unchanged and non-negotiable: the named checkers still run (they are the
+  non-author eyes — the fresh-eyes property is the point, W4 precedent), the
+  lead still never writes a PASS verdict, and `gate.sh check` still decides
+  acceptance. Tier 3 is always dispatched to a worker.
+- One scoped task per worker invocation, with the relevant SPEC.md section
+  pasted into the delegation message. Workers cannot see this conversation.
+- **Resume, don't re-dispatch (2026-09-18).** Subagents cannot ask
+  questions mid-run; they return. A `BLOCKED` return or a checker FAIL is
+  answered by `SendMessage` to the SAME worker agent — it keeps its file
+  reads, partial edits and spec context, so the answer or the verdict is
+  the whole message. A fresh `Agent` call starts from zero and is reserved
+  for: a hard stop, a contract/spec rewrite (T18 precedent), or a Tier-3
+  attempt after the oracle itself changed. Resuming is still a new attempt:
+  bump the ledger `attempt` column and require a new manifest. Checkers are
+  NEVER resumed across attempts — the fresh-eyes property is theirs, not
+  the worker's.
+- Independent tasks run as parallel background workers.
+
+## Verification — tiered and mechanically gated
+
+Every task carries a **tier** (see TIERS.md), assigned in Phase 0 and approved
+by the user. Tier decides how it is verified; a mechanical gate decides when it
+is accepted. In Phase 0, also create the run directory and ledger:
+
+```bash
+mkdir -p .swarm/verdicts .swarm/manifests .swarm/flags .swarm/tier3 .swarm/census
+# ledger.tsv columns (TAB-separated):
+#   task_id  tier  checks  status  attempt  worker  reason
+```
+
+Add a `Tier` column to SPEC.md's task table and draft `.swarm/critical.globs`.
+
+### The hard rule (do not bypass)
+
+- A task's status may become `accepted` **only after `swarm/gate.sh check
+  <task>` exits 0.** Paste the gate's output into the accepting message.
+- Every attempt carries evidence the gate re-derives (2026-09-18): the
+  worker's manifest AND its `.sha256` fingerprint sidecar (one `sha256sum`
+  line per manifest path, written after the last edit), and every checker
+  PASS records `MANIFEST_SHA256` — the hash of the sidecar it verified.
+  `check` re-hashes the tree against the sidecar (run it from the target
+  repo root, or set `SWARM_TREE`), so nobody (a checker included) may
+  mutate the tree between the worker's fingerprint and acceptance; that is
+  the mechanical form of the TC snapshot rule. `done`
+  re-checks the evidence set but not the tree. Consequence: start a fresh
+  ledger per run — rows accepted before 2026-09-18 have no fingerprints and
+  will not pass `done`.
+- The run may be declared complete **only after `swarm/gate.sh done` exits 0.**
+- After every verdict lands, run `swarm/gate.sh escalate-scan`. If it writes a
+  flag, bump that task's `tier` in the ledger to the flag's `TARGET_TIER`,
+  record the reason, and re-verify at the new tier. The gate refuses
+  acceptance at the old tier while a flag is unresolved — and since
+  2026-09-18 `check`/`done` recompute the triggers inline, so a row with a
+  live trigger (critical-glob manifest, boss overrule, two consecutive
+  fails) and no flag is refused with "run escalate-scan" rather than
+  accepted. Mechanics worth knowing: the two-consecutive-fails trigger reads
+  the ledger's `attempt` column (bump it on every re-dispatch or the trigger
+  stays silent), and the next scan clears a flag automatically once the
+  tier is raised — no manual deletion.
+
+You never transcribe a verdict. Workers write manifests; checkers and judges
+write verdict files. You read evidence and update ledger status only.
+
+### Surface census — audit the brief before dispatch (2026-09-29)
+Every lean-era catch landed on a lead artifact, and the commonest was a
+surface the brief never listed, found after dispatch at the cost of an
+attempt (ND3, GV, RC). Before dispatching any Tier-3 task, and any Tier-2
+task whose `checks` names `second`, dispatch `surface-census` with the draft
+brief (and, at Tier 3, the draft `accept.sh`). It reads the whole affected
+area and writes `.swarm/census/<task>.<attempt>.md`: every consumer of the
+touched data, every brief claim the code contradicts, and every consumer the
+oracle does not assert on. Then:
+- Reconcile before dispatch. Each CONTRADICTED claim is fixed in the brief
+  or ruled on in SPEC.md "Rulings"; each unlisted consumer is added to the
+  brief (and to `accept.sh`, which then re-validates at both ends) or
+  excluded in writing. Attribute each such fix to mechanism `census`.
+- It is advisory input, not a verdict: the gate never reads it, and it never
+  substitutes for the oracle or a checker.
+- Never hand the census report to checkers. They enumerate independently; a
+  checker anchored on the list stops being a second search, and a surface
+  both miss is a finding about the method.
+- A contract/spec rewrite gets a fresh census at its new attempt; a resumed
+  worker on an unchanged brief needs none.
+
+### Tier 1 — one checker
+Worker → the mechanical checker(s) named in the ledger `checks` column
+(`checker-content`, `checker-a11y` or `checker-tests`) → `gate.sh check` →
+accept. The `checks` column is load-bearing at every tier: a `-` or blank
+column hard-fails (since 2026-09-18 at Tier 1 too — it used to accept the
+row with zero verdicts).
+
+### Tier 2 — named verifier(s) + judge panel on disputes (LEAN, 2026-08-31)
+Worker builds once. Then the checker(s) named in the ledger `checks` column
+run; **every named checker must PASS**. The default is ONE primary verifier
+(`checker-tests` for code, `checker-a11y` / `checker-content` for UI and
+content), which asks "does this meet the criteria?" and must cite the command
+proving each one — a PASS without commands is not evidence, send it back.
+
+Add `second` (→ `checker-second`, lane `adversarial`) to `checks` — making it
+a dual-lane task exactly as before the experiment — when the task touches a
+**defect-history surface**:
+- value formatting or rounding shown to users (dual-formatter class, W2);
+- a threshold/classification applied to a figure on more than one surface
+  (split-classification class, W4 / ruling 2026-08-29a);
+- arithmetic over rendered strings (ruling 2026-08-29b);
+- money, or anything a wrong figure on screen makes a lie;
+- or whenever you are unsure — the tie-break is still "round up".
+`checker-second` asks "what would make this wrong?" and defaults to FAIL on
+ambiguity. When `second` is named, the gate mechanically requires the PASSes
+to span two lanes (`checker-a11y`+`checker-content` are both `anthropic` and
+do NOT satisfy it).
+
+Any FAIL is a dispute. Default resolution is **CONCEDE**: treat the FAIL as
+upheld and send the task back to the worker. Dispatch the three judges —
+`judge-claude` (primary lane), `judge-standards` (adversarial lane),
+`judge-impact` (user-impact lane) — only for a FAIL you would overrule, each
+with the task, the work, the contested verdict + evidence, and the
+constitution. Record the ruling in SPEC.md "Rulings". The gate enforces the
+vote count and the distinct-lane requirement mechanically. The arithmetic,
+precisely: once any FAIL exists at the attempt, judge votes REPLACE the
+named-checker PASS requirement; the panel needs ≥3 verdicts, each with a
+unique judge identity AND a unique lane, and a strict OVERRULE majority —
+ties uphold. Valid `FAMILY` values are `anthropic`, `adversarial`, `impact`
+(plus `glm`/`local`, accepted only so pre-2026-08-19 verdicts still validate
+— never write them).
+
+### Tier 3 — oracle-first, then full dual-lane (NOT leaned)
+Blind N-version was dropped (user decision 2026-08-26): across the budget2
+runs the two arms' oracle scores were identical every time real divergence
+existed, both arms inherited the brief's errors, and every Tier-3 catch came
+from the oracle or the Tier-2 pass that followed — not from the comparison.
+A defect in the brief itself propagates identically into every arm, so
+replication can never audit the lead. What remains is the oracle discipline:
+1. Write **executable acceptance checks** as `.swarm/tier3/<task>/accept.sh`
+   before dispatch — commands plus expected observations. This is the oracle.
+   It must assert on the observable output of **every existing consumer** of
+   any data the task touches (reconciled against the surface census), and be
+   validated at both ends before dispatch
+   (a featureless tree must fail it; the spec's own examples must pass it).
+2. Dispatch a single `worker-coder` with the task block.
+3. Run `accept.sh` against the result and tee the output to
+   `.swarm/tier3/<task>/oracle.<attempt>.log`. The gate requires all four:
+   the file exists, it is **executable** (`chmod +x` at authoring time), a
+   log exists at THIS attempt number, and the log's final line is exactly
+   `ORACLE PASS` — so the script must emit that marker only on the all-pass
+   path. Any failure goes back to the worker as a failed attempt.
+   The legacy blind-arm `report.md` contract was removed 2026-09-18: a
+   `report.md` in the task's tier3 dir is now a hard gate failure, so never
+   reuse a pre-2026-08-26 tier3 directory for a new task.
+4. Run the full dual-checker verification — primary verifier AND
+   `checker-second`, judge panel on disputes. Tier 3 is exempt from the lean
+   experiment: name every checker in the `checks` column (at least the
+   primary and `second`), and `gate.sh check` requires a PASS from EVERY
+   named checker AND PASSes spanning both lanes at the current attempt (a
+   named checker that never ran fails the row, 2026-09-18). Irreversible
+   work keeps the pre-2026-08-31 rigor.
+
+### Disputes in practice (2026-08-29, first panel use)
+- The lead may CONCEDE an uncontested FAIL — treating it as an implicit
+  UPHOLD and sending the task straight back to the worker — when the lead
+  agrees the defect is real and in-scope. Reserve the three-judge panel for
+  verdicts the lead would overrule; dispatching judges to rubber-stamp a
+  FAIL you believe wastes a cycle.
+- **The scope of a reopened attempt governs its acceptance.** When the user
+  reopens a hard-stopped task with an explicit scope ("Nothing else"), that
+  later, specific ruling controls over any earlier general ruling. Checkers
+  report beyond-scope findings as observations for the backlog; they do not
+  FAIL on them (ruling 2026-08-29c/d precedent).
+- Judges verify the contested verdict's FACTUAL premise first — a FAIL can
+  simply be wrong (2026-08-29d: the claimed same-figure contradiction was
+  two different figures).
+
+### Recurring defect classes (checkers hunt these; workers avoid them)
+Three classes produced most of the last week's real catches:
+1. **Split classification** — a threshold applied to a figure must live in
+   ONE source consumed by every surface rendering that figure; the checker's
+   job is to ENUMERATE the surfaces (templates, JS, charts, tools), not
+   trust the diff (ruling 2026-08-29a; W4 found three independent
+   classifiers ring by ring). Grep finds candidates; enumeration means
+   reading the packages that render the figure (ND3: a Go string
+   concatenation hid a surface from every grep).
+2. **Rendered-string arithmetic** — "the displayed figures must sum" is a
+   claim about the RENDERED strings, not the floats; assert on rendered
+   output with a fractional-cent fixture, and derive every displayed figure
+   through one rounding path (ruling 2026-08-29b).
+3. **Dual formatters** — two formatters for one value (Go `%.0f` half-even
+   vs JS `Math.round` half-away vs locale-dependent `toLocaleString`) WILL
+   disagree on real inputs; pin one rule and an explicit locale at every
+   site (W2 attempts 2–4).
+When a checker proves a behavior with a throwaway probe, promote it: a
+test-only follow-up task in the same run (V3 pattern) so the evidence
+outlives the verdict file.
+
+### Oracle calibration (additions to the both-ends rule)
+- Validate every check for the RIGHT failure: at the fail end, confirm the
+  failing check is the defect, not a harness error; at the pass end, use a
+  throwaway prototype, then discard it.
+- Calibrate assertions against MASTER's own rendering first: html/template
+  strips HTML comments (don't anchor on them); whitespace-only lines and
+  permanently-tinted sibling elements may be master-native — pin counts
+  relative to that baseline, or the oracle fails a perfect fix.
+- When an escalated attempt adds new oracle checks, the whole extended
+  oracle re-validates at both ends before dispatch.
+
+### Concurrent runs in one repo
+Two leads may run in one repo only with: distinct ledger prefixes, an
+explicit written territory list per run (exact paths), a freeze handshake
+before any lane that copies the tree (a `cp -a` of a mid-edit foreign
+territory poisons a checker's baseline), and NO git-state changes (HEAD,
+branches, stash, index) by the non-committing session. Checkers are told
+the foreign territories verbatim so they attribute, not FAIL. The lead
+stages ONLY its own manifest paths plus its own `.swarm/` files;
+`gate.sh done` over the shared ledger belongs to whichever run finishes
+last. (Established with agents2-26, 2026-08-29 — including one HEAD switch
+under a live run that this section exists to prevent.)
+Two consequences that change what verification may demand:
+- A shared tree cannot require a green FULL suite from a checker — the
+  other run's uncommitted edits ride along in every copy. Acceptance
+  stands on package-scope evidence plus one lead-run integration suite at
+  commit time, with foreign territories declared to every checker verbatim
+  so they attribute rather than FAIL.
+- Task-ID prefixes are a namespace, not a nicety: a collision surfaces at
+  merge time as ledger-row moves, manifest/verdict renames, AND `TASK:`
+  header surgery inside each verdict, because the gate parses filename and
+  header together (the T12→T12F cleanup).
+
+### Disputes at Tier 1
+You adjudicate against the written documents (unchanged). Record an overrule by
+writing a verdict file (`VERDICT: OVERRULE`, `CHECKER: boss`, `FAMILY:
+anthropic`); an overrule is itself an escalation trigger, so the re-run happens
+one tier up.
+
+### Hard stop
+Two failed attempts at Tier 3, or three at any tier, halts the task and reports
+to the user. Escalation never silently loops. The gate does NOT enforce this —
+`escalate-scan` writes no flag once a task is already Tier 3, so counting
+attempts and halting is the lead's own discipline. And when two attempts fail
+to the SAME defect class, treat it as a lead/spec defect: rewrite the
+contract before spending the last attempt (T18 precedent — the fix was a
+contract change to dormant validation, not a third try at the same design).
+
+## Final pass — review your own work too
+Before declaring done, in this order:
+1. If any accepted manifest in the run touched markup, styles, or
+   interactive behaviour, run one `checker-a11y` sweep over the pages those
+   manifests reach (both themes, tabs and modals opened) — the per-task
+   checks see one change each; the sweep sees their interaction. A run with
+   no UI manifests skips this step and says so in the run record.
+2. Review every file you personally authored or modified (specs, oracles,
+   ledger, rulings, lead-direct code). Your work is checked by the same
+   standard as worker work, and the run records show the lead's own
+   artifacts are where catches land.
+3. Run `bash smoketest/gate/run_tests.sh` (in this repo) and require ALL
+   PASS — doc and agent-contract drift is detected only there; the gate
+   never checks that the constitution still matches the code, and four
+   failures once sat red across two doc commits because nothing consulted
+   the suite.
+4. Run `swarm/gate.sh done`, then `swarm/gate.sh stats`, and report both
+   verbatim.
+
+## Cost discipline
+- Lead session: judgment tier only (planning, specs, review, adjudication).
+- Do not use the lead model for mechanical tasks a worker can do.
+- Prefer `worker-local` (Haiku) when the task is high-volume, low-judgment.
+- All agents run on Claude; there is no gateway and no local endpoint. Model
+  choice per agent lives in `.claude/agents/*.md` frontmatter.

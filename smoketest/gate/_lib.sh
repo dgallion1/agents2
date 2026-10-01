@@ -45,4 +45,36 @@ mkverdict_nofp() {
 }
 run_gate()  { local sd="$1"; shift; SWARM_DIR="$sd" SWARM_TREE="$sd/tree" bash "$GATE" "$@" >/dev/null 2>&1; return $?; }
 gate_out()  { local sd="$1"; shift; SWARM_DIR="$sd" SWARM_TREE="$sd/tree" bash "$GATE" "$@" 2>&1; }
+# --- CD3: critical-glob evaluation fails CLOSED ---------------------------------
+# gate_stdout — stdout only (the FAIL: line); gate_stderr — stderr only (the
+# one-line `unreadable` diagnostic). `timeout` turns a hang (a FIFO opened by
+# mistake) into a failed assertion instead of a stuck suite.
+gate_stdout() { local sd="$1"; shift; SWARM_DIR="$sd" SWARM_TREE="$sd/tree" timeout 30 bash "$GATE" "$@" 2>/dev/null; }
+gate_stderr() { local sd="$1"; shift; SWARM_DIR="$sd" SWARM_TREE="$sd/tree" timeout 30 bash "$GATE" "$@" 2>&1 >/dev/null; }
+# Mode-000 fixtures are readable by root, so those cases only run as non-root.
+is_root()     { [[ "$(id -u)" == 0 ]]; }
+assert_reason() {                                     # label sd task reason — the flag carries exactly this REASON line
+  if [[ -f "$2/flags/$3.flag" ]] && grep -qx "REASON: $4" "$2/flags/$3.flag"; then echo "ok   - $1"
+  else echo "FAIL - $1 (flag REASON should be '$4', got: $(cat "$2/flags/$3.flag" 2>/dev/null | tr '\n' ' '))"; FAILN=$((FAILN+1)); fi
+}
+assert_eq()   { if [[ "$2" == "$3" ]]; then echo "ok   - $1"; else echo "FAIL - $1 (want '$3' got '$2')"; FAILN=$((FAILN+1)); fi; }
+assert_one_line() {                                   # label stderr needle — exactly one 'unreadable' line, naming needle
+  local n; n=$(grep -ci unreadable <<<"$2")
+  if [[ "$n" == 1 ]] && grep -i unreadable <<<"$2" | grep -qF -- "$3"; then echo "ok   - $1"
+  else echo "FAIL - $1 (want exactly one 'unreadable' stderr line naming '$3', got $n: $(tr '\n' ' ' <<<"$2"))"; FAILN=$((FAILN+1)); fi
+}
+# --- CD4: the Codex lane ---------------------------------------------------------
+# mkcodex sd task attempt verdict — a harness-shaped checker-codex verdict
+# (FAMILY crossvendor, the CODEX_* headers), stamped with the sidecar hash like
+# mkverdict. mkskip sd task attempt reason [detail] — a harness-shaped skip record.
+mkcodex() {
+  local sd="$1" task="$2" attempt="$3" verdict="$4"
+  [[ -f "$sd/manifests/$task.$attempt.sha256" ]] || mkmanifest "$sd" "$task" "$attempt"
+  printf 'VERDICT: %s\nCHECKER: checker-codex\nFAMILY: crossvendor\nTASK: %s\nATTEMPT: %s\nMANIFEST_SHA256: %s\nCODEX_MODEL: stub-model\nCODEX_VERSION: codex-cli stub\n---\nevidence\n' \
+    "$verdict" "$task" "$attempt" "$(fingerprint "$sd" "$task" "$attempt")" > "$sd/verdicts/$task.$attempt.checker-codex.verdict"
+}
+mkskip() {
+  printf 'REASON: %s\nDETAIL: %s\nTASK: %s\nATTEMPT: %s\n' "$4" "${5-probe detail}" "$2" "$3" \
+    > "$1/verdicts/$2.$3.checker-codex.skip"
+}
 finish()    { (( FAILN==0 )) && { echo "ALL PASS"; exit 0; } || { echo "$FAILN FAILED"; exit 1; }; }

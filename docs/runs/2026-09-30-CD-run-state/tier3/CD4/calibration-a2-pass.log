@@ -1,0 +1,56 @@
+# CD4 oracle: TREE=/tmp/claude-1000/-home-darrell-work-agents2--claude-worktrees-unifi-camera-streaming-7be695/480338d9-8e6c-42d1-8681-c9e4d1acdcaf/scratchpad/cd4a2-proto
+ok   - S outside CD4 territory every file matches its post-CD1..3 state
+ok   - S no new file outside CD4 territory
+ok   - D differential: 79/79 ok
+ok   - E two consecutive Codex FAILs trigger two-consecutive-fails
+ok   - T s1 (attempt 2): line ends 'codex=PASS second=PASS'
+ok   - T s1 first attempt counts the Codex FAIL (failed)
+ok   - T s2: codex=skip:quota second=FAIL
+ok   - T s3: codex=none second=PASS
+ok   - T s5: codex=FAIL second=FAIL
+ok   - T s6: codex=FAIL second=none
+ok   - T s7: an invalid skip record is none
+ok   - T s8: a verdict wins over a skip record
+ok   - T s9 no-change line unchanged
+ok   - T s10: first attempt 0 failed; current attempt has no Codex outcome
+ok   - T s11: an INVALID checker-second counts as none
+ok   - T s12: a DETAIL of U+2003 is non-empty → codex=skip:quota (any locale)
+ok   - T summary: codex: ran 7/9, FAIL 5, same-verdict-as-second 2, codex-only FAIL 4
+ok   - T stats output is identical under LC_ALL=C and en_US.UTF-8
+ok   - T the codex line follows the existing summary lines
+ok   - T no Codex evidence: codex: ran 0/0, FAIL 0, same-verdict-as-second 0, codex-only FAIL 0
+ok   - T a no-evidence line is unchanged
+ok   - I a harness-written Codex PASS verdict is accepted by the gate
+ok   - I a harness-written skip record satisfies 'codex' (accepted)
+ok   - I a harness-written Codex FAIL is refused by the gate
+ok   - F1 CLAUDE.md: name codex beside second
+ok   - F2 CLAUDE.md: the trial rule (a Codex FAIL counts, a PASS never does)
+ok   - F3 CLAUDE.md: codex-check.sh and the criteria file
+ok   - F4 CLAUDE.md: the lead never writes a Codex verdict or skip record
+ok   - F5 CLAUDE.md: Phase 0 .swarm/codex.exclude; budget2 PLANNING_LOG.md; agents2 docs/runs/ and *.png
+ok   - F6 CLAUDE.md: codex joins the attribution mechanisms; the codex: stats line is reported
+ok   - F7 CLAUDE.md: .swarm/codex/** is never archived verbatim
+ok   - F8 CLAUDE.md: the fail-closed critical-glob rule
+ok   - F9 CLAUDE.md: valid FAMILY values include crossvendor
+ok   - F10 CLAUDE.md: 'PASS from every named checker' carries the codex exception
+ok   - F11 CLAUDE.md: the Tier-1 section says codex does not count as a named checker
+ok   - F12 CLAUDE.md: the Phase-0 mkdir line creates .swarm/codex
+ok   - F13 CLAUDE.md: no unqualified 'all lanes/agents on Claude'
+ok   - F14 CLAUDE.md: re-run codex-check.sh when it cannot record an outcome
+ok   - F15 TIERS.md: the Codex lane and the trial rule
+ok   - F16 TIERS.md: 'a PASS from every one named' carries the codex exception
+ok   - F17 TIERS.md: an unreadable critical.globs fails closed
+ok   - F18 README: no 'no second vendor'; the Codex lane is named
+ok   - F19 README: 'authenticates the same way' is qualified for Codex
+ok   - F20 README: 'not a second vendor' is gone or qualified
+ok   - F21 README: no unqualified 'All lanes run on Claude'
+ok   - F22 README: the inline escalation triggers are no longer listed as unmirrored
+ok   - F25 CLAUDE.md: the attempt-1 over-broad Tier-1 qualifier is gone
+ok   - F26 CLAUDE.md: an unnamed Tier-1 Codex FAIL still counts toward two consecutive fails
+ok   - F23 doc_test.sh passes on the tree
+ok   - F24 doc_test.sh pins fail against the pre-CD4 docs (>=5 FAIL lines)
+ok   - C1 smoketest/gate/run_tests.sh passes
+ok   - C2 dashboard tests pass (ℹ tests 119)
+ok   - M1 smoketest suite fails against the pre-CD4 gate.sh, on Codex tests
+ok   - M2 dashboard suite fails against the pre-CD4 parse.mjs, on Codex tests
+ORACLE PASS

@@ -11,7 +11,8 @@
 // Quorum rules mirror `swarm/gate.sh` exactly so the dashboard never
 // disagrees with the mechanical gate about what is actually accepted. That
 // includes the inline escalation triggers `gate.sh check` recomputes when no
-// flag file exists (see "inline escalation triggers" below).
+// flag file exists (see "inline escalation triggers" below) and the Codex lane
+// (run CD, CD4; see "the Codex lane" below).
 
 import { createHash } from 'node:crypto';
 import fs from 'node:fs';
@@ -19,9 +20,12 @@ import path from 'node:path';
 
 const VALID_VERDICTS = new Set(['PASS', 'FAIL', 'UPHOLD', 'OVERRULE']);
 // FAMILY names an independence LANE (gate.sh load_verdict): anthropic /
-// adversarial / impact are current; glm and local validate only so
-// pre-2026-08-19 verdicts still parse.
-const VALID_FAMILIES = new Set(['anthropic', 'adversarial', 'impact', 'glm', 'local']);
+// adversarial / impact are current; crossvendor is the Codex checker's lane
+// (run CD, CD4) and is valid ONLY with CHECKER checker-codex; glm and local
+// validate only so pre-2026-08-19 verdicts still parse.
+const VALID_FAMILIES = new Set(['anthropic', 'adversarial', 'impact', 'crossvendor', 'glm', 'local']);
+const CODEX_CHECKER = 'checker-codex';
+const CODEX_FAMILY = 'crossvendor';
 const VERDICT_FILENAME_RE = /^(.+)\.(\d+)\.(.+)\.verdict$/;
 const REQUIRED_VERDICT_HEADERS = ['VERDICT', 'CHECKER', 'FAMILY', 'TASK', 'ATTEMPT'];
 
@@ -59,6 +63,18 @@ function isDirectory(p) {
 function isFile(p) {
   try {
     return fs.statSync(p).isFile();
+  } catch {
+    return false;
+  }
+}
+
+// Mirrors bash `[[ -e p || -L p ]]`: a directory entry exists at p. A dangling
+// symlink or a symlink loop is PRESENT (only lstat can see it); an entry whose
+// parent cannot be searched is not.
+function entryExists(p) {
+  try {
+    fs.lstatSync(p);
+    return true;
   } catch {
     return false;
   }
@@ -119,10 +135,20 @@ function parseLedger(swarmDir, errors) {
 // manifests/<task>.<attempt>.files
 // ---------------------------------------------------------------------------
 
+// The CURRENT attempt's manifest must never make parse() throw (CD3): gate.sh
+// check_fingerprint tests `[[ -f ]]` first — so an absent file, a dangling
+// link, a directory or a FIFO is "no manifest" and is never opened — and a
+// regular file it cannot read fails its `grep -q '[^[:space:]]'` step, which
+// the gate reports as an empty manifest. Same two outcomes here (null / []).
 function parseManifest(swarmDir, taskId, attempt) {
   const filePath = path.join(swarmDir, 'manifests', `${taskId}.${attempt}.files`);
-  const content = readFileIfExists(filePath);
-  if (content === null) return null;
+  if (!isFile(filePath)) return null;
+  let content;
+  try {
+    content = fs.readFileSync(filePath, 'utf8');
+  } catch {
+    return [];
+  }
   return content
     .split(/\r?\n/)
     .filter((line) => line.length > 0);
@@ -138,10 +164,18 @@ function parseManifest(swarmDir, taskId, attempt) {
 
 const FP_LINE = /^([0-9a-f]{64}|deleted) [ *](.+)$/;
 
+// Same rule for the sidecar (CD3): `[[ -f ]]` false -> "no fingerprint
+// sidecar" and never opened; a regular file the gate cannot read yields no
+// fingerprint lines, so every manifest path is reported as unfingerprinted.
 function parseFingerprint(swarmDir, taskId, attempt) {
   const filePath = path.join(swarmDir, 'manifests', `${taskId}.${attempt}.sha256`);
-  const content = readFileIfExists(filePath);
-  if (content === null) return null;
+  if (!isFile(filePath)) return null;
+  let content;
+  try {
+    content = fs.readFileSync(filePath, 'utf8');
+  } catch {
+    return { sha256: '', entries: new Map(), badLines: [] };
+  }
   const entries = new Map();
   const badLines = [];
   for (const line of content.split(/\r?\n/)) {
@@ -158,7 +192,9 @@ function parseFingerprint(swarmDir, taskId, attempt) {
 }
 
 // The first fingerprint defect gate.sh would report for an otherwise
-// acceptable row, or null. Same order as check_fingerprint.
+// acceptable row, or null. Same order as check_fingerprint. Every PASS that
+// reaches here is a checker-* PASS (validateVerdictRecord rejects any other
+// pairing), so no PASS can dodge the MANIFEST_SHA256 requirement.
 function fingerprintProblem(task, verdicts) {
   const man = `manifests/${task.id}.${task.attempt}.files`;
   const side = `manifests/${task.id}.${task.attempt}.sha256`;
@@ -212,7 +248,10 @@ function parseHeaderAndEvidence(content) {
 }
 
 /**
- * Validate a verdict against SPEC.md §2a + filename/header agreement.
+ * Validate a verdict against SPEC.md §2a + filename/header agreement + the
+ * lane-accounting pairing rule (run CD, CD2): PASS/FAIL are valid only from a
+ * CHECKER that starts with `checker-`; UPHOLD/OVERRULE only from one that
+ * starts with `judge-` or is exactly `boss`. Any other pairing is invalid.
  * Returns { ok: true, verdict } or { ok: false, message }.
  * Mirrors swarm/gate.sh load_verdict().
  */
@@ -260,6 +299,35 @@ function validateVerdictRecord(filename, headers, hasSeparator, fileTask, fileAt
     };
   }
 
+  // Identity (run CD, CD4): the crossvendor lane is the Codex checker's alone,
+  // and the Codex checker has no other lane.
+  if (family === CODEX_FAMILY || headers.CHECKER === CODEX_CHECKER) {
+    if (!(family === CODEX_FAMILY && headers.CHECKER === CODEX_CHECKER)) {
+      return {
+        ok: false,
+        message:
+          `FAMILY '${CODEX_FAMILY}' and CHECKER '${CODEX_CHECKER}' are valid only together ` +
+          `(got CHECKER '${headers.CHECKER}', FAMILY '${family}')`,
+      };
+    }
+  }
+
+  // Lane accounting: exact prefixes (`checker-`, `judge-`, dash included) and
+  // the exact name `boss`; anything else (`worker-coder`, `lead`, `boss-2`,
+  // `Boss`, a bare `checker`) may cast nothing.
+  const castsChecker = verdictValue === 'PASS' || verdictValue === 'FAIL';
+  const allowed = castsChecker
+    ? headers.CHECKER.startsWith('checker-')
+    : headers.CHECKER.startsWith('judge-') || headers.CHECKER === 'boss';
+  if (!allowed) {
+    return {
+      ok: false,
+      message:
+        `VERDICT ${verdictValue} not allowed from CHECKER '${headers.CHECKER}' ` +
+        `(PASS/FAIL come from checker-*; UPHOLD/OVERRULE from judge-* or boss)`,
+    };
+  }
+
   return {
     ok: true,
     verdict: {
@@ -269,11 +337,39 @@ function validateVerdictRecord(filename, headers, hasSeparator, fileTask, fileAt
       task: headers.TASK,
       attempt: fileAttempt,
       // Optional (2026-09-18): the sha256 of the manifest's .sha256 sidecar
-      // the checker verified. Required on every checker-* PASS by
-      // fingerprintProblem(); judges never carry it.
+      // the checker verified. Required on every PASS (always a checker-* PASS
+      // once the pairing rule holds) by fingerprintProblem(); judges never
+      // carry it.
       manifestSha256: headers.MANIFEST_SHA256 || null,
     },
   };
+}
+
+// One verdicts/ entry, read the way gate.sh load_verdict reads it: only a
+// REGULAR file (symlinks followed) is ever opened — the open is O_NONBLOCK and
+// re-checked on the descriptor, so a FIFO swapped in after the stat cannot
+// block either. Returns { content } for a readable regular file, { vanished }
+// when the entry is gone (lstat ENOENT: removed between readdir and here), or
+// { error } for anything else: not a regular file (a directory, FIFO, device,
+// dangling symlink or symlink loop) or unreadable (mode 000). Never throws.
+function readVerdictEntry(filePath) {
+  try {
+    fs.lstatSync(filePath);
+  } catch (err) {
+    if (err && err.code === 'ENOENT') return { vanished: true };
+    return { error: `not a regular file or unreadable (${err && err.code})` };
+  }
+  let fd = -1;
+  try {
+    if (!fs.statSync(filePath).isFile()) return { error: 'not a regular file' };
+    fd = fs.openSync(filePath, fs.constants.O_RDONLY | fs.constants.O_NONBLOCK);
+    if (!fs.fstatSync(fd).isFile()) return { error: 'not a regular file' };
+    return { content: fs.readFileSync(fd, 'utf8') };
+  } catch (err) {
+    return { error: `not a regular file or unreadable (${err && err.code})` };
+  } finally {
+    if (fd >= 0) fs.closeSync(fd);
+  }
 }
 
 // Scans the whole verdicts/ dir once. Returns:
@@ -302,8 +398,18 @@ function parseAllVerdicts(swarmDir, errors) {
     const attempt = Number.parseInt(attemptStr, 10);
 
     const filePath = path.join(dirPath, filename);
-    const content = readFileIfExists(filePath);
-    if (content === null) continue; // vanished between readdir and read; ignore
+    const read = readVerdictEntry(filePath);
+    if (read.vanished) continue; // vanished between readdir and read; ignore
+    if (read.error) {
+      // gate.sh load_verdict's `[[ -f ]]` / unreadable-file outcomes: an entry
+      // that is not a REGULAR file (a directory, a FIFO, a dangling link or
+      // symlink loop) or cannot be read is an INVALID verdict file — reported,
+      // excluded from quorum, and (being in `filenames`) blocking at tiers 2/3
+      // through blockingVerdictFiles. It is never opened: a FIFO would hang.
+      errors.push({ file: `verdicts/${filename}`, message: read.error });
+      continue;
+    }
+    const content = read.content;
 
     const { headers, evidence, hasSeparator } = parseHeaderAndEvidence(content);
     const validated = validateVerdictRecord(
@@ -367,6 +473,95 @@ function blockingVerdictFiles(filenames, validVerdicts, taskId, attempt) {
 }
 
 // ---------------------------------------------------------------------------
+// the Codex lane (run CD, CD4) — gate.sh codex_* helpers
+// ---------------------------------------------------------------------------
+// swarm/codex-check.sh writes exactly one outcome per (task, attempt): a
+// `<task>.<attempt>.checker-codex.verdict` (an ordinary schema-valid verdict,
+// FAMILY crossvendor) or a `<task>.<attempt>.checker-codex.skip` record
+// (REASON / DETAIL / TASK / ATTEMPT lines, no `---`). Trial rule (D2): a Codex
+// FAIL counts wherever it is loaded, a Codex PASS never does (no named-checker
+// requirement, no lane), an outage never blocks. `codex` in the ledger checks
+// column is NOT a named checker: it only demands that the CURRENT attempt holds
+// exactly one valid outcome (evidence of presence) — see codexEvidenceProblem.
+
+const SKIP_REASONS = new Set([
+  'no-exclude-policy', 'no-criteria', 'no-evidence', 'no-codex', 'docker-unavailable',
+  'unsafe-tree', 'fingerprint-mismatch', 'container-error', 'auth', 'quota', 'timeout',
+  'schema-invalid', 'evidence-free-pass', 'secret-leak', 'codex-error',
+]);
+
+// gate.sh skip_field: the FIRST `KEY:` line's value with LEADING ASCII
+// whitespace (space, \t \n \v \f \r — the C-locale [[:space:]]) removed and
+// nothing else: no trailing whitespace, never a non-ASCII character (U+00A0,
+// U+2003 ... stay in the value); absent -> ''. The gate runs grep AND sed under
+// LC_ALL=C, so its answer is this one in every locale. Unlike
+// parseHeaderAndEvidence, a later duplicate never wins and the key is not
+// trimmed, exactly as `grep -m1 "^KEY:"` reads it.
+function skipField(lines, key) {
+  const prefix = `${key}:`;
+  for (const line of lines) {
+    if (line.startsWith(prefix)) return line.slice(prefix.length).replace(/^[ \t\n\v\f\r]+/, '');
+  }
+  return '';
+}
+
+// The skip record for (task, attempt): { reason } when it is VALID, else null.
+// Mirrors gate.sh codex_skip_valid: a REGULAR file (a directory, FIFO, dangling
+// link is never opened — the open is O_NONBLOCK and re-checked on the descriptor
+// so a FIFO swapped in after the stat cannot block either), readable, with no NUL
+// byte, whose first REASON is one of the 15, a non-empty DETAIL, and TASK /
+// ATTEMPT equal to the filename's. Anything else — including an unreadable
+// (mode 000) file — counts as absent, and this never throws.
+function parseCodexSkip(swarmDir, taskId, attempt) {
+  const filePath = path.join(swarmDir, 'verdicts', `${taskId}.${attempt}.${CODEX_CHECKER}.skip`);
+  let fd = -1;
+  let buf;
+  try {
+    if (!fs.statSync(filePath).isFile()) return null;
+    fd = fs.openSync(filePath, fs.constants.O_RDONLY | fs.constants.O_NONBLOCK);
+    if (!fs.fstatSync(fd).isFile()) return null;
+    buf = fs.readFileSync(fd);
+  } catch {
+    return null;
+  } finally {
+    if (fd >= 0) fs.closeSync(fd);
+  }
+  if (buf.includes(0)) return null;
+  const lines = buf.toString('utf8').split('\n');
+  const reason = skipField(lines, 'REASON');
+  if (!SKIP_REASONS.has(reason)) return null;
+  if (skipField(lines, 'DETAIL') === '') return null;
+  if (skipField(lines, 'TASK') !== taskId) return null;
+  if (skipField(lines, 'ATTEMPT') !== String(attempt)) return null;
+  return { reason };
+}
+
+// gate.sh codex_evidence_or_fail: for a row whose checks column names `codex`,
+// the first evidence defect ('' when none). The CURRENT attempt must hold
+// exactly one valid outcome. An invalid checker-codex verdict file keeps its
+// existing consequences (tiers 2/3 fail on it in computeDerived's
+// invalidBlocking; tier 1, where it is named, fails here).
+function codexEvidenceProblem(task, verdicts) {
+  if (!task.checks.includes('codex')) return null;
+  const file = `${task.id}.${task.attempt}.${CODEX_CHECKER}.verdict`;
+  if (task.invalidVerdicts.includes(file)) return `invalid verdict checker-codex (${file})`;
+  const hasVerdict = verdicts.some((v) => v.checker === CODEX_CHECKER);
+  const hasSkip = task.codexSkip !== null;
+  if (!hasVerdict && !hasSkip) return `missing checker-codex evidence (attempt ${task.attempt})`;
+  if (hasVerdict && hasSkip) {
+    return `checker-codex has both a verdict and a skip record at attempt ${task.attempt} (one outcome only)`;
+  }
+  return null;
+}
+
+// A verdict that counts toward a named-checker requirement or a lane: a PASS
+// that is not the Codex checker's (D2). Codex FAILs are not PASSes and count
+// everywhere a FAIL is read.
+function countsAsPass(v) {
+  return v.verdict === 'PASS' && Boolean(v.family) && v.checker !== CODEX_CHECKER;
+}
+
+// ---------------------------------------------------------------------------
 // flags/<task>.flag
 // ---------------------------------------------------------------------------
 
@@ -414,7 +609,10 @@ function escalationTarget(tier) {
 // gate.sh unresolved_fail_at: a valid FAIL at this attempt that no judge panel
 // set aside. The panel test is judges_overruled_at's — every valid
 // UPHOLD/OVERRULE at the attempt counts, with NO identity de-duplication
-// (unlike tallyJudges) — so the two halves of the gate agree.
+// (unlike tallyJudges) — so the two halves of the gate agree. Validity carries
+// the lane-accounting pairing rule: a FAIL is only ever checker-*-cast, and an
+// UPHOLD/OVERRULE only ever judge-* or boss cast (a checker-cast one is
+// invalid and never reaches byTaskAttempt).
 function unresolvedFailAt(byTaskAttempt, taskId, attempt) {
   const verdicts = byTaskAttempt.get(`${taskId}.${attempt}`) ?? [];
   if (!verdicts.some((v) => v.verdict === 'FAIL')) return false;
@@ -459,8 +657,10 @@ const DEFAULT_TEST_GLOBS = [
 // with their JS lookalikes:
 //   - str.strip(): python's whitespace set (isspace) differs from JS trim().
 //   - open(): strict UTF-8 (a BOM stays as U+FEFF) and universal newlines.
-//     A file that is not valid UTF-8 makes python die, and the gate then
-//     reports NO hit — so an unreadable input is "no hit" here too.
+//     A file that is not valid UTF-8 — or not a regular file, or not readable —
+//     makes the evaluation UNREADABLE (run CD, CD3: the gate fails CLOSED and
+//     escalates with the reason `critical-glob-unreadable`); this mirror does
+//     the same, never "no hit".
 //   - fnmatch.fnmatch (case-sensitive on posix): see compileFnmatch.
 const PY_STRIP_RE =
   /^[\t-\r\x1c-\x20\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]+|[\t-\r\x1c-\x20\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]+$/g;
@@ -470,15 +670,25 @@ function pyStrip(s) {
 }
 
 // The lines python's `for l in open(path)` yields (blank ones included), or
-// null when the file cannot be read that way.
+// null when the input is UNREADABLE: not a regular file after following
+// symlinks (a directory, dangling link, FIFO or device is never opened — a
+// FIFO would block), unreadable for any reason, or not valid UTF-8. The open is
+// O_NONBLOCK and re-checked on the descriptor, so a FIFO swapped in after the
+// stat cannot block either.
 function readPyLines(filePath) {
+  let fd = -1;
   try {
+    if (!fs.statSync(filePath).isFile()) return null;
+    fd = fs.openSync(filePath, fs.constants.O_RDONLY | fs.constants.O_NONBLOCK);
+    if (!fs.fstatSync(fd).isFile()) return null;
     const text = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(
-      fs.readFileSync(filePath)
+      fs.readFileSync(fd)
     );
     return text.split(/\r\n|\r|\n/);
   } catch {
     return null;
+  } finally {
+    if (fd >= 0) fs.closeSync(fd);
   }
 }
 
@@ -624,51 +834,83 @@ function globMatcher(glob) {
   return (p) => tests.some((t) => t(p));
 }
 
-// gate.sh manifest_hits_glob: true when a NON-TEST path in any of the task's
-// manifests matches critical.globs. A test glob exempts only the test path
-// itself, never the whole manifest.
+// gate.sh manifest_hits_glob: 'hit' when a NON-TEST path in any of the task's
+// manifests matches critical.globs (a test glob exempts only the test path
+// itself, never the whole manifest), 'none' for no hit, and 'unreadable' when
+// an input the evaluation needs cannot be read — it FAILS CLOSED (run CD,
+// CD3), exactly as the gate does. Same evaluation order and rules:
+//   1. critical.globs ABSENT (no directory entry) -> none; no
+//      manifests/<task>.*.files entry -> none (a row that has not started is
+//      never flagged). Only then is anything read.
+//   2. PRESENT means a directory entry exists (a dangling symlink is present).
+//      critical.globs, a present test.globs and EVERY matching manifest must be
+//      a regular file (see readPyLines) holding strict UTF-8; test.globs absent
+//      -> the defaults. A manifests/ directory that exists but cannot be listed
+//      is unreadable ("no entry matches" cannot be established).
+//   3. Any unreadable input makes the whole evaluation unreadable, even when
+//      another input produced a hit.
+//   4. Any failure of the evaluation itself is unreadable, never no hit.
+const GLOB_HIT = 'hit';
+const GLOB_NONE = 'none';
+const GLOB_UNREADABLE = 'unreadable';
+
 function manifestHitsGlob(swarmDir, taskId) {
   try {
     const criticalFile = path.join(swarmDir, 'critical.globs');
-    if (!isFile(criticalFile)) return false;
+    if (!entryExists(criticalFile)) return GLOB_NONE;
     // gate.sh globs manifests/<task>.*.files: a prefix+suffix match, not a
     // task-id boundary, so it also catches every OLDER attempt's manifest and
     // a dot-prefix sibling task's (`k` sees `k.1.x.1.files`). Mirrored, not
-    // fixed — same shape as blockingVerdictFiles.
+    // fixed — same shape as blockingVerdictFiles. Every entry the glob catches
+    // counts, whatever its kind: a non-regular one is read as unreadable below.
     const manifestsDir = path.join(swarmDir, 'manifests');
+    let names = [];
+    if (entryExists(manifestsDir)) {
+      try {
+        fs.accessSync(manifestsDir, fs.constants.R_OK | fs.constants.X_OK);
+        names = fs.readdirSync(manifestsDir);
+      } catch {
+        return GLOB_UNREADABLE;
+      }
+    }
     const prefix = `${taskId}.`;
     const suffix = '.files';
-    const manifestFiles = listDirIfExists(manifestsDir).filter(
-      (fn) =>
-        fn.startsWith(prefix) &&
-        fn.endsWith(suffix) &&
-        fn.length >= prefix.length + suffix.length &&
-        isFile(path.join(manifestsDir, fn))
-    );
-    if (manifestFiles.length === 0) return false;
+    const manifestFiles = names
+      .filter(
+        (fn) =>
+          fn.startsWith(prefix) && fn.endsWith(suffix) && fn.length >= prefix.length + suffix.length
+      )
+      .sort();
+    if (manifestFiles.length === 0) return GLOB_NONE;
 
-    const criticalLines = readPyLines(criticalFile);
     const testFile = path.join(swarmDir, 'test.globs');
-    const testLines = isFile(testFile) ? readPyLines(testFile) : DEFAULT_TEST_GLOBS;
-    if (criticalLines === null || testLines === null) return false;
+    const criticalLines = readPyLines(criticalFile);
+    const testLines = entryExists(testFile) ? readPyLines(testFile) : DEFAULT_TEST_GLOBS;
+    const manifestLines = manifestFiles.map((fn) => readPyLines(path.join(manifestsDir, fn)));
+    if (criticalLines === null || testLines === null || manifestLines.includes(null)) {
+      return GLOB_UNREADABLE; // unreadable beats a hit
+    }
     const paths = [];
-    for (const fn of manifestFiles) {
-      const lines = readPyLines(path.join(manifestsDir, fn));
-      if (lines === null) return false;
+    for (const lines of manifestLines) {
       for (const line of lines) {
         if (pyStrip(line) !== '') paths.push(pyStrip(line));
       }
     }
     const critical = loadGlobs(criticalLines).map(globMatcher);
     const tests = loadGlobs(testLines).map(globMatcher);
-    return paths.some((p) => critical.some((m) => m(p)) && !tests.some((m) => m(p)));
+    return paths.some((p) => critical.some((m) => m(p)) && !tests.some((m) => m(p)))
+      ? GLOB_HIT
+      : GLOB_NONE;
   } catch {
-    return false; // unreadable input: python dies, the gate reports no hit
+    return GLOB_UNREADABLE; // the evaluation itself failed: fail closed, never "no hit"
   }
 }
 
 // gate.sh escalation_reasons: the live triggers for a row, space-separated in
 // gate order ("two-consecutive-fails checker-overruled critical-glob"), or ''.
+// The reason tokens are two-consecutive-fails, checker-overruled, critical-glob
+// and critical-glob-unreadable — the last is the fail-CLOSED outcome of
+// manifestHitsGlob and replaces critical-glob for that evaluation.
 function escalationReasons(swarmDir, row, byTaskAttempt, bossOverruled) {
   const reasons = [];
   if (
@@ -679,7 +921,9 @@ function escalationReasons(swarmDir, row, byTaskAttempt, bossOverruled) {
     reasons.push('two-consecutive-fails');
   }
   if (bossOverruled.has(row.id)) reasons.push('checker-overruled');
-  if (manifestHitsGlob(swarmDir, row.id)) reasons.push('critical-glob');
+  const glob = manifestHitsGlob(swarmDir, row.id);
+  if (glob === GLOB_HIT) reasons.push('critical-glob');
+  else if (glob !== GLOB_NONE) reasons.push('critical-glob-unreadable');
   return reasons.join(' ');
 }
 
@@ -866,6 +1110,9 @@ function tallyJudges(verdicts) {
   return { ups, ovs, identityError };
 }
 
+// `checks` is the NAMED-checker list: the ledger column minus `codex`, which is
+// evidence of presence (codexEvidenceProblem), never a checker that must PASS
+// (gate.sh named_checkers). A column naming only `codex` is therefore blank.
 function computeQuorum(tier, checks, verdicts, tier3, hasFail, disputeResolved, majorityOverrule) {
   if (tier === 1) {
     // gate.sh check_tier1 (2026-09-18): a blank checks column hard-fails.
@@ -883,7 +1130,7 @@ function computeQuorum(tier, checks, verdicts, tier3, hasFail, disputeResolved, 
   const passCheckers = new Set();
   const familiesPassed = new Set();
   for (const v of verdicts) {
-    if (v.verdict !== 'PASS' || !v.family) continue;
+    if (!countsAsPass(v)) continue; // a Codex PASS never counts (D2)
     if (passCheckers.has(v.checker)) continue; // unique checker for PASS
     passCheckers.add(v.checker);
     familiesPassed.add(v.family);
@@ -912,6 +1159,18 @@ function computeQuorum(tier, checks, verdicts, tier3, hasFail, disputeResolved, 
 }
 
 function computeDerived(task, verdicts, flagOpen, escalation) {
+  // Codex lane (CD4): `codex` is not a named checker. A Codex FAIL is a FAIL
+  // wherever the gate loads it: acceptance counts it at tiers 2/3 always and at
+  // tier 1 only when named, while escalation (unresolvedFailAt) counts it at
+  // every tier, like any unnamed checker FAIL.
+  const named = task.checks.filter((c) => c !== 'codex');
+  const codexNamed = task.checks.includes('codex');
+  const evidenceProblem = codexEvidenceProblem(task, verdicts);
+  const codexFailNamedTier1 =
+    task.tier === 1 &&
+    codexNamed &&
+    verdicts.some((v) => v.checker === CODEX_CHECKER && v.verdict === 'FAIL');
+
   const hasFail = verdicts.some((v) => v.verdict === 'FAIL');
   const { ups, ovs, identityError } = tallyJudges(verdicts);
 
@@ -920,14 +1179,12 @@ function computeDerived(task, verdicts, flagOpen, escalation) {
   const majorityOverrule = disputeResolved && ovs > ups;
   const majorityUphold = disputeResolved && !majorityOverrule;
 
-  const familiesPassed = Array.from(
-    new Set(verdicts.filter((v) => v.verdict === 'PASS' && v.family).map((v) => v.family))
-  );
+  const familiesPassed = Array.from(new Set(verdicts.filter(countsAsPass).map((v) => v.family)));
   const isDispute = hasFail;
 
   let quorumHolds = computeQuorum(
     task.tier,
-    task.checks,
+    named,
     verdicts,
     task.tier3,
     hasFail,
@@ -936,6 +1193,9 @@ function computeDerived(task, verdicts, flagOpen, escalation) {
   );
   // A dispute resolved only with duplicate judge identities is not a real quorum.
   if (hasFail && identityError) quorumHolds = false;
+  // gate.sh codex_evidence_or_fail runs at every tier, before the PASS/dispute
+  // logic; a named Codex FAIL refuses a tier-1 row outright.
+  if (evidenceProblem !== null || codexFailNamedTier1) quorumHolds = false;
   // gate.sh walk_verdicts fails the whole task on any current-attempt file it
   // cannot validate (tiers 2/3 only — tier 1 loads only the named checkers'
   // files, so a stray malformed file does not block there).
@@ -970,21 +1230,27 @@ function computeDerived(task, verdicts, flagOpen, escalation) {
       let reason;
       const missingChecker =
         task.tier >= 2 && !hasFail
-          ? task.checks.find(
+          ? named.find(
               (c) => !verdicts.some((v) => v.checker === `checker-${c}` && v.verdict === 'PASS')
             )
           : undefined;
       if (task.tier === 3 && !tier3ContractOk(task.tier3)) {
         // gate.sh checks the tier-3 evidence contract before the quorum walk.
         reason = tier3ContractReason(task.tier3);
-      } else if (task.checks.length === 0) {
-        // gate.sh check_tier1/2/3 fail on an empty checks column before
-        // walking any verdict files, so this outranks invalid-file blocking.
+      } else if (named.length === 0) {
+        // gate.sh check_tier1/2/3 fail on an empty checks column (one naming
+        // only `codex` included) before walking any verdict files, so this
+        // outranks invalid-file blocking.
         reason = `tier ${task.tier} requires named checkers in the ledger checks column`;
       } else if (invalidBlocking) {
         reason = `invalid verdict file(s) at attempt ${task.attempt}: ${task.invalidVerdicts.join(', ')}`;
       } else if (identityError) {
         reason = identityError;
+      } else if (evidenceProblem !== null) {
+        // gate.sh: the Codex evidence test precedes every PASS/dispute test.
+        reason = evidenceProblem;
+      } else if (codexFailNamedTier1) {
+        reason = 'checker-codex returned FAIL';
       } else if (disputeOpen) {
         reason = `open dispute (${ups} uphold / ${ovs} overrule, need >=3 judges)`;
       } else if (majorityUphold) {
@@ -1039,6 +1305,7 @@ export function parse(swarmDir) {
     const flag = parseFlag(swarmDir, row.id, row.tier);
     const tier3 = parseTier3(swarmDir, row.id, row.attempt);
     const fingerprint = parseFingerprint(swarmDir, row.id, row.attempt);
+    const codexSkip = parseCodexSkip(swarmDir, row.id, row.attempt);
     const invalidVerdicts = blockingVerdictFiles(verdictFilenames, verdicts, row.id, row.attempt);
 
     const task = {
@@ -1053,6 +1320,7 @@ export function parse(swarmDir) {
       fingerprint,
       verdicts,
       invalidVerdicts,
+      codexSkip, // { reason } when a VALID checker-codex.skip record exists at the current attempt, else null
       flag,
       tier3,
       derived: null, // filled below

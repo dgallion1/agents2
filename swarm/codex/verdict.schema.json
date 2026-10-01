@@ -1,0 +1,25 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["verdict", "criteria", "observations"],
+  "properties": {
+    "verdict": {"type": "string", "enum": ["PASS", "FAIL"]},
+    "criteria": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "attack", "command", "result", "pass"],
+        "properties": {
+          "id": {"type": "string"},
+          "attack": {"type": "string"},
+          "command": {"type": "string"},
+          "result": {"type": "string"},
+          "pass": {"type": "boolean"}
+        }
+      }
+    },
+    "observations": {"type": "array", "items": {"type": "string"}}
+  }
+}

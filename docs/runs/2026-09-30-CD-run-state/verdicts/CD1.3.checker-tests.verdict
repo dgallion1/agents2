@@ -1,0 +1,191 @@
+VERDICT: FAIL
+CHECKER: checker-tests
+FAMILY: anthropic
+TASK: CD1
+ATTEMPT: 3
+MANIFEST_SHA256: d3ef275bb43656019eee317490b4d61b66a39500d0a4922992da34aa8d543159
+---
+Tree: `sha256sum -c .swarm/manifests/CD1.3.sha256` -> 15/15 OK at start and again just before this write; the
+MANIFEST_SHA256 above is `sha256sum .swarm/manifests/CD1.3.sha256`. Contract: .swarm/briefs/CD1.3.md (read in full) +
+SPEC rulings CD-b..CD-o (CD-p, added by the lead during my session, concerns CD4 only). All mutation work in a .git-less
+copy ($D/copy, re-hashed against the sidecar: 0 mismatches); every image build / container start under the shared flock;
+stub Codex + fake auth files only; the real Codex never run; the real ~/.codex/auth.json never read (oracle runs used a
+fake HOME). $D = my scratch dir, $T = TREE. Host-identifying values (user name, addresses) are written as placeholders.
+
+=====================================================================================================================
+FAIL SUMMARY - two defects against the written contract, plus one minor letter deviation (the lead may grade F3)
+
+F1 (step 7, "the secret set ... passed between processes only via environment or pipes"). The harness passes the
+   auth secrets on a COMMAND LINE. swarm/codex-check.sh:43
+       pys() { env CD_SECRETS="$SECRETS_JSON" PYTHONUTF8=1 python3 "$CODEX_DIR/tools.py" "$@"; }
+   runs /usr/bin/env with argv[1] = CD_SECRETS=[<every auth secret>]; env then execs python3. That hop is argv, not
+   environment, and argv is world-readable (/proc/<pid>/cmdline is mode 0444 here; /proc is mounted without hidepid).
+   Evidence:
+   - strace of a real harness run (no shims but a docker CLI stub, Docker-free path):
+       `strace -f -e trace=execve -s 400 bash swarm/codex-check.sh T 1` ->
+       execve("/usr/bin/env", ["env", "CD_SECRETS=[\"rt_CTEST_REFRESH_...\", \"tok_CTEST_SECRET_...\"]", "PYTHONUTF8=1",
+       "python3", ".../tools.py", "copy", ...
+   - a full Docker run traced the same way ($D/trace.out): the secret list is on /usr/bin/env's argv three times per run
+     (copy, verdict, keep).
+   - an unprivileged /proc poller (a separate process that only opens /proc/<pid>/cmdline) CAUGHT it in 1 of 6
+     Docker-free runs: "CAUGHT pid 3050881: env CD_SECRETS=["rt_CTEST_REFRESH_...", "tok_CTEST_SECRET_..."] PYTHONUTF8=1
+     python3 ..." - i.e. any local user can read the user's Codex access and refresh tokens while the harness runs.
+     (No auditd/atop/acct is active on this host, so nothing reached disk here; on a host with execve auditing it would.)
+   - Remedy verified (rule 6b): with `pys() { CD_SECRETS="$SECRETS_JSON" PYTHONUTF8=1 python3 ...; }` (a bash prefix
+     assignment: environment only) the same strace shows 0 execve lines carrying the secret and the copy step still runs.
+   Neither the oracle nor the worker's suite looks at argv, so both pass with this defect.
+
+F2 (DETAIL rule: "optionally followed by ONE tree-relative path ... A DETAIL NEVER contains ... host absolute paths
+   ($CODEX_AUTH, ...)"). A manifest line with no sidecar line is echoed verbatim; tools.py safe_path() only applies the
+   character regex, which admits a leading "/" and "..", and the `noline` check runs BEFORE the `badpath` check.
+   Repro (end to end, the real harness; only `docker info` stubbed so step 1 passes - the copy step never touches docker):
+     fixture manifest gets an extra line "<$HOME>/.codex/auth.json" (no sidecar line) ->
+     REASON: fingerprint-mismatch
+     DETAIL: a manifest path has no fingerprint line in the sidecar: <$HOME>/.codex/auth.json
+   Same with a temp-dir path (DETAIL carried the full /tmp/claude-1000/... scratch path) and with "../../../../etc/shadow"
+   (tools.py copy -> skip|fingerprint-mismatch|noline|../../../../etc/shadow). With a sidecar line the same paths give
+   `badpath` and no path (correct). The input is a worker-written manifest, not Codex - but the rule is absolute and the
+   skip record is an archive candidate in a public repo. Fix: refuse absolute/`..` paths in safe_path (or check badpath
+   first). Not covered by the oracle or the worker's suite.
+
+F3 (minor; step 6 "no last.json - meaning NO directory entry of that name at all"). If Codex writes a valid last.json
+   and then `chmod 000 /out`, the entry exists but the harness's `[[ -e "$LAST" || -L "$LAST" ]]` cannot see through the
+   unsearchable dir: have_last=0 -> classification -> skip `codex-error` ("Codex exited with an error or without an
+   answer") instead of treating last.json as present (step 7 -> schema-invalid). $D/scen.outlock.log: REASON codex-error,
+   dropped.txt "out<TAB>the private output dir could not be listed", audit 0 secret hits, temp dir removed. Consequence is
+   the reason label only (still a skip, no secret, no verdict).
+
+=====================================================================================================================
+(a) ORACLE - PASS (ends ORACLE PASS; not vacuous for attempt 3)
+ - Lead's log oracle.3.log: 160 ok, 0 FAIL, last line "ORACLE PASS" (mtime 10:09, after the manifest 09:50).
+ - My run against TREE: `HOME=<fake> XDG_CONFIG_HOME=~/.config TMPDIR=$D/otmp/tree flock $LOCK nice -n 10 bash
+   .swarm/tier3/CD1/accept.sh $T` -> 160 ok, 0 FAIL, "ORACLE PASS", rc=0 (the territory check H ran on the git tree).
+   (A first run with a bare fake HOME gave 159 ok + 1 FAIL on the territory check, "outside: .claude/settings.local.json":
+   that file is ignored only by the user's global ~/.config/git/ignore (`git check-ignore -v` -> ~/.config/git/ignore:1),
+   dated 2026-09-29 11:13, not a CD1 path - an artefact of my fake HOME; re-run with XDG_CONFIG_HOME set -> PASS.)
+ - Mutants (private .git-less copies, one at a time under the lock; `bash <copy>/.swarm/tier3/CD1/accept.sh <copy>`):
+   M1 keep a file without the content secret check (tools.py keep)      -> ORACLE FAIL 11 (esckey, UTF-16LE, forms, leak-ro,
+                                                                            secret-leak, rotation, TERM/INT/HUP cases)
+   M2 follow a symlink found in /out (copy its target)                  -> ORACLE FAIL 2 ("symlinks and sub-folders ... not
+                                                                            kept", "dropped.txt names each not-kept entry")
+   M3 mount /out from the audit dir (CD_OUT="$AUD/out")                 -> ORACLE FAIL 49 (incl. "/out is mounted from the
+                                                                            run's PRIVATE temp dir")
+   M4 write an on-disk copy of the secrets into the private temp dir    -> ORACLE FAIL 1 ("DURING the run no file in the
+                                                                            private temp dir holds an auth secret")
+   M5 cleanup responds to a second signal (trap - instead of trap '')   -> ORACLE FAIL 5 ("TERM then TERM", "INT then HUP",
+                                                                            leftover containers/networks)
+   M6 Codex's error text copied into the quota DETAIL                   -> ORACLE FAIL 2 ("a secret inside a long error
+                                                                            message never reaches the skip DETAIL", "no skip
+                                                                            DETAIL carries Codex's words")
+   M7 freshness gate dropped (both last_refresh and JWT exp)            -> ORACLE FAIL 3 (7.5-day Z form, exp in 600 s,
+                                                                            exact sentence)
+   M8 no post-run union with the live auth file                         -> ORACLE FAIL 1 ("rotation: a file holding the NEW
+                                                                            secret is dropped")
+   Oracle gaps (observations): M9 leading-dot names allowed -> ORACLE PASS (no dotfile scenario); M12 escape decoding
+   single-pass -> ORACLE PASS (no double-escaped case); and F1/F2/F3 above are invisible to it. The worker's suite kills
+   M9 and M12 (below).
+
+(b) STEP BY STEP - FAIL on F1 (step 7) and F2 (DETAIL rule), F3 minor; everything else holds:
+ Interface/exit codes PASS. Args "", T, "T 1 x", "T x", "T -1", "T 1.0", "T 01a", "../x 1", ".x 1", "-x 1", "T/y 1",
+   "T ' 1'", "'' 1" -> rc=2, 0 files in verdicts/, no audit dir. verdicts/ uncreatable -> rc=1 ("nowhere to record an
+   outcome"), nothing written; verdicts/ read-only + missing policy -> rc=1, 0 files. Every handled skip rc=0.
+ Existing verdict PASS. Regular and dangling-symlink verdict -> rc=0, "already exists - left untouched", no skip, and the
+   audit dir byte-identical (find listing with mtimes hashed before/after). An old skip is replaced by the new outcome.
+ Step 1 PASS (each item removed with every later one, so the earliest must win): no-exclude-policy, no-criteria,
+   no-evidence (.files; .sha256), no-codex (missing, non-exec, a dir), auth (missing, a dir, mode 000),
+   docker-unavailable (real docker CLI, bogus DOCKER_HOST, with a STALE auth too: step 1 before 1b).
+ Step 1b PASS. `tools.py auth` probe, 25 cases: last_refresh 7d+60s -> stale, 7d-60s -> ok; Z with 0/6/9-digit fraction,
+   +00:00, -05:00 all parsed; garbage/number -> no gating; JWT exp = now+T+600-30 -> stale, +30 -> ok, T=1800 honoured,
+   float exp; non-JWT/string exp/bad base64 -> no gating; {} / unparseable / only 19-char value / only a long KEY / null /
+   UTF-8 BOM -> nosecret; 20 chars -> ok. Regex parsing, no fromisoformat (ast.parse feature_version=3.8 ok). Harness with
+   a docker-logging shim: a stale login -> skip auth with exactly "Codex login needs a refresh: open Codex on this machine
+   once, then re-run", docker calls = only `info` + `compose version`, no temp dir made; empty set -> "the Codex login
+   file holds no usable credentials" (a different sentence).
+ Step 2/3 PASS. cmd_copy logic is byte-for-byte attempt 2's except the DETAIL codes (difflib of builtin_excluded,
+   policy_excluded, load_policy, parents_state, copy_file: 0 changes; cmd_copy: only skip() -> fail(code)); attempt-2
+   checkers' exclusion/symlink/fingerprint matrices therefore still apply. Re-confirmed: oracle P (/work, files.txt,
+   excluded.txt exact, byte order), worker U-tests (policy, symlinks, fingerprints) all pass; my Docker-free probes:
+   absolute/escaping/dangling/dir symlinks -> unsafe-tree naming only the link; drift/deleted-present/missing/garbage
+   sidecar/noline -> fingerprint-mismatch.
+ Step 4 PASS. From inside the real checker ($D/iso.log): mounts exactly /work (private copy, rw), /codex-home (private,
+   rw) + /codex-home/auth.json (the given file, ro), /out (source = <private temp dir>/out, rw), /schema/verdict.schema.json
+   (single file, ro; `ls /schema` = that file only), /opt/codex/codex and codex-code-mode-host (ro) + the runtime's
+   hosts/hostname/resolv.conf; uid 1000:1000; CODEX_HOME, HOME, HTTPS_PROXY/HTTP_PROXY as specified; /codex-home = auth.json
+   + config.toml. Positive control: my [::] listener answered on 11/11 host IPv4s from the host; from the checker, raw TCP
+   to all 11 + 172.17.0.1 on the listener port and 8080 -> ENETUNREACH; the subnet .1 -> refused; if_inet6 = lo only;
+   routes = the /16 only. $D/bridge.log: isolated network internal=true ipv6=false inhibit_ipv4=true gw "invalid IP", the
+   host side of its bridge carries only an fe80 address, the .1 is the PROXY container, the host owns 0 matching addresses.
+   Proxy: chatgpt.com/auth.openai.com/api.openai.com tunnelled; example.com, ab.chatgpt.com, chatgpt.com.evil.invalid,
+   xapi.openai.com, 1.1.1.1, CONNECT :80 refused; plain HTTP to example.com and to a host IP -> 403; direct -> no DNS;
+   proxy.log "Proxying refused on filtered domain" for each. Go subset: oracle G + worker "go+dep" pass. Fixed images
+   rebuilt: oracle S trap passes; ce-build (Dockerfile `RUN ... false`), ce-proxy (bogus directive), ce-nostart (bad
+   entrypoint) -> fixed sentences, temp dir removed, 0 containers left; a following normal run restored a proxy image with 0
+   "Bogus" lines. Two normal runs: dangling-image count 5 -> 5 (no per-run image).
+ Step 5 PASS. argv exact (worker H check + oracle P flags); prompt = brief, "## About this copy" (classes + every excluded
+   path + artefact sentence), criteria; stdout -> $TMP/events.jsonl (trace).
+ Step 6 PASS except F3. `tools.py classify` 17 cases: quota/auth only from `message` keys (any depth) of type error /
+   turn.failed events and stderr; request_id/code/status/ordinary events/item.type=error/uppercase ERROR -> codex-error;
+   quota outranks auth; timeout first (CT=12 run -> timeout).
+ Step 6b PASS. 7 cases: type=error or item.type=error (also item.started) with either phrase, any case -> unavailable;
+   the phrases in agent_message, command output, another field, turn.failed -> available; end to end -> codex-error "tool
+   execution unavailable: ...".
+ Step 7 keep-or-drop PASS except F1. Docker-free `tools.py keep` (21 shapes) and end to end in the real container
+   ($D/scen.shapes.log: all read from INSIDE via /codex-home/auth.json, access + refresh token): raw, u-escaped JSON KEY,
+   _-uppercase-escaped value, triple-escaped (3rd pass), UTF-16LE, UTF-16BE, a hard link, a read-only secret file ->
+   "contains a secret"; secret-named file and dir -> "<unprintable name><TAB>name holds a secret"; .git, .gitignore,
+   .hidden, a 65-char name, a 200-char dir, "sp ace", non-ASCII, newline, 0xff byte -> "<unprintable name><TAB>name not
+   allowed"; symlinks (to auth, to /etc/passwd, to in-/out files) -> symlink; FIFO/socket -> not a regular file; sub/ ->
+   directory; mode-000 clean and secret files -> unreadable; 1 048 576 bytes kept, 1 048 577 "larger than 1 MiB"; a 64-char
+   name kept; PATH_MAX-deep tree planted ("planted") and never descended; events.jsonl with an escaped refresh token ->
+   dropped. VERDICT: PASS still written; audit dir = files.txt excluded.txt dropped.txt proxy.log out/{last.json + 6 clean};
+   my independent fd-walking audit (raw/UTF-16/6-pass decode, names, link targets) -> 0 hits; temp dir gone. 64 cap:
+   70+6 names + last.json -> kept = last.json + the first 63 in byte order, a content-dropped file uses no slot. Logs:
+   exactly 16 MiB kept, +1 dropped. Kept files byte-identical, regular, 0644. secret-leak path ($D/scen.shapes-leak.log):
+   skip secret-leak, clean files still kept, last.json listed "contains a secret". Order (strace -tt, $D/trace.log): docker
+   rm -f checker -> compose logs proxy > $TMP/proxy.log -> compose down + ps/network/volume sweep -> tools.py keep -> rm
+   VTMP -> chmod -R -> rm -rf $TMP; on the normal path the checker is removed (18.639) before tools/verdict read anything.
+   No on-disk copy: the temp dir holds an EMPTY auth.json mount point; `grep -r` for the secrets over every artefact of my
+   runs -> only my own fixtures; oracle "DURING the run" check passes (and catches M4). Signals: ($D/scen.term2.log) TERM
+   after planting, then TERM+INT+HUP+TERM while `compose down` ran -> rc 143, skip "interrupted", keep-or-drop completed,
+   0 hits, temp dir gone, 0 containers/networks/processes; ($D/scen.pgrp.log) Ctrl-C semantics - INT to the whole process
+   group, again (INT/TERM/HUP) during compose down -> rc 130, same clean result, 0 containers/networks/volumes; SIGKILL
+   after planting ($D/scen.kill.log) -> rc 137, audit dir = files.txt, empty excluded.txt/dropped.txt, empty out/, 0 hits;
+   left: the temp dir + 2 containers + 2 networks (allowed; removed by me). Outside my scratch, no file in /tmp, /var/tmp,
+   /dev/shm, ~/.docker, ~/.cache, ~/.local/state modified during my session holds either test secret (48 737 files).
+ Step 8 PASS. `tools.py verdict` 22 cases: exactly 4 MiB ok, +1 / FIFO (no hang) / symlink / dir / mode 000 -> schema-invalid
+   lastfile; secret (observation, escaped key, UTF-16BE) -> secret-leak answer, checked before JSON/schema; secret only in
+   CODEX_VERSION -> secret-leak rendered; extra keys, pass=1, lowercase enum, empty criteria -> schema; PASS/FAIL
+   inconsistent -> inconsistent; whitespace command / empty result -> evidence-free-pass; FAIL with empty evidence ->
+   written; header-forging text is indented under its field.
+ DETAIL rule - FAIL on F2 only. Every producer enumerated by reading: codex-check.sh calls skip() only via fail(), whose
+   text is DETAILS[code] (+ a path only from tools.py for linkedparent/cannotcopy/symlink/noline/deletedexists/missing/
+   drift); tools.py returns fixed codes only. Every reason fired and read: 18 Docker-free ($D/details.sh free) and 15 with
+   Docker + 3 container-error variants ($D/details.docker.log, $D/cerun.log), Codex texts carrying "CODEXWORDS", a host
+   path and the secret: every DETAIL is a table sentence; a scan of all my skip records for CODEXWORDS/secrets/host paths/
+   docker/go text -> none, except F2's absolute manifest path. Secret-bearing and space-bearing paths are omitted.
+ Step 9 PASS. brief.md unchanged since attempt 2; `grep -ciE 'census|\.swarm|sha256|manifest'` -> 0; /work, data-free,
+   evidence per criterion, refuted attack, Default to FAIL, no access to anything else, never write a verdict file.
+ Redaction machinery gone: `grep -rniE 'scrub|redact|sweep|fix_perms|remove_path|clean_dir|\[REDACTED\]|auth\.snapshot'`
+   over the CD1 files -> only comments/test names saying "never redacted".
+
+Worker's tests (read; they assert what their names claim): CODEX_TESTS=unit on the copy -> ALL PASS (115 ok); full suite
+ on the copy under the lock -> 261 ok, 0 FAIL, "ALL PASS". Unit part vs mutants: M1, M2, M7, M8, M9 (dotnames), M10 (no
+ empty-set skip), M11 (no UTF-16BE), M12 (single-pass decode) each -> FAILED (1-4 named assertions).
+
+(c) SCOPE - PASS. `git ls-files --others --exclude-standard | sort` == sort CD1.3.files (15 paths); none ignored under the
+ CD1 paths; every file on disk under swarm/codex, swarm/codex-check.sh, smoketest/codex == the manifest. Tracked changes vs
+ HEAD/12f6413: SPEC.md (lead) + CD2/CD3 territory only. smoketest/gate/run_tests.sh: 0 diff, 0 "codex". swarm/** is a
+ critical glob: permitted at Tier 3. During my session the lead changed SPEC.md (CD-p) and .swarm/tier3/CD4/* and
+ .swarm/briefs|census/CD4.1.md - not CD1 paths.
+
+OBSERVATIONS (not grounds for FAIL)
+ O1 Signalled runs exit 129/130/143 after writing their skip record; the Interface lists 0/1/2 only (conventional 128+n).
+ O2 Oracle gaps: no dotfile scenario (M9 survives), no double-escaped form (M12 survives), nothing on argv (F1), no
+    absolute manifest path (F2), no unsearchable /out (F3). The worker's suite covers M9/M12.
+ O3 11 orphan networks `agents2-codex-<pid>-<n>_isolated` (0 containers, created 11:04-11:32) exist on the daemon. Not
+    attributable to my runs: every project of mine was checked clean, and a reproduction (3 normal runs + a quota skip
+    from $T) leaves none. Left in place (not mine); each holds a /16 from Docker's pool.
+ O4 A duplicate key in auth.json contributes only its last value to the secret set (json.loads); serde would reject such a
+    file, so Codex could not use it - noted only.
+ O5 Docker cleanup: I removed 4 dangling images whose Config.Cmd is tinyproxy (by ID; the oracle's re-tag trap); my
+    SIGKILL run's 2 containers + 2 networks removed; 0 agents2-codex containers remain.

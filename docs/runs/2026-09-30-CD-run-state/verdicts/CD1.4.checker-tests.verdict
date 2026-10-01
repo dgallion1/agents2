@@ -1,0 +1,105 @@
+VERDICT: PASS
+CHECKER: checker-tests
+FAMILY: anthropic
+TASK: CD1
+ATTEMPT: 4
+MANIFEST_SHA256: 30dfd820354e25db12349b5d50593151c7ed930996d649e494a0b08390eea0fe
+---
+Setup. `sha256sum -c .swarm/manifests/CD1.4.sha256` -> 16/16 OK at the start and again just before this file was
+written; the sidecar's sha256 is 30dfd820...0fe. Work was done in an rsync copy (no .git) under the session
+scratchpad. The attempt-3 baseline is the attempt-3 checker's copy, which passes `sha256sum -c CD1.3.sha256`
+(15/15). Docker work ran under the shared flock, niced, one job at a time. Only the stub and fake auth files
+were used. Scope is the user's reopen (items 1-4) plus the disclosed ruling CD-t. The a3->a4 diff
+(python difflib) touches only codex-check.sh (67 lines), tools.py (28), the stub (+1 scenario), run_tests.sh,
+unit_tests.py and the new trace_check.py. The other 10 manifest files are byte-identical to attempt 3.
+
+(a) PASS. `accept.sh <copy>` under the lock -> 193 ok, 0 FAIL, last line `ORACLE PASS`, rc=0. That includes
+    A4 group barrages (i) rc=0/verdict, (ii) rc=130 and (iii) rc=130, the traced run, lockout
+    -> schema-invalid, and every A3 check. The 194th check (territory) is skipped in a copy that has no git,
+    so I ran its exact commands read-only on the real tree:
+    `git diff --no-renames --name-only 12f6413` + `git ls-files --others --exclude-standard`, filtered by the
+    oracle's territory regexes -> empty. The lead's `oracle.4.log`: 194 ok, `ORACLE PASS`.
+(b) PASS. `CODEX_TESTS=unit bash smoketest/codex/run_tests.sh` -> 141 ok, `ALL PASS`. The full suite (Docker)
+    -> 297 ok, `ALL PASS`, rc=0, 331 s.
+(c) PASS. Changed and untracked files vs 12f6413 on the real tree = the 16 manifest paths (all of
+    swarm/codex-check.sh, swarm/codex/**, smoketest/codex/**; `find` finds no other file there), plus
+    SPEC.md, swarm/gate.sh, dashboard/**, smoketest/gate/** (foreign CD2/CD3/lead territory, attributed).
+    Behaviour changes in the diff: pys prefix assignment (item 1); SAFE_PATH/safe_path (item 2);
+    shield()/compose_shielded in stop_container and teardown (item 3); the have_last elif (item 4); the
+    poll loop (CD-t). Everything else is comments, docstrings or test labels. No attempt-3 regression:
+    all A3 oracle checks pass, and my item-4 variants reproduce attempt-3 outcomes where attempt 4 should
+    not differ.
+
+Item 1 (no secret in argv, no global export) PASS.
+  - My own strace parser (independent of trace_check.py/argv-env-check.py) reads argv and envp separately.
+  - Real-container pass run (`strace -f -v -e trace=execve,execveat`): 387 execs, all with envp; 0 argv hits.
+    The only execs with the secret in their env are python3 tools.py copy, verdict and keep.
+  - Go-target run: 407 execs; `go mod download` execs carry no secret; again only those 3.
+  - Docker-free run (fake docker): 162 execs; only tools.py copy and keep.
+  - Mutants are killed by the worker's unit tests: `env CD_SECRETS=` (3 FAIL); `export SECRETS_JSON`, which
+    evades the static grep (2 FAIL, from the dynamic trace test).
+Item 2 (DETAIL path rule at the single choke point) PASS.
+  - My probe of `tools.py copy` covers 37 shapes over noline/missing/drift/deletedexists/badpath: $HOME/...
+    absolute, /etc/shadow, ../../, .., ., /, //x, ~/, backslash, C:, a trailing space, a fullwidth slash,
+    ./, inner .., /./, //, a trailing slash, src/., src/.., 201 bytes, and a secret in the path; controls
+    are 200 bytes, plain paths and a prefix of the secret. All 37 correct on a4; the same probe gives 21
+    BAD on a3 tools.py.
+  - End to end through the harness, the skip DETAIL is the bare sentence for $HOME/.codex/auth.json,
+    /etc/shadow, ../../x, ./src/app.txt (drift), src/../src/none.txt (missing), src//app.txt
+    (deletedexists) and a secret path; the control appends `: src/other.txt`.
+  - Static check: the only 3-arg stop_fail is codex-check.sh:287 (from tools.py copy). Every path-bearing
+    tools.py skip goes fail() -> skip() -> safe_path(), and safe_path's only caller is skip().
+  - Mutants killed by the worker's tests: the a3 rule (10 FAIL), no ./.. check (7), no 200-byte cap (2),
+    no secret check (3).
+Item 3 (teardown survives process-group signals) PASS.
+  - Structural (strace setsid+execve, real run): the main-flow docker calls (info, build, up, compose run,
+    inspect) stay in the harness group. Every teardown docker exec comes from a pid that first called
+    setsid(): checker rm (main flow and cleanup), compose logs, compose down, the ps, network ls and
+    volume ls sweeps.
+  - Beyond the oracle, a sustained group barrage (INT, then TERM/HUP alternating every 30 ms until exit)
+    covers all of cleanup:
+    - a4, interrupted: 3/3 rc=130 container-error, 44-46 signals each.
+    - a4, natural end with the spam from `compose down`: 2/2 rc=0 PASS verdict.
+    - All 5 a4 runs: no container, network or volume with the project label or name, htmp empty, no secret.
+    - Control (a3 code): the same barrage leaks 2 objects (interrupted) and 1 (natural end), so the probe
+      discriminates.
+  - Fallback with a setsid that lacks -w: every teardown call still runs, directly.
+  - Mutants killed by the worker's unit tests: no shield; unshielded network sweeps; no fallback;
+    unshielded stop_container; unshielded proxy-log capture (1 FAIL each).
+Item 4 (chmod-000 label fix) PASS.
+  - Real container runs:
+    - lockout -> schema-invalid, no verdict, out/ dropped whole, no secret.
+    - no last.json + /out 000 -> schema-invalid.
+    - /out 0600 -> schema-invalid.
+    - /out 000 + Codex exit 1 -> codex-error (step 6 runs first).
+    - /out 0300 (searchable) -> verdict, as in attempt 3.
+    - secret file + /out 000 -> schema-invalid, no secret anywhere.
+  - A strace of chmod/fchmodat shows no mode change of out before tools.py verdict (trace line 1068) or keep
+    (1539). The only chmod of out is cleanup's pre-existing `chmod -R u+rwX $TMP` for deletion (1553).
+  - Mutants against the full Docker suite: dropping the elif (-> codex-error) and restoring the mode
+    (-> verdict) each fail exactly the worker's 2 A4-4 tests (FAILED: 2).
+CD-t (poll loop) PASS: behaviour is preserved apart from signal ordering and <=0.2 s latency.
+  - I extracted the verbatim wait block (traps, watchdog, loop).
+  - Exit statuses 0/1/2/7/42/125/126/127/255 and a signal death (137) are collected the same as with a bare
+    wait. A child that exits before the loop starts is fine.
+  - Watchdog timeout: identical runrc=143, flag set. The oracle's `K timeout -> skip timeout` passes in the
+    real harness.
+  - Latency on natural exit +3-5 ms. Reaction to a PID-only INT <=107 ms (bare wait: 2 ms).
+  - Signal matrix (10 runs per cell, group-leader launch):
+    - identical for PID-only INT/TERM/HUP (130/143/129), for INT then TERM 0.1 s later (130), and for TERM
+      then INT 50 ms later (143);
+    - differs only for INT+TERM at the same instant: poll 130 vs bare wait 143.
+  - Real harness, barrage (iii) with the oracle's timing: a4 6/6 rc=130; a mutant with the loop removed
+    6/6 rc=143. Neither leaked.
+
+Observations (backlog, not grounds for FAIL):
+ O1 Cleanup's `chmod -R u+rwX "$TMP"` (unchanged from attempt 3) does change out's mode, but only to delete
+    the temp dir, after keep-or-drop. Item 4's "never changed" holds for the judgment, not for deletion.
+ O2 The poll loop forks /usr/bin/sleep 5 times a second for the whole Codex run (<=9000 forks at the
+    1800 s default). This is negligible, but it is a cost the bare wait did not have.
+ O3 Test hygiene: "U A4-2 an ABSOLUTE manifest path" builds its path under $WORK. Under a long TMPDIR
+    (>200 bytes) the old regex already rejects it by length, so that test alone does not discriminate
+    there. The /etc/hostname case does.
+ O4 Shell semantics for probe writers: a harness started as a simple background command from a
+    non-interactive shell (`setsid cmd &`) inherits SIGINT as ignored, and bash cannot trap it. The
+    oracle's `( exec setsid ... ) &` form is correct. This is not a harness defect.

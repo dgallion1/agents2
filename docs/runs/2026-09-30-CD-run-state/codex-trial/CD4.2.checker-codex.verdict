@@ -1,0 +1,81 @@
+VERDICT: FAIL
+CHECKER: checker-codex
+FAMILY: crossvendor
+TASK: CD4
+ATTEMPT: 2
+MANIFEST_SHA256: ea20b62611555fa0689133ad401a7241c0fca255de7443cc8b5d3499526fac1e
+CODEX_MODEL: gpt-6-sol
+CODEX_VERSION: codex-cli 0.159.0
+---
+criterion b: PASS
+    attack: Run every gate sub-suite in the data-free copy.
+    command: bash smoketest/gate/run_tests.sh | grep -E '^(==|FAIL|ALL PASS|[0-9]+ FAILED)'
+    result: run_check.sh, run_escalate.sh, run_done.sh, and doc_test.sh reported ALL PASS. agents_test.sh and verify_layout.sh failed only on omitted .claude/agents files and .env.example.
+criterion c: PASS
+    attack: Run the complete dashboard suite.
+    command: node --test dashboard/test/*.test.mjs
+    result: 126 tests passed; 0 failed.
+criterion d.1: PASS
+    attack: Give checker-codex an anthropic FAMILY, including at tiers 1–3.
+    command: bash smoketest/gate/run_check.sh; node --test dashboard/test/*.test.mjs
+    result: Both suites rejected the invalid pairing. Independent tier 1–3 fixtures also produced gate refusal and dashboard blocked state.
+criterion d.2: PASS
+    attack: Use codex as the only ledger check.
+    command: bash smoketest/gate/run_check.sh; node --test dashboard/test/*.test.mjs
+    result: The suites refused codex-only rows. Independent fixtures refused them at all three tiers.
+criterion d.3: PASS
+    attack: Try a skip, both records together, NUL bytes, stale evidence, and locale-sensitive whitespace.
+    command: bash smoketest/gate/run_check.sh; node --test dashboard/test/*.test.mjs
+    result: The suites accepted valid current-attempt skips and refused both records, missing evidence, and NUL-bearing skips. The gate tests produced the same skip-header decisions under C and C.utf8.
+criterion d.4: PASS
+    attack: Try to use a Codex PASS as the tier 2 or tier 3 second lane, and omit its MANIFEST_SHA256.
+    command: bash smoketest/gate/run_check.sh | grep -E 'codex: (tier 3: a Codex PASS|tier 2: a Codex PASS|a Codex PASS without MANIFEST_SHA256)'
+    result: The suite reported passing assertions that the PASS supplied no second lane or named checker and that the missing fingerprint header was refused.
+criterion d.5: PASS
+    attack: Use named and unnamed Codex FAILs, including consecutive failures and judge disputes.
+    command: bash smoketest/gate/run_check.sh; node --test dashboard/test/*.test.mjs
+    result: The suites reported tier 1 named refusal, tier 2/3 disputes, consecutive-fail escalation, and stats counting.
+criterion d.6: PASS
+    attack: Place Codex verdicts on rows that do not name codex.
+    command: bash smoketest/gate/run_check.sh
+    result: Tier 1 acceptance ignored an unnamed Codex FAIL; tier 2/3 tests opened disputes for one. Unnamed skips did not supply a lane.
+criterion d.7: PASS
+    attack: Count attempt 0 and invalid checker-second evidence in stats.
+    command: bash smoketest/gate/run_check.sh
+    result: The suite reported the attempt-0 pair, current-attempt suffixes, and second=none for an invalid checker-second. Mutating either count to start at 1 or reading the invalid second directly made the suite fail.
+criterion d.8: PASS
+    attack: Put a dangling Codex verdict symlink beside a valid tier 1 skip.
+    command: bash - <<'SH'
+        source smoketest/gate/_lib.sh
+        sd=$(newswarm)
+        mkledger "$sd" 'x\t1\ttests,codex\taccepted\t1\tw\tr\n'
+        mkverdict "$sd" x 1 checker-tests PASS anthropic
+        mkskip "$sd" x 1 quota
+        ln -s nowhere "$sd/verdicts/x.1.checker-codex.verdict"
+        for action in check done; do out=$(gate_out "$sd" "$action" x); rc=$?; echo "$action rc=$rc :: $(grep -E '^(FAIL:)' <<<"$out" | tr '\n' ' ')"; done
+        SH
+    result: Both check and done exited 1 with invalid verdict checker-codex. The dashboard suite passed its non-regular-entry cases.
+criterion d.9: PASS
+    attack: Compare check and done on valid and invalid Codex evidence.
+    command: bash - <<'SH'
+        source smoketest/gate/_lib.sh
+        sd=$(newswarm)
+        mkledger "$sd" 'x\t1\ttests,codex\taccepted\t1\tw\tr\n'
+        mkverdict "$sd" x 1 checker-tests PASS anthropic
+        mkskip "$sd" x 1 quota
+        for action in check done; do gate_out "$sd" "$action" x; echo "rc=$?"; done
+        ln -s nowhere "$sd/verdicts/x.1.checker-codex.verdict"
+        for action in check done; do gate_out "$sd" "$action" x; echo "rc=$?"; done
+        SH
+    result: Both commands accepted the valid skip, then both refused the invalid verdict entry.
+criterion f: PASS
+    attack: Run the documentation pins and inspect Codex, FAMILY, and critical-glob statements.
+    command: bash smoketest/doc_test.sh; grep -nE 'codex|crossvendor|critical-glob-unreadable' CLAUDE.md TIERS.md README.md | head -90
+    result: doc_test.sh reported ALL PASS. The inspected passages describe the trial, lead ownership, valid FAMILY pairing, fail-closed glob rule, and unnamed tier 1 FAIL escalation and stats.
+criterion i: FAIL
+    attack: In an isolated scratch copy, remove parse.mjs’s pre-open regular-file guard while retaining its nonblocking open and post-open fstat check. This mutation opens a FIFO verdict entry.
+    command: node --test /work/_adversarial_mutant/dashboard/test/*.test.mjs | tail -12
+    result: The mutated dashboard suite still reported 126 passed and 0 failed. Instrumenting fs.openSync on a FIFO verdict fixture recorded FIFO openSync calls=1. The shipped tests therefore do not catch this specified regression. The other five specified mutations each made a shipped suite fail in separate scratch copies.
+observations:
+    - The wrapper failures on .claude/agents/** and .env.example are copy artefacts: those paths are explicitly omitted.
+    - With a changed tree file after fingerprinting, check refused for tree drift while done accepted because done skips the live tree rehash. This is existing fingerprint behavior outside the Codex evidence change.

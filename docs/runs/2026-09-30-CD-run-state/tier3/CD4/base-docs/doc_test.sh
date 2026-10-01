@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+set -u
+root="$(cd "$(dirname "$0")/.." && pwd)"; FAILN=0
+has() { if grep -qi "$3" "$root/$1"; then echo "ok   - $1: $2"; else echo "FAIL - $1: $2"; FAILN=$((FAILN+1)); fi; }
+
+has TIERS.md "oracle question"      "oracle"
+has TIERS.md "reversible question"  "reversible"
+has TIERS.md "blast radius question" "blast radius"
+has TIERS.md "round-up tie-break"   "round up"
+has TIERS.md "critical.globs"       "critical.globs"
+has TIERS.md "test-code exemption glob" "test.globs"
+has TIERS.md "lean checks-column guidance" "checks column at tier 2"
+
+has CLAUDE.md "gate.sh check hard rule"  "gate.sh check"
+has CLAUDE.md "gate.sh done hard rule"   "gate.sh done"
+has CLAUDE.md "escalate-scan loop"       "escalate-scan"
+has CLAUDE.md "judge panel on disputes"  "judge-claude"
+has CLAUDE.md "tier 3 oracle contract"   "accept.sh"
+has CLAUDE.md "tier 3 oracle pass marker" "ORACLE PASS"
+has CLAUDE.md "points at the smoketest suite" "smoketest/gate/run_tests.sh"
+has CLAUDE.md "lean experiment stats hook" "gate.sh stats"
+has CLAUDE.md "lean dispute default"       "CONCEDE"
+has CLAUDE.md "fingerprint contract"        "MANIFEST_SHA256"
+has CLAUDE.md "inline escalation triggers"  "recompute the triggers inline"
+has CLAUDE.md "tier 3 named checkers"       "PASS from EVERY"
+has CLAUDE.md "phase 0 scales with scope"   "only when a task can touch markup"
+has TIERS.md  "blank checks fails at every tier" "hard-fails at every tier"
+has CLAUDE.md "surface census before dispatch" "surface-census"
+has CLAUDE.md "census kept from checkers"  "Never hand the census report to checkers"
+hasnot() { if grep -qi "$3" "$root/$1"; then echo "FAIL - $1: $2"; FAILN=$((FAILN+1)); else echo "ok   - $1: $2"; fi; }
+hasnot CLAUDE.md "no blank-column-accepts footgun text" "accept the row with zero verdicts"
+hasnot CLAUDE.md "no legacy report.md bypass text"      "flips the gate"
+hasnot README.md "no legacy divergence-report text"     "legacy divergence-report"
+
+has README.md "documents tiers"          "Verification tiers"
+has README.md "points at gate tests"     "run_tests.sh"
+has README.md "documents the census"     "surface-census"
+
+(( FAILN==0 )) && { echo "ALL PASS"; exit 0; } || { echo "$FAILN FAILED"; exit 1; }

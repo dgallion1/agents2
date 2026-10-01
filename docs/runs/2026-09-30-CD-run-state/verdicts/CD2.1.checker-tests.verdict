@@ -1,0 +1,116 @@
+VERDICT: PASS
+CHECKER: checker-tests
+FAMILY: anthropic
+TASK: CD2
+ATTEMPT: 1
+MANIFEST_SHA256: 482fd8f72262aeb179ca93e5649e4a76046f8368e2fc272b335bfdfcb3ba3978
+---
+Scope of evidence: TREE = agents2 worktree unifi-camera-streaming-7be695, HEAD 12f6413, uncommitted.
+All mutation/fixture work ran in a private rsync copy (no .git/.swarm) under the session scratchpad,
+with TMPDIR pointed at it, and under nice -n 10.
+
+Manifest: `sha256sum -c .swarm/manifests/CD2.1.sha256` -> all 6 paths OK (re-run right before this
+file was written). MANIFEST_SHA256 = sha256 of that sidecar.
+
+(a) ORACLE -- PASS
+  cmd: TMPDIR=<scratch> nice bash .swarm/tier3/CD2/accept.sh   -> exit 0, 12 ok lines, last line
+       "ORACLE PASS" (S territory, D differential 20/20, E1-E4, C1-C3, M1 41 FAIL lines, M2 6 failing).
+       Matches the lead's oracle.1.log.
+  Not vacuous: 25 mutants, each applied by an exact-match python patch to a fresh copy
+  (the patch asserts the target text occurs exactly once), then accept.sh <copy>:
+    gate only:  boss* glob, checker* (no dash), judge* (no dash), ${checker,,}==boss,
+                PASS/FAIL arm disabled, UPHOLD/OVERRULE arm disabled, rule deleted,
+                message made generic, rule MOVED from load_verdict into walk_verdicts only
+    parse only: rule disabled, startsWith('boss'), toLowerCase()==='boss', startsWith('checker'),
+                startsWith('judge'), PASS/FAIL side disabled, UPHOLD/OVERRULE side disabled,
+                message made generic
+    both sides: drop+drop, boss glob+boss prefix, both no-dash checker, both no-dash judge,
+                both case-insensitive boss, both PASS/FAIL arm off, both UP/OV arm off,
+                walk_only+parse drop
+  Result: 25/25 oracle exit 1 ("ORACLE FAIL: n check(s) failed", n = 1..7). Examples:
+    g:boss_glob   -> "L18 ... OVERRULE from 'boss-2' is invalid: gate accepts but dashboard 'blocked'"
+    p:drop        -> "L1 tier-3 ... gate rejects but dashboard 'accepted'" (+ L2,L3,L7,L10-L19)
+    g:walk_only   -> "E1 escalate-scan did not flag e1", "E2 ... flagged e2 from a judge-cast FAIL",
+                     "E3 stats counted a judge-cast FAIL" (D differential still 20/20 -- only E catches it)
+    both-sides mutants -> "both accept, expected reject" (pinned outcomes, not just agreement)
+
+(b) smoketest -- PASS
+  cmd: bash smoketest/gate/run_tests.sh  -> exit 0; 268 "ok" lines, 0 "FAIL" lines; run_check,
+       run_escalate, run_done, agents_test, doc_test, checker-evals, e2e each print ALL PASS
+       (verify_layout prints ok lines only).
+
+(c) dashboard suite -- PASS
+  cmd: node --test dashboard/test/*.test.mjs (TREE root, node --test has no cache) ->
+       "tests 72 / pass 72 / fail 0".
+
+(d) Rule holds in gate and parse.mjs, every pairing, every tier, consequences unchanged -- PASS
+  Own fixtures (not the oracle's or the worker's):
+  d1 pairing sweep (sweep.mjs + sweep.sh, sources gate.sh minus its `main` line): 39 identities
+     x 4 verdicts = 156 files. Identities include checker-a, checker-, checker, checkerx-y,
+     checker_a, Checker-a, CHECKER-a, xchecker-a, checker-a.b, judge-a, judge-, judge, judgex-a,
+     Judge-a, JUDGE-a, xjudge-a, judge_a, judge-a.b, boss, Boss, BOSS, boss-, boss-2, boss2, bossy,
+     xboss, boss.x, bos, lead, worker-coder, worker-local, checker-judge, judge-checker,
+     judge-boss, boss-judge-a, -checker-a, checkerjudge-. Expected validity came from the brief's
+     wording (/^checker-/ for PASS/FAIL; /^judge-/ or === 'boss' for UPHOLD/OVERRULE).
+     Checked: gate load_verdict in BOTH call forms (with expected task/attempt, as the tier walks
+     call it, and filename-less, as overrule_exists/any_verdict_exists/stats/task_elapsed call it)
+     -> rc and exact _verr "<file>: VERDICT V not allowed from CHECKER 'C' (PASS/FAIL come from
+     checker-*; UPHOLD/OVERRULE from judge-* or boss)"; parse(): valid files in t.verdicts, invalid
+     ones in errors[] with that exact message and in t.invalidVerdicts.
+     New pair: "156 pairings (24 valid, 132 invalid), 0 disagreements". Base pair (sanity):
+     "132 disagreements" (every invalid pairing was accepted by base).
+  d2 consequences (conseq.mjs), reference model: a mis-paired file under the NEW gate/parser must
+     behave exactly like the same file made invalid another way (FAMILY: bogus) under the BASE
+     gate/parser; a correctly-paired file must behave exactly as under base. 7 contexts x tiers 1/2/3
+     x 4 verdicts x 10 identities = 840 rows: beside-named-PASS, panel-third-vote (FAIL + 2 judge
+     OVERRULEs), old-attempt panel (escalation: two-consecutive-fails), old-attempt alone
+     (checker-overruled / stats first attempt), status no-change (any_verdict_exists), GH-29f shape
+     (no MANIFEST_SHA256, adversarial lane), only-file/checking. Compared: `check` per row (rc +
+     output normalised for the error text), `stats`, `done`, `escalate-scan` output + flag files,
+     parse() state/familiesPassed/verdicts/invalidVerdicts/mismatches/error files; plus anti-lie
+     (gate check rc 0 <=> derived.state 'accepted') on every accepted row.
+     Result: 0 disagreements after normalising scratch paths (the first run reported 40, all
+     "no tier-3 oracle at <dir>" lines differing only by the .new/.ref directory name; re-run of that
+     context with paths normalised: 0), 0 anti-lie violations; 141 rows whose check outcome differs
+     from the base gate on the same files (the rule is exercised). Tier-1 stray files still ignored
+     (A t1: 39 accept / 1 reject, the reject being the valid boss OVERRULE -> checker-overruled).
+     Discrimination: same harness against the g:walk_only mutant (contexts C,D) -> 74 disagreements,
+     25 anti-lie violations.
+  d3 surfaces enumerated myself (read gate.sh; load_verdict call sites): check_tier1 (l.189),
+     walk_verdicts (207), has_fail_at (319), overrule_exists (335), judges_overruled_at (351),
+     check_fingerprint (477), any_verdict_exists (525), task_elapsed (639), cmd_stats (660). No
+     other verdict reader in gate.sh (field_of reads flag files only). The rule lives in load_verdict,
+     so all nine see it. Dashboard: parseAllVerdicts -> validateVerdictRecord is the only verdict
+     validator; byTaskAttempt (valid only) feeds computeDerived, unresolvedFailAt,
+     tasksWithBossOverrule; render.mjs does no I/O and only consumes parse() output.
+  d4 no pre-existing fixture relied on a now-invalid pairing: instrumented copy (rule logs each
+     firing) + the BASE (12f6413) smoketests and parse.test.mjs -> 0 firings, both suites green;
+     the new tests on the same instrumented copy -> 68 (gate) / 51 (JS) firings.
+
+(e) Shipped tests catch the old behaviour -- PASS
+  cmd: copy + .swarm/tier3/CD2/base-gate.sh (cmp == `git show 12f6413:swarm/gate.sh`) ->
+       bash smoketest/gate/run_tests.sh exit 1, 41 FAIL lines, all CD2 additions (P1-P9, HD5-HD6,
+       E14-E16).
+  cmd: copy + base-parse.mjs (cmp == 12f6413) -> node --test: "fail 6" = the 5 "lane accounting"
+       unit tests + the differential ("la1: gate.sh check la1 rejects but derived.state is 'accepted'").
+  Mutation sensitivity of the shipped suites: every one of the 25 mutants above makes
+  run_tests.sh and/or the node suite fail. Gate-only mutants fail the smoketests; parse-only
+  mutants fail the node suite (2-6 tests); both-sides mutants fail "every mis-paired VERDICT/CHECKER
+  ..." (pinned outcome), not just the differential.
+
+(f) Territory -- PASS
+  cmd: git diff --name-only 12f6413 -> SPEC.md (lead's) + exactly the 6 manifest paths;
+       git ls-files --others --exclude-standard -> empty; the manifest file list equals the changed
+       set minus SPEC.md (diff of the sorted lists is empty); render.mjs cmp == 12f6413 and sha256 ==
+       base-render.sha256. No CD1-territory files exist yet (swarm/: gate.sh start.sh only).
+
+OBSERVATIONS (beyond scope -- backlog, not FAIL):
+  O1 Pre-existing header-whitespace split (same class as the known first-KEY/last-header split):
+     `CHECKER: judge-x ` (trailing space) -> gate: "CHECKER 'judge-x ' != filename checker" (invalid,
+     rc 1); dashboard trims -> 'accepted'. Identical on base gate/parse, so not CD2's.
+  O2 The escalation tests for boss-2/Boss OVERRULE (run_escalate E18, parse.test la-bo, differential
+     le5) already passed on base because overrule_exists and tasksWithBossOverrule test exact
+     `boss`; they are controls. The exact-`boss` rule is pinned by the check-level cases (P3,
+     INVALID_PAIRINGS, oracle L18/L19), which fail under the boss*/case-insensitive mutants.
+  O3 None of the 695 *.verdict files archived in the repo (docs/runs, fixtures) is mis-paired, so the
+     rule invalidates no recorded evidence.

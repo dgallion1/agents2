@@ -1,0 +1,106 @@
+VERDICT: PASS
+CHECKER: checker-second
+FAMILY: adversarial
+TASK: CD3
+ATTEMPT: 1
+MANIFEST_SHA256: 84b2af7cedcde0cd87b7adf7e81fc52fb99b77da98d780606b600b1c77f76b2b
+---
+Tree check: `sha256sum -c .swarm/manifests/CD3.1.sha256` -> all 7 paths OK (before and after my probes). All probes ran in private
+copies (no .git) or in fixtures under my scratch dir, as uid 1000 (mode-000 fixtures are live). I never touched CD1 territory,
+never ran Docker. TREE gate/parse were exercised read-only via SWARM_DIR=<fx> SWARM_TREE=<fx>/tree.
+
+(a) accept.sh -> ORACLE PASS.  PASS
+  Attack: re-run the oracle myself (not the lead's log) against a private copy: `bash .swarm/tier3/CD3/accept.sh <copy>` ->
+  23 ok / 0 FAIL, last line `ORACLE PASS` (includes C1/C2 and M1 97 FAIL lines / M2 40 failing against the frozen post-CD2 files).
+  Attack on the oracle's power: it has no dangling/loop test.globs case, no unlistable-manifests/ case, no non-UTF-8 entry-NAME
+  case (see observations O2, O3, O5) - none of these makes an oracle check pass for a wrong reason; they are uncovered inputs, and
+  I ran each of them by hand against the real code (below).
+
+(b) `bash smoketest/gate/run_tests.sh` -> ALL PASS.  PASS
+  Ran it on the copy (383 ok, 0 FAIL, ALL PASS) and again per suite (run_check/run_escalate/run_done) under
+  `LC_ALL=C LANG= PYTHONUTF8=0`: all ALL PASS (no locale dependence in the shipped tests).
+
+(c) `node --test dashboard/test/*.test.mjs` -> 114 tests, 114 pass, 0 fail.  PASS  (also 0 fail under LC_ALL=C PYTHONUTF8=0).
+
+(d) Main attack - fail-open / gate-vs-parse disagreement / hang / locale / clean-input escalation / evaluator failure / parse
+    throw / diagnostic contract.  PASS (one disclosed edge case, O1, judged out of the brief's enumerated scope)
+  1. Hand-built battery (probe.mjs, ~75 fixtures, each run through gate `check`, gate `escalate-scan` and TREE parse() in a child
+     process with a 25 s timeout): critical.globs/test.globs/manifest as directory, dangling link, symlink loop, FIFO, /dev/null,
+     /dev/zero link, Unix socket, mode 000, /proc/self/mem link, CESU surrogate bytes, overlong, >U+10FFFF, UTF-16LE, NUL bytes,
+     BOM-only, CRLF, empty, comment-only, whitespace-only, 5 MB one-line glob; manifests/ as mode 000 / --x / r-- / regular file /
+     dangling link; older and current manifests; sidecar as FIFO / dir / dangling / mode 000 / non-UTF-8 / socket / /proc link;
+     tiers 1, 2, 3; LC_ALL=C + PYTHONUTF8=0 + PYTHONCOERCECLOCALE=0 with non-ASCII paths. Result: every unreadable kind ->
+     gate refuses with `critical-glob-unreadable` on the stdout FAIL line, exactly ONE `unreadable` stderr line naming the path
+     (or the evaluator failure), scan writes `REASON: critical-glob-unreadable` (TARGET_TIER 2 at tier 1, 3 at tier 2, no flag at
+     tier 3), parse() flagged with the same token; no hang (FIFO/zero/socket never opened, each case <130 ms); parse() never threw
+     on a current manifest/sidecar oddity. Clean kinds (empty, BOM, CRLF, comment-only, symlink-to-readable incl. relative and
+     absolute, non-ASCII manifest under LC_ALL=C, `t..files`, `t.files`/`t.1.files.bak` (not matching the glob), an unreadable
+     manifest of ANOTHER task) accept with EMPTY stderr and derived 'accepted'.
+  2. Randomised differential (fuzz.mjs, seeds 11/23 default locale, 77 under LC_ALL=C PYTHONUTF8=0): 1000 fixtures combining
+     critical.globs kind x test.globs kind x 0-2 older manifests of 11 kinds x tier x attempt. Asserted per run: gate check exit 0
+     <=> derived 'accepted'; same reason token (unreadable vs plain critical-glob) in gate stdout and parse mismatch; one
+     unreadable stderr line iff the FAIL line carries the token; scan flag REASON. 0 flagged, 0 hangs, 0 parse throws. (First run
+     flagged 72 rows for tier 3 - my harness assumed silence; at tier 3 the gate still evaluates, accepts, and prints the one
+     diagnostic line, which matches "one line per evaluation that is unreadable"; harness corrected, not a defect.)
+  3. Evaluator failure (python3 shims, real gate check at tier 2): exit 0/1/2/127/137 (kill -9)/143 (TERM), non-script shim,
+     PATH with no python3, PYTHONHOME=/nonexistent, shim printing multi-line noise + exit 12 -> all refuse with
+     `critical-glob-unreadable`, one stderr line. exit 10 -> plain critical-glob; exit 11 -> no hit (the deliberate no-hit code, only
+     a hostile shim can forge it). TMPDIR unwritable/nonexistent: no effect (bash 5.2 pipes the heredoc); a heredoc failure would
+     surface as rc 1 -> unreadable anyway.
+  4. UTF-8 validity parity: 30 000 random byte strings (biased to lead/continuation/surrogate/overlong bytes): Python strict
+     `decode('utf-8')` vs `TextDecoder('utf-8',{fatal:true})` -> 0 mismatches.
+  5. `done`: two accepted rows + directory critical.globs -> both rows refused naming the token, one diagnostic per row evaluation,
+     run incomplete; scan flags both.
+  6. Cost: 30 MB critical.globs: gate 4.26 s (post-CD2) vs 4.33 s (new), memory 245 MB vs 480 MB - no time regression.
+  Worker's extension (an existing but unlistable manifests/ -> unreadable): compatible hardening, NOT a contradiction. Pinned
+  semantics 1 says "no entry matches -> no hit" and the Rule says "failing to read for any other reason -> UNREADABLE"; with an
+  unlistable directory "no entry matches" cannot be established, so the base's silent no-hit is exactly the fail-open this task
+  removes, and the deviation only ever flags (never accepts). Gate and parse agree on it (mode 000, --x, r--, a regular file, a
+  dangling link; all reject with the token) and both shipped suites pin it (run_escalate u12, parse UNREADABLE_INPUTS). It is
+  not covered by accept.sh; the lead may want to note it in ruling CD-i. Observation, not FAIL.
+
+(e) Shipped tests catch the old behaviour and most partial fixes.  PASS
+  Old behaviour: M1 (post-CD2 gate.sh) 97 FAIL lines, M2 (post-CD2 parse.mjs) 40 failing (reproduced inside my accept.sh run).
+  Partial-fix mutation testing (mut.py: 20 gate + 20 parse mutants applied one at a time to a copy, run_check/run_escalate/
+  run_done + parse.test.mjs): KILLED - critical.globs -f only / -e only (dangling absent), test.globs -f only, no regular-file
+  checks (FIFO/dir), locale-default decoding, evaluator failure -> no hit, wrong token (both surfaces), no diagnostic, two
+  diagnostics, unstarted row evaluated, non-regular manifest skipped, hit-beats-unreadable (both surfaces), test.globs
+  unreadable ignored, older-attempt manifest ignored, BOM stripped (parse test only), invalid UTF-8 replaced, manifests-dir
+  extension removed, parseManifest/parseFingerprint reverted (throw), non-regular manifest filtered (parse), unstarted row
+  (parse). SURVIVED, with analysis:
+   - g03/p03 test.globs treated as absent when it is a DANGLING symlink or SYMLINK LOOP (falls back to the defaults): a real
+     test gap in both suites. The implementation is correct (probe D1/D2/D3: gate and parse refuse, token, one line).
+   - g14 (python outer `except` returns no-hit) / p07 (parse outer catch returns none): defensive branches; reachable only via an
+     odd input (e.g. non-UTF-8 entry NAME makes print() raise UnicodeEncodeError -> outer except -> unreadable), never asserted.
+   - g20 (unexpected rc in escalation_reasons `*)`): unreachable, manifest_hits_glob returns only 0/1/2 (equivalent mutant).
+   - p13/p14 (null critical/test lines not checked): equivalent - loadGlobs(null) throws and the outer catch returns unreadable.
+   - p18 (no fstat re-check, only the O_NONBLOCK re-open): TOCTOU swap, untestable.
+   - p19/p20 (unreadable sidecar/manifest -> null instead of empty): derived state identical; only the mismatch wording differs
+     from the gate's ("no fingerprint sidecar" vs the gate's "no fingerprint line"), state not affected.
+  Gate-only and parse-only partial fixes are killed (parse.test.mjs spawns gate.sh in its differential cases; M1/M2).
+
+(f) Territory.  PASS
+  `sha256sum` of every tracked file in .swarm/tier3/CD3/base.sha256 outside {swarm/gate.sh, dashboard/lib/parse.mjs,
+  dashboard/test/parse.test.mjs, smoketest/gate/*}: 2037 files, 0 mismatches. `git status --porcelain`: modified = SPEC.md (the
+  lead's; equals base), the 7 CD3 files; untracked = CD1's swarm/codex-check.sh, swarm/codex/**, smoketest/codex/** only.
+  `git diff -U0` of the five test/lib files shows 0 removed lines (tests are purely additive). CD3.1.files lists exactly the 7
+  paths.
+
+OBSERVATIONS (backlog; none is a FAIL under rule 5 or the acceptance criteria)
+ O1. Gate-vs-parse disagreement on a NON-UTF-8 manifest ENTRY NAME (probe N20): `manifests/t.0<0xff>.files` holding a clean
+     path. Gate: python opens it byte-exact via surrogateescape -> no hit -> `check` exits 0. parse(): fs.readdirSync decodes the
+     name lossily (U+FFFD), stat ENOENT -> unreadable -> derived 'flagged' (conservative direction). The base agreed on this
+     fixture (both accepted), so the disagreement is new, but it needs a hand-made invalid-UTF-8 file name in .swarm/manifests
+     (task ids/attempts are ASCII), it is the same lossy-name limitation every readdirSync in parse.mjs already has, and it is not
+     among the brief's enumerated kinds (permission-denied, invalid UTF-8 content, directory). Variant N44 (same name holding a
+     real hit): gate `critical-glob`, parse `critical-glob-unreadable`; both refuse (base parse ACCEPTED it, so this improved).
+     Fix if wanted: readdirSync(dir, {encoding:'buffer'}) and Buffer paths. Same fixture where the content is unreadable: gate
+     prints `evaluator failed (UnicodeEncodeError)` instead of naming the path (still exactly one line, still fail-closed).
+ O2. No shipped test for a dangling or looping test.globs (see (e) g03/p03).
+ O3. No test drives the evaluator's outer `except` (g14/p07) or the unlistable-manifests case through accept.sh.
+ O4. Out of brief item 7's scope, still throwing in parse(): flags/<task>.flag as a directory (gate accepts, dashboard 500s),
+     a mode-000 verdict file, verdicts/ mode 000, a tier3 oracle.<n>.log that is a directory (EISDIR/EACCES from
+     readFileIfExists/listDirIfExists). Pre-existing, untouched by CD3.
+ O5. No test covers a huge (multi-GB) regular file; gate and parse read the whole file (memory), as the base did.
+ O6. `gate.sh done` re-emits the per-row diagnostic inside its own combined output (it runs check_task with 2>&1); one line per
+     evaluation still holds.
