@@ -171,4 +171,128 @@ mkmanifest "$sd" a 0 src/payments/x.js
 mkverdict "$sd" a 0 checker-content PASS anthropic
 run_gate "$sd" done; assert_rc "done rejects unflagged critical-glob row" 1 $?
 
+# --- CD2: lane accounting — `done` walks the same validator as `check`, so a
+# row whose current attempt holds a mis-paired VERDICT/CHECKER is not complete.
+
+# HD5: an accepted tier-2 row with a genuine checker PASS plus a judge-cast
+# PASS -> done rejects, naming the pairing.
+sd=$(newswarm)
+mkledger "$sd" 'a\t2\tcontent\taccepted\t0\tworker-coder\t-\n'
+mkverdict "$sd" a 0 checker-content PASS anthropic
+mkverdict "$sd" a 0 judge-x PASS adversarial
+out=$(gate_out "$sd" done); rc=$?
+assert_rc "done rejects a row with a judge-cast PASS" 1 $rc
+assert_grep "done names the pairing" "$out" "VERDICT PASS not allowed from CHECKER 'judge-x'"
+
+# HD6: the reproduced hole (GH-29f) — a tier-3 row whose second lane comes from
+# a judge-named file is not complete either.
+sd=$(newswarm)
+mkledger "$sd" 'a\t3\ttests\taccepted\t1\tworker-coder\t-\n'
+mkdir -p "$sd/tier3/a"
+printf '#!/usr/bin/env bash\necho "ORACLE PASS"\n' > "$sd/tier3/a/accept.sh"; chmod +x "$sd/tier3/a/accept.sh"
+printf 'ORACLE PASS\n' > "$sd/tier3/a/oracle.1.log"
+mkverdict "$sd" a 1 checker-tests PASS anthropic
+mkverdict_nofp "$sd" a 1 judge-x PASS adversarial
+run_gate "$sd" done; assert_rc "done rejects a tier-3 row with a judge-supplied second lane" 1 $?
+
+# HD7: control — the same tier-3 row with two genuine checker lanes is done.
+sd=$(newswarm)
+mkledger "$sd" 'a\t3\ttests,second\taccepted\t1\tworker-coder\t-\n'
+mkdir -p "$sd/tier3/a"
+printf '#!/usr/bin/env bash\necho "ORACLE PASS"\n' > "$sd/tier3/a/accept.sh"; chmod +x "$sd/tier3/a/accept.sh"
+printf 'ORACLE PASS\n' > "$sd/tier3/a/oracle.1.log"
+mkverdict "$sd" a 1 checker-tests  PASS anthropic
+mkverdict "$sd" a 1 checker-second PASS adversarial
+run_gate "$sd" done; assert_rc "done accepts a tier-3 row with two genuine checker lanes (control)" 0 $?
+
+# --- CD3: `done` walks the same escalation recomputation as `check`, so an
+# accepted row whose critical-glob evaluation is UNREADABLE (fail closed) is
+# not complete: it needs the flag and the higher tier, exactly like a row with
+# a critical-glob hit and no flag (HD4).
+
+# HD8: an accepted tier-2 row, critical.globs a directory -> done rejects and
+# names critical-glob-unreadable.
+sd=$(newswarm)
+mkledger "$sd" 'a\t2\ttests\taccepted\t1\tworker-coder\t-\n'
+mkdir "$sd/critical.globs"
+mkmanifest "$sd" a 1 src/x.js
+mkverdict "$sd" a 1 checker-tests PASS anthropic
+out=$(gate_out "$sd" done); rc=$?
+assert_rc "done rejects an accepted row whose critical.globs is unreadable (a directory)" 1 $rc
+assert_grep "done names critical-glob-unreadable" "$out" "critical-glob-unreadable"
+
+# HD9: same for a test.globs that is not valid UTF-8, on a tier-1 row.
+sd=$(newswarm)
+mkledger "$sd" 'a\t1\ttests\taccepted\t1\tworker-coder\t-\n'
+printf 'src/payments/**\n' > "$sd/critical.globs"; printf '\xff\xfe\n' > "$sd/test.globs"
+mkmanifest "$sd" a 1 src/x.js
+mkverdict "$sd" a 1 checker-tests PASS anthropic
+out=$(gate_out "$sd" done); rc=$?
+assert_rc "done rejects an accepted row whose test.globs is unreadable (not valid UTF-8)" 1 $rc
+assert_grep "done names critical-glob-unreadable for test.globs" "$out" "critical-glob-unreadable"
+
+# HD10: an unreadable (mode 000) critical.globs (non-root only).
+if is_root; then echo "ok   - skip: mode-000 unreadable case needs a non-root user"; else
+sd=$(newswarm)
+mkledger "$sd" 'a\t2\ttests\taccepted\t1\tworker-coder\t-\n'
+printf 'src/payments/**\n' > "$sd/critical.globs"; chmod 000 "$sd/critical.globs"
+mkmanifest "$sd" a 1 src/x.js
+mkverdict "$sd" a 1 checker-tests PASS anthropic
+out=$(gate_out "$sd" done); rc=$?; chmod 644 "$sd/critical.globs"
+assert_rc "done rejects an accepted row whose critical.globs is unreadable (mode 000)" 1 $rc
+assert_grep "done names critical-glob-unreadable for mode 000" "$out" "critical-glob-unreadable"
+fi
+
+# HD11: control — the same unreadable input on a tier-3 row cannot escalate
+# further, so done is not blocked by it.
+sd=$(newswarm)
+mkledger "$sd" 'a\t3\ttests,second\taccepted\t1\tworker-coder\t-\n'
+mkdir "$sd/critical.globs"
+mkdir -p "$sd/tier3/a"
+printf '#!/usr/bin/env bash\necho "ORACLE PASS"\n' > "$sd/tier3/a/accept.sh"; chmod +x "$sd/tier3/a/accept.sh"
+printf 'ORACLE PASS\n' > "$sd/tier3/a/oracle.1.log"
+mkverdict "$sd" a 1 checker-tests  PASS anthropic
+mkverdict "$sd" a 1 checker-second PASS adversarial
+run_gate "$sd" done; assert_rc "done accepts a tier-3 row despite unreadable globs (control: tier 3 is never blocked inline)" 0 $?
+
+# --- CD4: `done` refuses exactly what `check` refuses on the Codex lane (run CD):
+# it walks the same check_task, so a row naming codex needs ONE valid outcome.
+
+# HD12: an accepted row naming codex with no Codex outcome -> done rejects and
+# names the missing evidence.
+sd=$(newswarm)
+mkledger "$sd" 'a\t2\ttests,codex\taccepted\t1\tworker-coder\t-\n'
+mkverdict "$sd" a 1 checker-tests PASS anthropic
+out=$(gate_out "$sd" done); rc=$?
+assert_rc "codex: done rejects a row naming codex with no Codex outcome" 1 $rc
+assert_grep "codex: done names the missing Codex evidence" "$out" "missing checker-codex evidence (attempt 1)"
+
+# HD13: the same row with a valid skip record (an outage never blocks) -> done ok.
+mkskip "$sd" a 1 quota
+run_gate "$sd" done; assert_rc "codex: done accepts a row whose Codex outcome is a valid skip record" 0 $?
+
+# HD14: a Codex verdict AND a skip record at the same attempt -> done rejects.
+mkcodex "$sd" a 1 PASS
+run_gate "$sd" done; assert_rc "codex: done rejects a verdict plus a skip record at one attempt" 1 $?
+
+# HD15: a Codex FAIL is a FAIL at tier 2, so an accepted row carrying one (no
+# panel) is not complete; a Codex PASS is only evidence of presence.
+sd=$(newswarm)
+mkledger "$sd" 'a\t2\ttests,codex\taccepted\t1\tworker-coder\t-\n'
+mkverdict "$sd" a 1 checker-tests PASS anthropic
+mkcodex "$sd" a 1 FAIL
+run_gate "$sd" done; assert_rc "codex: done rejects an accepted row with a Codex FAIL and no panel" 1 $?
+mkcodex "$sd" a 1 PASS
+run_gate "$sd" done; assert_rc "codex: done accepts the same row with a Codex PASS (control)" 0 $?
+
+# HD16: a Codex PASS supplies no lane — the tier-3 row with only one real lane is not complete.
+sd=$(newswarm)
+mkledger "$sd" 'a\t3\ttests,codex\taccepted\t1\tworker-coder\t-\n'
+mkdir -p "$sd/tier3/a"
+printf '#!/usr/bin/env bash\necho "ORACLE PASS"\n' > "$sd/tier3/a/accept.sh"; chmod +x "$sd/tier3/a/accept.sh"
+printf 'ORACLE PASS\n' > "$sd/tier3/a/oracle.1.log"
+mkverdict "$sd" a 1 checker-tests PASS anthropic
+mkcodex "$sd" a 1 PASS
+run_gate "$sd" done; assert_rc "codex: done rejects a tier-3 row whose only second lane is a Codex PASS" 1 $?
+
 finish

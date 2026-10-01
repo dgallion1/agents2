@@ -1,0 +1,92 @@
+VERDICT: PASS
+CHECKER: checker-tests
+FAMILY: anthropic
+TASK: CD4
+ATTEMPT: 3
+MANIFEST_SHA256: d1664d360d514850c6ec0c48a2c3080c55f43f7a3ee18904e42873e4c9034900
+---
+Tree identity: `sha256sum -c .swarm/manifests/CD4.3.sha256` -> all 11 paths OK, run before
+the work and again before this verdict; `sha256sum .swarm/manifests/CD4.3.sha256` ->
+d1664d36...4900. All runs below are on a scratch `cp -a` copy (.git pointer removed,
+`git init`), under `nice -n 10`, sequential. <scratch> = this checker's scratch dir.
+
+(a) PASS. `TMPDIR=<scratch>/tmp nice -n 10 .swarm/tier3/CD4/accept.sh <scratch>/w`
+    (not wrapped in flock) -> 59 `ok` lines, 0 FAIL, last line `ORACLE PASS`, exit 0.
+    Matches the lead's oracle.3.log (59 ok). Includes S (outside territory unchanged, no
+    new file), D 79/79, E, T (17), I (3, real harness + stub), F1-F26, C1, C2 (141 tests),
+    M1, M2, N0, N1 (7 kinds x {verdict, skip}, 0 opens), N2/N3/N4 (m1/m2/m3 each fail a
+    `never opens` test).
+
+(b) PASS. `cd <copy> && nice -n 10 bash smoketest/gate/run_tests.sh` -> `ALL PASS`, rc=0,
+    622 ok lines, 0 FAIL lines.
+
+(c) PASS. `cd <copy> && nice -n 10 node --test --test-reporter=spec dashboard/test/*.test.mjs`
+    -> `tests 141 / pass 141 / fail 0`, rc=0 (126 at attempt 2 + 14 never-opens + 1 control).
+
+Tests are what CD4.3 says (read at dashboard/test/parse.test.mjs:2719-2831, then run):
+  - names: 14 tests `codex: parse() never opens <kind> named as a verdict entry ...` /
+    `... named as the Codex skip record ...`; the spec reporter lists all 14 as passing.
+  - kinds (NEVER_OPENS_KINDS, 7): FIFO, directory, dangling symlink, symlink loop,
+    symlink->FIFO, symlink->directory, symlink->/dev/null; no mode-000 file. Each kind is
+    used for the verdict entry (`no-v.1.checker-other.verdict`, tier-2 row) AND the skip
+    record (`no-s.1.checker-codex.skip`, row checks `tests,codex`).
+  - child: `spawnSync(process.execPath, ['-e', code], {timeout: 20000})`; the code uses
+    `require` (CommonJS; `node -e` probe -> require=function, module=object), patches
+    fs.openSync and fs.readFileSync to count calls whose path === the entry, calls
+    `require('node:module').syncBuiltinESMExports()`, and only then `import(parse.mjs)`.
+    It does not reuse the ESM parseInChild helper.
+  - asserts `out.opens === 0` (assert/strict), no timeout/signal/throw, the row `blocked`;
+    the verdict entry listed in invalidVerdicts and errors[]; the skip record gives
+    codexSkip === null and a `missing checker-codex evidence` mismatch.
+  - control: `the opens counter sees a regular verdict entry and a regular skip record`
+    asserts opens >= 1 for each. Test mutation `n += 1` -> `n += 0` (dead counter):
+    `node --test --test-name-pattern='never opens|opens counter'` -> 15 tests, 1 fail = the
+    control; the 14 never-opens tests pass vacuously. So the control is what guards the
+    counter.
+
+Mutations (each alone, on a fresh copy, full dashboard suite, <scratch>/runmut.sh):
+  m1 (verdict guard deleted)        -> fail 7: every `never opens ... verdict entry` test
+  m2 (narrowed to FIFO||dir)        -> fail 1: `never opens a symlink to /dev/null (a device)
+                                       named as a verdict entry`
+  m3 (skip guard deleted)           -> fail 7: every `never opens ... Codex skip record` test
+  own mutants, killed: verdict guard moved after the open (7 fail); skip guard moved after
+  the open (7); verdict realpath-then-open, no guard (2: FIFO, directory); skip
+  realpath-then-open, no guard (2); skip narrowed to FIFO||dir (1: /dev/null); verdict
+  read via readFileSync(path) (10); verdict FIFO-only guard (3); verdict open via
+  Buffer path (7); verdict open via URL path (1: the control, since the counter cannot see
+  URL opens); verdict lstat guard (5 symlink kinds); skip lstat guard (5); skip FIFO-only
+  guard (3); skip readFileSync(path) (8); verdict isFile||isCharacterDevice (1).
+  SURVIVORS (2), see finding F-1: an lstat guard that lets symlinks through plus
+  `fs.openSync(fs.realpathSync(filePath), ...)`, in readVerdictEntry (o4) or in
+  parseCodexSkip (o6) -> suite 141/141, rc=0.
+
+Scope: PASS.
+  - `sha256sum -c .swarm/manifests/CD4.2.sha256` -> 10 OK, only dashboard/test/parse.test.mjs
+    FAILED. `sha256sum -c .swarm/tier3/CD4/a2-territory.sha256` -> only parse.test.mjs
+    differs among 42 paths; a fresh listing of dashboard/** + smoketest/gate/** + the 5 root
+    territory files equals the snapshot's path list exactly (diff rc=0), so nothing is new.
+  - The change is purely additive: `sed '2719,2832d' dashboard/test/parse.test.mjs |
+    sha256sum` -> cda40709...079b = the CD4.2 sidecar hash for that file.
+  - Outside the territory: oracle S checks ok (every file matches post-CD1..3, no new file).
+    git status shows only the expected CD1-CD4 paths, SPEC.md and .swarm-codex-trial/
+    (foreign, attributed).
+  - CD4.1/CD4.2 criteria still hold: every non-test territory file is byte-identical to
+    attempt 2; the attempt-2 tests are byte-identical (additive change), so its mutation
+    kills stand (spot-check: the readFileSync(path) mutant still fails the attempt-2
+    `neither throws nor hangs on a FIFO` tests); oracle D/E/T/I/F/C/M all ok.
+
+Findings (for the lead; not a worker defect, not in the written scope):
+  F-1 (brief + oracle level). The brief pins the counter to "calls whose path argument is
+      the entry's path", and both the shipped test and the oracle's never-open.mjs use
+      that counter. So a reader that opens the symlink's RESOLVED path escapes it. Repro:
+      in readVerdictEntry, replace the stat guard + open with
+        { const l = fs.lstatSync(filePath); if (!l.isFile() && !l.isSymbolicLink()) return { error: 'not a regular file' }; }
+        fd = fs.openSync(fs.realpathSync(filePath), fs.constants.O_RDONLY | fs.constants.O_NONBLOCK);
+      (or the same in parseCodexSkip with `return null`). Result: the dashboard suite stays
+      141/141, and `node .swarm/tier3/CD4/never-open.mjs <tree>` exits 0. An fstat-based
+      probe (count opened fds that are not regular files) shows the mutant DOES open the
+      FIFO target, the directory target and /dev/null, once each, for the 3 symlink kinds.
+      The same probe shows the shipped code opens 0 non-regular fds in all 14 cases. The
+      row is still `blocked`. A counter that fstat's each fd openSync returns (or that
+      compares realpaths) would close the gap.
+  O-1 readPyLines' identical untested gap remains backlog, as the brief says.

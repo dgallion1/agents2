@@ -1,0 +1,89 @@
+# CD4 oracle: TREE=/home/darrell/work/agents2/.claude/worktrees/unifi-camera-streaming-7be695
+ok   - S outside CD4 territory every file matches its post-CD1..3 state
+ok   - S no new file outside CD4 territory
+    FAIL - X37 DETAIL:<U+2003> is a non-empty DETAIL (valid skip): the gate's answer depends on the locale: LOCALE SPLIT: C=accept C.UTF-8=reject en_US.UTF-8=reject :: FAIL: x37: missing checker-codex evidence (attempt 1)
+    FAIL - X38 REASON:<U+2003>quota is no known reason: the gate's answer depends on the locale: LOCALE SPLIT: C=reject C.UTF-8=accept en_US.UTF-8=accept :: OK: x38 accepted at tier 2 (attempt 1)
+    FAIL - X39 TASK:<U+2003>x39 does not match the filename: the gate's answer depends on the locale: LOCALE SPLIT: C=reject C.UTF-8=accept en_US.UTF-8=accept :: OK: x39 accepted at tier 2 (attempt 1)
+    FAIL - X40b REASON:<U+3000>auth, tier 1 named: the gate's answer depends on the locale: LOCALE SPLIT: C=reject C.UTF-8=accept en_US.UTF-8=accept :: OK: x40b accepted at tier 1 (attempt 1)
+    FAIL - X41 tier 1 named: a DANGLING-symlink Codex verdict beside a valid skip: gate accepts but dashboard 'blocked' (gate: OK: x41 accepted at tier 1 (attempt 1))
+    FAIL - X42 tier 1 named: a DIRECTORY named as the Codex verdict beside a valid skip: parse() THREW: EISDIR: illegal operation on a directory, read
+    FAIL - X44 tier 1 named: a FIFO named as the Codex verdict (never opened, no hang): parse() HUNG (killed after 20 s)
+    FAIL - X39b ATTEMPT:<U+2003>1: the gate's answer depends on the locale: LOCALE SPLIT: C=reject C.UTF-8=accept en_US.UTF-8=accept :: OK: x39b accepted at tier 2 (attempt 1)
+    FAIL - X41b tier 1 named: a dangling-symlink Codex verdict and NO skip: gate FAIL should mention 'invalid verdict checker-codex': FAIL: x41b: missing checker-codex evidence (attempt 1)
+    FAIL - X42b tier 1 named: a symlink-LOOP Codex verdict beside a valid skip: parse() THREW: ELOOP: too many symbolic links encountered, open '/tmp/cd4-diff-JA2VEF/fx-56TGfn/verdicts/x42b.1.checker-codex.verdict'
+    FAIL - X43b tier 1 named: a MODE-000 Codex verdict beside a valid skip: parse() THREW: EACCES: permission denied, open '/tmp/cd4-diff-JA2VEF/fx-EitoIr/verdicts/x43b.1.checker-codex.verdict'
+    FAIL - X42c tier 2 named: a DIRECTORY named as the Codex verdict: parse() THREW: EISDIR: illegal operation on a directory, read
+    FAIL - X44c tier 3 NOT named: a FIFO named as the Codex verdict: parse() HUNG (killed after 20 s)
+    FAIL - X47 tier 2: a DIRECTORY named as another checker's verdict: parse() THREW: EISDIR: illegal operation on a directory, read
+    FAIL - X48 tier 2: a FIFO named as another checker's verdict: parse() HUNG (killed after 20 s)
+    FAIL - X49 tier 2: a MODE-000 regular file named as another checker's verdict: parse() THREW: EACCES: permission denied, open '/tmp/cd4-diff-JA2VEF/fx-QJ1V8f/verdicts/x49.1.checker-other.verdict'
+    differential: 63/79 ok
+FAIL - D differential battery: differential: 63/79 ok
+ok   - E two consecutive Codex FAILs trigger two-consecutive-fails
+ok   - T s1 (attempt 2): line ends 'codex=PASS second=PASS'
+ok   - T s1 first attempt counts the Codex FAIL (failed)
+ok   - T s2: codex=skip:quota second=FAIL
+ok   - T s3: codex=none second=PASS
+ok   - T s5: codex=FAIL second=FAIL
+ok   - T s6: codex=FAIL second=none
+ok   - T s7: an invalid skip record is none
+ok   - T s8: a verdict wins over a skip record
+ok   - T s9 no-change line unchanged
+ok   - T s10: first attempt 0 failed; current attempt has no Codex outcome
+ok   - T s11: an INVALID checker-second counts as none
+FAIL - T s12: a DETAIL of U+2003 is non-empty → codex=skip:quota (any locale)
+FAIL - T summary: codex: ran 7/9, FAIL 5, same-verdict-as-second 2, codex-only FAIL 4
+FAIL - T stats output is identical under LC_ALL=C and en_US.UTF-8
+ok   - T the codex line follows the existing summary lines
+#     stats output:
+#       stats: s1 tier=2 first-attempt=1 failed (now: status=checking attempt=2) elapsed=n/a codex=PASS second=PASS
+#       stats: s2 tier=2 first-attempt=1 failed (now: status=checking attempt=1) elapsed=n/a codex=skip:quota second=FAIL
+#       stats: s3 tier=2 first-attempt=1 clean (now: status=checking attempt=1) elapsed=n/a codex=none second=PASS
+#       stats: s5 tier=2 first-attempt=1 failed (now: status=checking attempt=1) elapsed=n/a codex=FAIL second=FAIL
+#       stats: s6 tier=2 first-attempt=1 failed (now: status=checking attempt=1) elapsed=n/a codex=FAIL second=none
+#       stats: s7 tier=2 first-attempt=1 clean (now: status=checking attempt=1) elapsed=n/a codex=none second=PASS
+#       stats: s8 tier=2 first-attempt=1 clean (now: status=checking attempt=1) elapsed=n/a codex=PASS second=none
+#       stats: s9 tier=2 no-change (excluded)
+#       stats: s10 tier=2 first-attempt=0 failed (now: status=checking attempt=1) elapsed=n/a codex=none second=none
+#       stats: s11 tier=2 first-attempt=1 failed (now: status=checking attempt=1) elapsed=n/a codex=FAIL second=none
+#       stats: s12 tier=2 first-attempt=1 clean (now: status=checking attempt=1) elapsed=n/a codex=none second=PASS
+#       first-attempt clean: 4/10 (no-evidence rows: 0)
+#       escalated: 0/10
+#       elapsed total: 0h00m (sum of per-task evidence spans)
+#       codex: ran 7/8, FAIL 5, same-verdict-as-second 2, codex-only FAIL 4
+ok   - T no Codex evidence: codex: ran 0/0, FAIL 0, same-verdict-as-second 0, codex-only FAIL 0
+ok   - T a no-evidence line is unchanged
+ok   - I a harness-written Codex PASS verdict is accepted by the gate
+ok   - I a harness-written skip record satisfies 'codex' (accepted)
+ok   - I a harness-written Codex FAIL is refused by the gate
+ok   - F1 CLAUDE.md: name codex beside second
+ok   - F2 CLAUDE.md: the trial rule (a Codex FAIL counts, a PASS never does)
+ok   - F3 CLAUDE.md: codex-check.sh and the criteria file
+ok   - F4 CLAUDE.md: the lead never writes a Codex verdict or skip record
+ok   - F5 CLAUDE.md: Phase 0 .swarm/codex.exclude; budget2 PLANNING_LOG.md; agents2 docs/runs/ and *.png
+ok   - F6 CLAUDE.md: codex joins the attribution mechanisms; the codex: stats line is reported
+ok   - F7 CLAUDE.md: .swarm/codex/** is never archived verbatim
+ok   - F8 CLAUDE.md: the fail-closed critical-glob rule
+ok   - F9 CLAUDE.md: valid FAMILY values include crossvendor
+ok   - F10 CLAUDE.md: 'PASS from every named checker' carries the codex exception
+ok   - F11 CLAUDE.md: the Tier-1 section says codex does not count as a named checker
+ok   - F12 CLAUDE.md: the Phase-0 mkdir line creates .swarm/codex
+ok   - F13 CLAUDE.md: no unqualified 'all lanes/agents on Claude'
+ok   - F14 CLAUDE.md: re-run codex-check.sh when it cannot record an outcome
+ok   - F15 TIERS.md: the Codex lane and the trial rule
+ok   - F16 TIERS.md: 'a PASS from every one named' carries the codex exception
+ok   - F17 TIERS.md: an unreadable critical.globs fails closed
+ok   - F18 README: no 'no second vendor'; the Codex lane is named
+ok   - F19 README: 'authenticates the same way' is qualified for Codex
+ok   - F20 README: 'not a second vendor' is gone or qualified
+ok   - F21 README: no unqualified 'All lanes run on Claude'
+ok   - F22 README: the inline escalation triggers are no longer listed as unmirrored
+FAIL - F25 CLAUDE.md: the attempt-1 over-broad Tier-1 qualifier is gone
+FAIL - F26 CLAUDE.md: an unnamed Tier-1 Codex FAIL still counts toward two consecutive fails
+ok   - F23 doc_test.sh passes on the tree
+ok   - F24 doc_test.sh pins fail against the pre-CD4 docs (>=5 FAIL lines)
+ok   - C1 smoketest/gate/run_tests.sh passes
+ok   - C2 dashboard tests pass (ℹ tests 119)
+ok   - M1 smoketest suite fails against the pre-CD4 gate.sh, on Codex tests
+ok   - M2 dashboard suite fails against the pre-CD4 parse.mjs, on Codex tests
+ORACLE FAIL: 6 check(s) failed

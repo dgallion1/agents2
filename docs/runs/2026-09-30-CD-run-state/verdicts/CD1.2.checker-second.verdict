@@ -1,0 +1,119 @@
+VERDICT: FAIL
+CHECKER: checker-second
+FAMILY: adversarial
+TASK: CD1
+ATTEMPT: 2
+MANIFEST_SHA256: e8c741fcd0aed4208b62763a502a2bc420a7dee9d6328f06289f951a595b32aa
+---
+Tree confirmed first: `sha256sum -c .swarm/manifests/CD1.2.sha256` -> 14/14 OK (again just before this write); the sidecar hash above is
+`sha256sum .swarm/manifests/CD1.2.sha256`. Everything ran in a `cp -a`-style copy WITHOUT .git (scratch: .../scratchpad/cd1a2-second.jjxiW1), real
+harness + real containers, a STUB Codex and FAKE auth files only; every container/build command under the shared flock. The real
+~/.codex/auth.json was never read or mounted (my oracle re-run used HOME=<fake dir>). The real Codex binary was never run (I only read its strings).
+Leftovers at the end: 0 containers, 0 networks, 0 volumes, 0 dangling images, 0 codex-check.* temp dirs (mine).
+
+FAIL BASIS (one criterion): (b) step 7 "Before the script exits, on every path ... replace every occurrence ... in events.jsonl, proxy.log and every
+file under out/" and step 4 "torn down on every exit path" do not hold when a SINGLE SIGTERM/SIGHUP/SIGINT lands during the harness's own cleanup.
+
+CRITERION (a) oracle ends ORACLE PASS -- PASS
+ - Lead's log oracle.2.log: 123 ok / 0 FAIL, last line exactly `ORACLE PASS`; mtime 23:13 is after the manifest (23:10).
+ - Independent re-run on my copy: `HOME=<fake> nice -n 10 flock $LOCK bash <copy>/.swarm/tier3/CD1/accept.sh <copy>` -> 122 ok / 0 FAIL, last line
+   `ORACLE PASS` (the territory check self-skips without a git base; I did (c) separately). 122 = 123 - the territory line.
+ - Attack "a check passing for the wrong reason against THIS implementation":
+   * the host-reachability probe uses `timeout 4 bash -c 'exec 3<>/dev/tcp/$h/$p'` and reports "unreachable" for refused/unreachable/timeout alike.
+     Positive control of the METHOD from inside the isolated network: same snippet to the proxy 172.25.0.1:8888 -> "reachable"; to :8080 -> "unreachable".
+     So the method can say "reachable"; it is not vacuous. (The oracle's subnet ".1" candidate is, with inhibit_ipv4, the PROXY container, which
+     answers RST on the probe port: the probe's "unreachable" there is a refusal by the proxy, not by the host - fine, the host has no address there.)
+   * calibration-a2-fail.log shows the attempt-1 tree failing the new host and auth checks (fail end); the pass end is the prototype log.
+   * lookalike refusal is asserted on proxy.log ("Proxying refused on filtered domain"), which my probes reproduced.
+ - Oracle blind spots for THIS implementation (why (a) passes yet (b) fails): it never interrupts the harness during cleanup, never puts a secret in an
+   error event/stderr long enough to be truncated, never probes IPv6, and asserts no secret only in raw form.
+
+CRITERION (b) every step holds as written -- FAIL (step 7 / step 4, one defect; everything else refuted, list below)
+ F1. Cleanup is not signal-safe: `cleanup()` starts with `trap - EXIT INT TERM` (swarm/codex-check.sh:154), so ONE signal during the ~5-10 s teardown
+     window (`compose logs`, `compose down --timeout 5`, docker rm/network rm) kills the script before `scrub_audit` (line 159) and before `rm -rf "$TMP"`.
+     Repro A (the normal path, ONE signal): fixture repo + stub that echoes a fake auth token into an event, writes it to out/leak.txt and returns a valid
+       PASS; host side waits until a `docker compose ... down` process of that project exists, then `kill -TERM <harness bash pid>` once
+       (scratch: h/sig2.sh, run dir sig14).
+       Result: harness rc=143; T.14.checker-codex.verdict WAS published; afterwards `grep -rlaF <token>` finds
+         sig14/swarm/codex/T.14/out/leak.txt, sig14/swarm/codex/T.14/events.jsonl (both UNREDACTED) and codex-check.FL74c0/auth.snapshot (a full copy of the
+         auth file, left in the temp dir together with the copy of the tree). A re-run at the same (task, attempt) exits at step 0 on the existing verdict,
+         so nothing ever cleans that audit dir; it is the archive candidate of ruling CD-e.
+     Repro B (two signals mid-run, sig8): TERM, then TERM 1 s later -> same leftovers (leak.txt, events.jsonl, auth.snapshot, work copy). A single
+       TERM mid-run (sig7 used HUP: rc=129, skip written, no secret anywhere, no temp dir) is handled correctly; only the cleanup window is unprotected.
+     Remedy verified (rule 6b): in my copy add `trap '' INT TERM HUP` right after line 154 and repeat Repro A (sig15): harness rc=0, verdict written,
+       0 secrets under the audit dir, 0 temp dirs left. So the defect is exactly the reset trap, inside CD1 territory, one line.
+     Why this is inside the written contract: step 7 says "Before the script exits, on every path", step 4 "torn down on every exit path"; the worker
+       built INT/TERM handling for exactly this reason, and the oracle/tests treat interruption as an exit path. The SAME class as attempt-1's F1a/F1b
+       (a path on which the scrub does not run). It needs no unusual privilege: `timeout 1800 codex-check.sh`, Ctrl-C twice, or a session teardown.
+ Related findings, same secret-hygiene class (I do NOT rest the FAIL on them; each is letter-ambiguous or exotic):
+ F2. classify truncates BEFORE it redacts. tools.py cmd_classify: `Secrets(...).text(one_line(detail, 240))`. Repro (run dir f3): stub emits
+     {"type":"error","message":"401 Unauthorized: invalid token <443-char fake JWT>"} and exits 1 -> skip `auth` whose DETAIL carries the first 205 of the
+     443 secret characters verbatim (measured). With a 35-char secret starting at column ~215 (f4) the DETAIL ends `tok_FAKE_SECRET_012...` (20 of 35).
+     skip() in the shell does redact-then-cut correctly; classify does the reverse. Remedy verified docker-free: `one_line(Secrets(...).text(detail), 240)`
+     -> `... invalid token [REDACTED]`. Letter: "occurrence" of a secret is the whole value, so a prefix is arguable; real Codex 401 text does not quote tokens.
+ F3. Escaped secret used as a JSON KEY is not detected/redacted (strings_in walks values only): `tools.py secrets clean` left
+     {"tok...":1} and {"tok_FAKE_...":true} intact while the same escapes as VALUES were redacted. Exotic.
+ F4. Non-listed encodings are not redacted (beyond the brief's raw / JSON-escaped / decoded forms, so not a defect): base64, hex, reversed, rot13,
+     percent-encoding, upper/lower-cased, split by newline/space/NUL/CR, prefix-only. UTF-16 LE/BE/BOM, `\/`-escaped, \uXXXX-escaped values, a
+     double-encoded JSON string and pretty-printed multi-line JSON WERE redacted.
+ F5. Symlinks created by the container under out/ survive when their TARGET is a host path (e.g. out/hostauth-link -> <host auth path>, out/hostdir-link);
+     the harness never follows them (host file sha256/inode/mtime/mode unchanged, 0400 file next to the link intact) but a later `cp -rL`/`zip`/`tar -h`
+     of the audit dir would read the host file. Not "a secret in the dir"; a hazard for CD4's archive step.
+
+ Everything else in (b) was attacked and REFUTED (command -> result):
+ - HOST/LAN reachability. Network `isolated`: internal, enable_ipv6 false, com.docker.network.bridge.inhibit_ipv4=true (docker network inspect). Container: eth0 has
+   only 172.25.0.x/16, no default route (/proc/net/route), CapEff 0, seccomp on. From the checker, Python/bash: TCP to the host bridge's IPv6 link-local
+   fe80::... (%eth0) on my dual-stack host listener port, :8080 and :3000 -> ENETUNREACH (eth0 has disable_ipv6=1 and no fe80; if_inet6 shows only lo, so the
+   host's fe80 address on the bridge, visible with `ip -br addr`, is unreachable). IPv4 192.168.1.90 / 172.17.0.1 / 100.73.80.36 / 172.25.0.1 / 127.0.0.1 with
+   plain connect -> unreachable. Harder: SO_BINDTODEVICE=eth0 (unprivileged, makes Linux assume on-link) to the same addresses, TCP and UDP to a host UDP
+   listener: ARP for host addresses stays incomplete (/proc/net/arp flags 0x0), TCP -> EHOSTUNREACH, host UDP listener log empty (TCP listener log too); the only
+   answering neighbour is the proxy (RST on the probe port). Raw/packet/ICMPv6 sockets -> EPERM, unshare -Urn -> EPERM, no docker.sock. DNS: getent and raw UDP to
+   127.0.0.11: chatgpt.com, example.com, a unique name -> SERVFAIL; host.docker.internal / gateway.docker.internal -> NXDOMAIN; only `proxy` resolves.
+ - Proxy as a pivot (raw sockets from the checker to proxy:8888, host-side canary listener + proxy log): CONNECT to 172.26.0.1 (egress gateway = host),
+   192.168.1.90, 172.17.0.1, 100.73.80.36, 127.0.0.1, localhost, [::1], 0.0.0.0, 2130706433, 0x7f000001, host.docker.internal on ports 443/8080/<listener> ->
+   403 Filtered / 403 Access violation; absolute-URI GET to the same -> 403; userinfo `chatgpt.com@EGW`, `EGW:port@chatgpt.com`, `#`, backslash, origin-form Host EGW,
+   Host/URL mismatches both ways, X-Forwarded-Host, pipelined second request after CONNECT, keep-alive pipelining, tab in host, trailing dot, IPv6 zone id, HTTP/0.9,
+   tinyproxy.stats, `proxy:8888` itself -> either 403 or a normal request to chatgpt.com (proxy log: "opening connection to chatgpt.com"); canary listener got ZERO
+   hits (its log only says "listening"). Proxy container has ip_forward=1 but the checker has no route or NET_ADMIN to use it as a router; ARP for non-local
+   addresses is not answered (proxy_arp=0, accept_source_route=0). Uppercase CHATGPT.COM:443 is accepted (same host).
+ - Host auth file from inside the container (27 attempts in one run, all refused): >>, >, truncate, cp /dev/null, dd conv=notrunc, python open w/r+, mv away/over,
+   rm, sed -i, chmod 666/000, touch, hard link to /out and in place, ln -f over, rename /codex-home, mount -o remount,rw, su root, write through
+   /proc/self/root, /proc/1/root and relative cwd, chattr, setfattr, os.truncate, utime. mountinfo: auth.json `ro`. Host file before/after: same sha256, inode
+   78530982, mtime, size, mode 664. Deleting or rotating the host file mid-run (delete / in-place rewrite while the container runs): the pre-run snapshot still
+   catches the OLD token (skip secret-leak, no secret left in audit dir or skip record) and the live file catches the NEW one (runs rot10, rot11).
+ - Mount set and env (probe from inside a Go-tree run, /proc/self/mountinfo): only /work rw, /out rw, /codex-home rw (private temp dir) +
+   /codex-home/auth.json ro, /opt/codex/codex ro, /opt/codex/codex-code-mode-host ro, /schema ro, /gomodcache ro + the runtime's own /etc files; uid 1000:1000; env
+   exactly HTTPS_PROXY/HTTP_PROXY/CODEX_HOME/HOME plus the GO* variables; no docker.sock; /home not writable.
+ - Redaction on the ordinary paths (run f2, 40 files): read-only 0444/0000 files, mode-000 dir, 555/500 dirs, nested locked dir, 20 MB file with the secret first,
+   700 MB sparse file (deleted: cannot be read), FIFO and unix socket (deleted), secret-named file/dir/symlink (deleted), symlink whose target holds a secret
+   (deleted), events.jsonl lines (raw, decoded, nested, non-JSON) and proxy.log (secret in a GET query and as a CONNECT hostname: case is preserved by tinyproxy, so
+   it is redacted) -> `grep -rlaF` for all three fake secrets over the whole run tree: 0 hits. Host precious file behind an out/ symlink untouched.
+ - Consistency/laundering/exit codes: existing verdict never replaced (oracle R + step 0 before any work); PASS with a false criterion and FAIL with all true ->
+   schema-invalid (oracle); a skip never replaces a verdict; task id 230/300 chars (names too long for the skip file) -> exit 1 with nothing written, not 0/2; unbound
+   variable -> bash exits 127; every `exit` in codex-check.sh read: 2 only at lines 41/43/44 (usage checks); other exits are 0/1/127(set -u)/130/143; I could not provoke a 2 from cleanup's rc=$?. Header-forging text cannot forge a header (body indented).
+ - Copy/exclusions/symlinks/fingerprints (docker-free `tools.py copy`, attempt-1 cases repeated): untracked symlink into data/ -> unsafe-tree; nested repo -> excluded
+   `nested1/`; `data`, `x/data`, `.codex` excluded by name; names with spaces, quotes, leading dash copied; go subset small (see oracle G). Hard-linked copy of
+   an excluded file under another name and files under a directory literally named `.env/` or `x.pem/` ARE copied (name-based rules per the brief; attempt-1 O2).
+ - Images: fixed names, rebuilt each run (oracle S check, stale debian tag under the proxy name; `docker images` afterwards: only the two fixed tags, 0 dangling).
+
+CRITERION (c) only CD1-territory files exist/changed -- PASS
+ - `git ls-files --others --exclude-standard | sort` == `sort .swarm/manifests/CD1.2.files` (diff empty, 14 paths); none is gitignored (`git check-ignore -v` rc=1).
+   `git diff --name-only 12f6413`: SPEC.md (lead) and CD2/CD3 territory only (swarm/gate.sh, dashboard/lib/parse.mjs, dashboard/test/parse.test.mjs,
+   smoketest/gate/_lib.sh run_check.sh run_done.sh run_escalate.sh). smoketest/gate/run_tests.sh unchanged and mentions no codex.
+
+OBSERVATION on the worker's note (read-only auth.json cannot stop the real Codex from consuming a refresh token): agreed, and it matters more than the note says.
+ - The mount protects the file's bytes, not the credential: a Codex that decides to refresh (its binary carries the strings "Failed to refresh token" / "Your access
+   token could not be refreshed"; my recollection, unverified here, is that codex-rs refreshes when last_refresh is older than ~8 days or on a 401) POSTs the refresh
+   token to auth.openai.com (an allowlisted host). Refresh tokens are rotated server-side; the container cannot persist the new one on a ro file, so the HOST
+   file keeps a now-dead refresh token and the user's own Codex login goes stale (next host use: sign in again). The old rw design would have persisted it (and was
+   rejected for the truncation hazard); a copy would be equally stale. Only a pre-run freshness gate helps: skip `auth` with an actionable DETAIL when the access
+   token's exp / last_refresh is near, and tell the user to run Codex once on the host first. Suggest documenting it in CD4. Not grounds for FAIL (the brief
+   mandates ro and says a stale token yields skip `auth`).
+OTHER OBSERVATIONS (not grounds for FAIL)
+ - The harness never checks at run time that the host really has no IPv4 address on the isolated bridge: on a Docker daemon that ignores the inhibit_ipv4 option the
+   old gateway exposure returns silently. (Here: Docker 29.2.1; the bridge carries only fe80::/64, which the container cannot use.) Consider a runtime `docker network inspect`/probe.
+ - Container keeps Docker's default bounding caps (CapBnd a80425fb incl. NET_RAW), setuid-root binaries (su, mount, passwd, ...) exist in the image, no cap_drop/no-new-privileges,
+   no pids/memory/disk limits. CapEff is 0 and I found no escalation, but the isolation of the host rests on "no root in the container"; cap_drop ALL + no-new-privileges is cheap.
+ - `out/` is Codex-writable content inside the host tree (symlinks, exec bits, a nested .git with core.fsmonitor) - see F5.
+ - /proc/self/mountinfo inside the container shows host source paths (user name, worktree path). Container resolv.conf carries the host's tailnet search domain.
+ - A SIGHUP-terminated run writes the skip DETAIL "harness failed (exit 0) before producing a result" (cosmetic, rc=129 is right).

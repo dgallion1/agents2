@@ -1,0 +1,136 @@
+VERDICT: FAIL
+CHECKER: checker-tests
+FAMILY: anthropic
+TASK: CD4
+ATTEMPT: 1
+MANIFEST_SHA256: 985ade9a4279fff51e230bd70de1f313ec6200d8cb452db5fefb2e101e5d08ed
+---
+Tree: `sha256sum -c .swarm/manifests/CD4.1.sha256` -> 11/11 OK, before the first probe and again
+before this verdict. Every probe ran in a copy (<scratch>/cd4-tests/tree: rsync -a, git-init'd for
+the oracle's territory check). Probe scripts: <scratch>/cd4-tests/probe/{diff2.mjs,mut.py,integ.sh}.
+
+(a) PASS. `nice -n 10 .swarm/tier3/CD4/accept.sh <copy>` -> 48 ok, last line `ORACLE PASS`, exit 0
+    (S x2, D 56/56, E, T x13, I x3, F1-F24, C1, C2 119 tests, M1, M2).
+
+(b) PASS. `bash smoketest/gate/run_tests.sh` in the copy -> exit 0, every section ALL PASS.
+
+(c) PASS. `node --test dashboard/test/*.test.mjs` -> tests 119, pass 119, fail 0.
+
+(d) FAIL. Rule 8, read with rule 3 ("the dashboard must parse .skip files the same way"), breaks on
+    inputs the oracle never tries. My differential diff2.mjs runs 56 fixtures under two locales
+    (en_US.UTF-8, the default here, and C) and compares gate `check` and `done` against parse().
+    Result: 5 gate/dashboard splits; `done` and `check` never differ.
+    D1: the dashboard shows ACCEPTED while the gate refuses, in the default locale. Setup: tier 2,
+        checks `tests,codex`, a checker-tests PASS, and the skip record
+        `REASON: quota` / `DETAIL:<U+2003 EM SPACE>` / `TASK: p` / `ATTEMPT: 1`.
+        With LANG=en_US.UTF-8 and LC_ALL unset:
+        - `gate.sh check p` prints `FAIL: p: missing checker-codex evidence (attempt 1)` and exits 1;
+        - parse() gives state 'accepted', codexSkip {"reason":"quota"}, errors [].
+        Cause: gate skip_field runs grep under LC_ALL=C, but its `sed 's/^KEY:[[:space:]]*//'` uses
+        the caller's locale. Under UTF-8 that sed strips Unicode spaces such as U+2003. parse.mjs
+        skipField strips ASCII [ \t\n\v\f\r] only, although its comment says "POSIX [[:space:]]".
+        Under LC_ALL=C the two agree.
+    D2: the reverse split. `REASON:<U+2003>quota` and `TASK:<U+2003>p`: the gate (en_US.UTF-8)
+        accepts with rc 0; the dashboard shows 'blocked'. Under LC_ALL=C both refuse. So the gate's
+        own decision on these records depends on the locale.
+    D3: tier 1, no locale involved. Setup: checks `tests,codex`, a checker-tests PASS, a valid skip
+        record, and `verdicts/p.1.checker-codex.verdict` as a dangling symlink.
+        - The gate prints `OK: p accepted at tier 1` (rc 0): codex_evidence_or_fail tests `[[ -f ]]`,
+          so the entry counts as absent.
+        - The dashboard shows 'blocked', "ledger says accepted but invalid verdict checker-codex
+          (p.1.checker-codex.verdict)": codexEvidenceProblem reads blockingVerdictFiles, which lists
+          entries that are not regular files.
+        At tiers 2/3 both refuse.
+    Missing: gate and dashboard must decide these skip-record headers the same way in every locale,
+    and must treat a non-regular `<t>.<a>.checker-codex.verdict` the same way at tier 1.
+    The rest of rules 1-8 holds. Gate and dashboard agree in both locales, and familiesPassed never
+    contains crossvendor, on:
+    - identity, both directions;
+    - checks columns `codex` / `,codex` / `codex,` / `codex,codex` / `tests,Codex`;
+    - evidence only at an older or a newer attempt;
+    - verdict plus skip, including under an overruling panel;
+    - a Codex PASS that tries to supply a lane (the tier-2 `second` span, tier 3) or a named checker;
+    - a Codex PASS with MANIFEST_SHA256 missing (named and unnamed) or wrong;
+    - a Codex FAIL at tier 1 when named (a panel does not help), at tiers 2/3 named and unnamed, and
+      ignored at tier 1 when unnamed;
+    - an invalid unnamed checker-codex verdict (ignored at tier 1, refused at tier 2);
+    - dot-prefix sibling tasks;
+    - skip records with: no space after the colon, TAB, VT, CRLF, a whitespace-only DETAIL,
+      `ATTEMPT: 01`, a trailing space in TASK, a BOM, reordered fields plus `---`, first-match
+      DETAIL, a lowercase key, a 0xff byte, NUL;
+    - skip entries that are: a symlink to a valid record, a dangling symlink, a symlink to a FIFO,
+      a symlink loop, named `.skip.verdict`, missing the final newline, mode 000 at tier 3, a FIFO
+      when codex is not named.
+    Rule 7 holds.
+    - My own stats fixture: 10 rows, attempts 0-3, invalid codex and second verdicts, an invalid
+      skip, verdict plus skip, a no-change row, a no-evidence row with a skip, a dotted sibling.
+      Every per-task suffix is as specified, and the summary is exactly `codex: ran 7/9, FAIL 3,
+      same-verdict-as-second 3, codex-only FAIL 2`, matching my hand count.
+    - Twin render on a copy of this run's .swarm: each base-gate stats line equals the new line minus
+      ` codex=none second=X`. The summary lines are identical, followed by one new line
+      `codex: ran 0/0, FAIL 0, same-verdict-as-second 0, codex-only FAIL 0`.
+    - elapsed counts a Codex verdict's mtime but not a skip record's (3h30m probe).
+    Rule 9 holds: `done` rc equals `check` rc on every single-row fixture (no differences in either
+    locale). On this run's ledger copy, `done` output from the base gate and the new gate is
+    cmp-identical.
+
+(e) PASS. integ.sh ran the real swarm/codex-check.sh with the CD1 stub, under the Docker lock, at
+    tiers 2 and 1:
+    - pass: writes a verdict whose MANIFEST_SHA256 equals the sidecar hash. Gate rc 0; dashboard
+      'accepted'; familiesPassed has no crossvendor.
+    - quota: writes a skip record (REASON quota). Gate rc 0; dashboard 'accepted'.
+    - fail: gate rc 1 ("dispute needs >=3 judge verdicts" at tier 2, "checker-codex returned FAIL" at
+      tier 1); dashboard 'blocked'.
+    Oracle I x3 also ok. No container or network left behind.
+
+(f) FAIL. The item-by-item difflib review against base-docs finds every Docs item and every listed
+    falsified statement handled. doc_test.sh adds 27 pins: all 27 FAIL on base-docs, ALL PASS on the
+    tree. One new statement is false about the code, though. CLAUDE.md, "The Codex lane — trial",
+    first bullet: "A checker-codex FAIL is a FAIL: at Tiers 2/3 whether or not codex is named (at
+    Tier 1 only when named), it opens the dispute path ..., counts toward two consecutive fails, and
+    counts in stats."
+    At Tier 1 with codex NOT named, the gate still counts the FAIL for escalation and stats.
+    Repro: ledger row `e  1  tests  checking  2`, checker-codex FAIL at attempts 1 and 2.
+    - `gate.sh escalate-scan` prints `flag: e -> tier 2 (two-consecutive-fails)`;
+    - `gate.sh stats` prints `first-attempt=1 failed ... codex=FAIL`.
+    The code follows brief rule 5, and the worker's own test 'codex escalation ... named or not'
+    pins the tier-1 behaviour. Only the doc sentence is wrong: the Tier-1 qualifier should cover
+    acceptance and the dispute path only.
+
+(g) PASS. Oracle S x2 ok on the copy. The same checks, run read-only on the real tree: changed
+    outside territory [], new files outside territory [].
+    - git status: modified = the 11 manifest paths plus SPEC.md (the lead's); untracked = CD1's
+      swarm/codex*, smoketest/codex.
+    - render.mjs and codex-check.sh hash-identical to base.sha256.
+    - Critical globs touched (swarm/**, dashboard/lib/**, CLAUDE.md, TIERS.md) are permitted at
+      Tier 3.
+
+(h) PASS.
+    - run_tests.sh against base-gate.sh: rc 1, 80 FAIL lines, all 80 mention codex; the other
+      suites ALL PASS.
+    - Dashboard suite against base-parse.mjs: 5 fail, all 5 codex-named tests.
+
+Mutation (step 4): 40 mutants of the CD4 code against the shipped suites; 37 killed.
+- g-stats-offbyone: the tally starts at attempt 1 instead of 0. No shipped test and no oracle check
+  puts Codex evidence at attempt 0; the code is right (my stats probe counts it).
+- j-no-nul: parse.mjs without its NUL check. The shipped NUL test puts the NUL inside REASON, which
+  fails the reason set anyway. With the check removed, a NUL in a non-field line splits
+  gate/dashboard in both directions, and the suite still passes 119/119.
+- g-stats-glob-sibling: an equivalent mutant (load_verdict rejects the sibling's file).
+
+Worker additions:
+1. NUL makes a skip record invalid. Gate and dashboard agree. The effect is conservative except in
+   one case: a valid Codex verdict next to a NUL-laced, otherwise valid skip record is accepted by
+   both, where the brief's letter (both valid -> refused) would refuse. A tamperer gains nothing (a
+   Codex PASS never counts; a FAIL still counts). Consistent in effect.
+2. At tiers 2/3 the verdict walk runs before the evidence test. This changes only which FAIL line is
+   printed; a panel-overruled FAIL without evidence is still refused (worker test and oracle X36).
+   The dashboard's reason order mirrors it. Consistent.
+
+Observations (not graded):
+- A mode-000 skip record makes the gate print `gate.sh: line 224: <path>: Permission denied` on
+  stderr, because the 2>/dev/null follows the `<` redirection. The outcome is correct.
+- Existing verdict-header parse splits (first-match vs last/trim) carry over to checker-codex
+  verdicts, e.g. duplicate FAMILY lines.
+- A leading-zero ledger attempt makes gate and dashboard key files differently. This class
+  predates CD4.

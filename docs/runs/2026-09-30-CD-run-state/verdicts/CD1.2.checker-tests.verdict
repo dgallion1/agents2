@@ -1,0 +1,210 @@
+VERDICT: FAIL
+CHECKER: checker-tests
+FAMILY: anthropic
+TASK: CD1
+ATTEMPT: 2
+MANIFEST_SHA256: e8c741fcd0aed4208b62763a502a2bc420a7dee9d6328f06289f951a595b32aa
+---
+Tree: `sha256sum -c .swarm/manifests/CD1.2.sha256` -> 14/14 OK at start and again before writing; a whole-tree
+sha256 snapshot (2167 files, .git excluded) taken before my work is byte-identical after it. Contract = brief
+.swarm/briefs/CD1.1.md as amended (attempt 2, rulings CD-j, CD-l) + SPEC CD-b..CD-l. All mutation/probe work in
+a .git-less private copy ($D/copy, re-verified against the sidecar: COPY-MATCHES); every docker command under the
+shared flock; stubs + fake auth only; the real Codex never run, the real auth.json never mounted. $D = my scratch
+dir; $T = TREE. NOTE for anyone re-checking by hand here: the interactive shell's `grep` is a ugrep wrapper (-I,
+--ignore-files) that cannot descend past PATH_MAX - use `command grep`. It is NOT exported, so accept.sh and the
+harness use GNU grep.
+
+======================================================================================================
+FAIL SUMMARY - one defect, step 7 (secret hygiene), CD-j class (a swallowed OSError = fail-open)
+F1 A secret Codex writes to a file whose HOST path exceeds PATH_MAX survives the scrub; the harness certifies
+   the audit dir clean, writes VERDICT: PASS and exits 0.
+   Repro (real harness from TREE, real container, probe stub parked; the planting runs INSIDE the checker as
+   uid 1000 and reads the token from the read-only /codex-home/auth.json exactly as Codex could):
+     flock $LOCK bash $D/hygdrive.sh $D $T hyg-deep-tree go deep
+     plant: 25 nested dirs of 200 x 'd' under /out, then deep.txt = "deep <access_token>"
+     -> "# harness rc=0", outputs "T.1.checker-codex.verdict" = "VERDICT: PASS", stderr has NO "deleted" line
+     -> GNU `grep -rlF <token>` on the audit dir: swarm/codex/T.1/out/dddd.../deep.txt
+     -> fd-based audit (os.fwalk/openat): "SECRET HITS: 1  CONTENT /out/ddd.../deep.txt (pathlen 5225)"
+   Also reproduced with my copy's harness in the all-shapes run (hyg-all: rc=0, PASS, pathlen 5219).
+   Docker-free: `tools.py secrets clean --auth fake $D/s7deep` -> "ok 0 0" (0 deleted, 0 remaining) while
+   GNU grep -r still finds the token.
+   Root cause (tools.py): sweep() `try: st = os.lstat(path) except OSError: continue` (lines ~537-540) - the
+   child's lstat fails with errno 36 ENAMETOOLONG at host path length 4189, so the entry is silently skipped:
+   not deleted, not counted in `remaining`, not logged. fix_perms() swallows the same error. remove_path()
+   returns True ("really gone") when lstat fails, and os.path.lexists() returns False on ENAMETOOLONG, so even
+   a drop() there would be reported as deleted.
+   Brief step 7: "a file that still contains a secret or cannot be read/rewritten is DELETED (and its path
+   logged to stderr) ... No secret may remain anywhere under the audit dir". This file cannot be read by the
+   scrubber, is not deleted and is not logged, and the secret remains. Reachable in real use: under a real
+   $AUD (~110 chars) any /out path deeper than ~4 kB, trivial for a prompt-injected Codex with the sandbox
+   bypassed. The oracle does not plant this shape, and neither do the worker's tests.
+   Remedy verified to work: the harness's EXISTING fail-closed fallback (`chmod -R u+rwX` + `rm -rf $AUD/out`)
+   removes this tree - on $D/s7deep: rm rc=0, GNU grep -r afterwards finds 0. It never fires because the
+   error is swallowed. So: count any lstat/listdir/open OSError except ENOENT as `remaining` (or walk with
+   dir fds), and make remove_path report failure on a non-ENOENT lstat error. All in CD1 territory.
+
+======================================================================================================
+(a) ORACLE - PASS (ends ORACLE PASS). Non-vacuity: 5 of the 8 mutants I ran are caught by the oracle;
+    the oracle alone misses the snapshot revert and each half of the redaction revert, but the worker's
+    shipped suite catches all three.
+  - Lead's log .swarm/tier3/CD1/oracle.2.log: 123 ok, 0 FAIL, last line "ORACLE PASS" (mtime 23:13, after the
+    manifest 23:10 and the last worker edit 23:05).
+  - My run: `flock $LOCK nice -n 10 bash $T/.swarm/tier3/CD1/accept.sh $T` -> 123 ok, 0 FAIL, last line
+    "ORACLE PASS", rc=0. It ran against the git tree, so the territory check H ran and passed.
+  - Mutants (private copies; the TREE's accept.sh + stub copied in; one run at a time under the lock):
+    M1 inhibit_ipv4 "true"->"false" -> ORACLE FAIL 1: "P NO host address ... reachable" with
+       "reachable: 172.28.0.1:<listener> reachable 172.28.0.1:8080 reachable" (the mutant network's gateway
+       = the host; right reason).
+    M2 auth mount read_only:false -> ORACLE FAIL 2: "P auth.json is mounted read-only", "K trunc-auth: the
+       container could not write auth.json, and the host file is unchanged".
+    M3 pre-run snapshot dropped from the secret set (secret_args uses only the live file) -> ORACLE PASS
+       (SURVIVES). With the ro mount intact the live file always equals the snapshot, so no oracle scenario
+       can tell them apart. Caught by the worker's suite: smoketest/codex/run_tests.sh on M3 -> "FAILED: 2"
+       ("H the secret set was taken BEFORE the run: the old token still trips the leak check after a
+       rotation", "H rotate: the NEW token is redacted too"). Also caught by the oracle when combined with M2
+       (M23 -> ORACLE FAIL 4, incl. "K a container that tries to rewrite auth.json still cannot hide a leak").
+    M4 chmod-before-redaction AND delete-on-failure both reverted (the attempt-1 behaviour) -> ORACLE FAIL:
+       "K a secret in a read-only file or a mode-000 folder under out/ ends up nowhere". Two further
+       "H no containers/networks left behind" failures in that run were not the mutation: no leftover existed
+       afterwards, and the mutation touches only the scrubber - most likely concurrent docker activity.
+    M4a chmod only removed -> ORACLE PASS (the deletion path still removes the secret). Worker unit suite ->
+       FAIL "T clean: a read-only file and a mode-000 folder were made writable and REDACTED, not lost".
+    M4b delete-on-failure only removed -> ORACLE PASS (the chmod makes every file rewritable). Worker unit
+       suite -> 3 FAIL ("a file that cannot be rewritten is deleted", "... cannot even be deleted is reported as
+       remaining", "a file too big to scan is deleted").
+    M5 consistency rule removed -> ORACLE FAIL 2: "K PASS with a failed criterion", "K FAIL with every
+       criterion passing" (both got a verdict written).
+  - Worker suite, unmodified copy: `flock $LOCK bash $D/copy/smoketest/codex/run_tests.sh` -> 194 ok, "ALL
+    PASS", rc=0. CODEX_TESTS=unit -> ALL PASS.
+
+(b) STEPS - FAIL on step 7 (F1). Every other step holds:
+ 0 PASS. Args [], [T], [T 1 x], [T x], [T -1], [T 1.0], [T ''], [T 01a], ['' 1], [../x 1], [T ' 1'] -> rc=2, and
+   verdicts/ and the audit dir stay empty. An existing verdict, or a dangling-symlink verdict -> rc=0, stderr
+   "already exists - left untouched, nothing run", file byte-unchanged, no audit dir made. Exit 2 is usage
+   only: an uncreatable verdicts dir -> rc=1 "nowhere to record an outcome"; an unwritable verdicts dir ->
+   rc=1, 0 files (the attempt-1 O3 is fixed).
+ 1 PASS. Removing each item plus every later one, so the earliest check must win: no-exclude-policy ->
+   no-criteria -> no-evidence (.files, then .sha256) -> no-codex (missing, mode 644, a directory) -> auth
+   (missing, mode 000, a directory) -> docker-unavailable (DOCKER_HOST bogus). All rc=0, exactly 1 output file.
+ 2 PASS. `tools.py copy` on a 60-path fixture: gitignored file, FIFO and a tracked-but-deleted path absent;
+   data/, a/data/x, a FILE a/b/data excluded; a/b/datafile, DATA/, Data/ kept; .env, .envrc, .env.x,
+   sub/.env.local, a.pem, b.key excluded; envfile, x.env, c.pem.bak, keyring kept; .codex/.claude/.agents/.swarm/
+   .swarm-old/x/.swarm2 excluded; AGENTS.md at 3 depths excluded, deep/agents.md and AGENTS.md.txt kept; policy
+   PLANNING_LOG.md (root only; sub/PLANNING_LOG.md kept), private/, *.tmp (crosses /) all honoured; indented
+   '#' line ignored; nested repo listed as "nested/"; a non-UTF-8 name copied; modes kept (755, 444); no .git;
+   both lists pass `LC_ALL=C sort -c`. Symlinks: absolute, ../../../ escape, dangling, to a dir, '.', a loop,
+   into data/, into .claude/, to a policy-excluded file, re-entering via ../tree/, to .git/config, to a
+   gitignored file, a chain through an excluded link, a symlinked parent dir, and a newline in a name ->
+   unsafe-tree, each DETAIL naming it; src/../two.txt and in-tree chains are copied as links; `sub/data -> /etc`
+   and `.env -> /etc/passwd` are excluded by name and never followed.
+ 3 PASS. Drift, deleted-but-present, missing path, garbage line, an uppercase-hex hash, a TAB separator, a
+   path with no sidecar line, ../x, /etc/hostname -> fingerprint-mismatch naming the path. "hash *path" and a
+   blank sidecar line are accepted. Excluded manifest paths (wrong hash, or `deleted`) are skipped. The
+   returned sha equals `sha256sum < sidecar` (2f9db000... on the fixture); the verdict carries it (P check).
+ 4 PASS. Host isolation, all from INSIDE the real checker as uid 1000 via `docker exec` (driver
+   $D/netdrive.sh). Host-side positive controls first: a 0.0.0.0 listener and a dual-stack [::] listener
+   answered "hostprobe" on all 12 host IPv4s (LAN, libvirt, tailnet, 9 docker bridges incl. docker0) and all
+   3 host global/tailnet IPv6s. From the checker:
+   - Raw TCP (python socket) to every host IPv4 + 172.17.0.1 + the egress network's gateway + every other
+     bridge .1 x {v4 listener, dual listener, 8080}: all "Network is unreachable" (errno 101). The same for the
+     3 host global/tailnet IPv6 and all 15 host link-local fe80::%eth0 addresses (incl. the isolated bridge's
+     own fe80), plus ff02::1. The checker's eth0 has disable_ipv6=1 (if_inet6 lists only lo ::1); IPv4 routes =
+     the /16 subnet only, no default route. budget2 is live on *:8080 (ss) - unreachable on every address.
+   - The isolated network: internal=true, ipv6=false, opts inhibit_ipv4:true, IPAM gateway "invalid IP"; the
+     host bridge br-* carries ONLY an fe80 address (no IPv4). Its .1 (172.27.0.1) is the PROXY container's
+     address -> connection refused on the listener ports and 8080 (proxy listens only on 8888).
+   - Via the proxy: absolute-URI GET to every host IPv4/IPv6 literal on every port -> 403; CONNECT to them ->
+     refused (curl rc=56). proxy.log: "Proxying refused on filtered domain" for each literal, "Refused CONNECT
+     method on port 8080". "Established connection" appears ONLY for chatgpt.com, auth.openai.com and
+     api.openai.com (rc=0 through the tunnel). example.com, ab.chatgpt.com and chatgpt.com.evil.invalid ->
+     refused, and the proxy never resolved a denied name (getaddrinfo/opensock lines only for the 3 allowed
+     hosts: no DNS side channel). Direct egress: curl rc=6, no resolution.
+   - Mounts ($D/mountdrive.sh, mountinfo + docker inspect), non-Go: exactly / (image), /work rw, /codex-home
+     rw, /codex-home/auth.json ro, /opt/codex/codex ro, /opt/codex/codex-code-mode-host ro, /out rw, /schema ro
+     (swarm/codex, touch -> no), plus the runtime's hostname/hosts/resolv.conf. Go tree: + /gomodcache ro only.
+     user=1000:1000, CapEff 0, privileged=false, CapAdd=[]; no docker.sock. Env: CODEX_HOME=/codex-home,
+     HOME=/tmp/home, HTTPS_PROXY/HTTP_PROXY=http://proxy:8888 (+ image defaults); a Go tree adds
+     GOMODCACHE=/gomodcache GOPROXY=off GOFLAGS=-mod=mod GOCACHE=/tmp/gocache. /codex-home holds exactly
+     auth.json (the fake's 135 bytes) + a 0-byte config.toml. /opt/codex holds exactly codex +
+     codex-code-mode-host.
+   - Go subset (a tree requiring github.com/google/uuid v1.6.0): /gomodcache is not writable, 48 entries, 252K,
+     only github.com/google/uuid@v1.6.0, 0 dgallion1 entries; `go build ./...` offline rc=0; the tree's
+     go.mod/go.sum are byte-identical afterwards.
+   - Auth is READ-ONLY: from inside, truncate/append/chmod/utime -> "Read-only file system", unlink/rename ->
+     "Device or resource busy"; mountinfo "ro,relatime"; the host file's sha256 is unchanged in every run
+     (also the oracle's trunc-auth and "real auth.json untouched" checks).
+   - Fixed images rebuilt every run: the oracle's S trap (a debian image tagged as the proxy) passed. My sequence
+     (a bogus tinyproxy.conf build, then a good run) left agents2-codex-proxy:local with the good config
+     (Bogus count 0).
+   - Failure paths: a Dockerfile with `RUN false` -> skip container-error "image build failed: ... exit code 1";
+     a bogus tinyproxy directive -> container-error "proxy did not start". Both rc=0, 0 container/network
+     delta.
+ 5 PASS. argv as recorded in the container: "exec --dangerously-bypass-approvals-and-sandbox --ephemeral
+   --ignore-rules --skip-git-repo-check -m gpt-6-astra -C /work --json --output-schema
+   /schema/verdict.schema.json -o /out/last.json -". The prompt starts with brief.md verbatim (python
+   startswith True), then "## About this copy" (the class list, "Omitted paths (n):", the artefact sentence),
+   then the criteria as the tail. No "census". The oracle's P checks confirm the excluded paths are listed and
+   its hang case confirms the timeout.
+ 6 PASS. `tools.py classify` over 22 inputs. Quota/auth are read only from `message` keys of type=error and
+   turn.failed events, plus stderr. request_id "req_4291", code "quota", code "http_401", status 429 ->
+   codex-error (attempt-1 O2 fixed). item.type=error, agent_message, command output, non-JSON text and
+   type "ERROR" -> codex-error. The match is case-insensitive (USAGE LIMIT, Unauthorised, NOT LOGGED IN,
+   Log In). Quota outranks auth. A secret in the message is [REDACTED] in the DETAIL. Timeout comes first
+   (oracle hang case).
+ 6b PASS. type=error or item.type=error with "failed to spawn" / "code mode is unavailable" (any case; also on
+   item.started) -> unavailable. The words in agent_message, command output, another field of an error event,
+   or a turn.failed event -> available. End to end: the oracle notools / tools-words cases.
+ 7 FAIL - see F1. Everything else in step 7 holds end to end ($D/hygdrive.sh: all tokens read INSIDE from the
+   ro auth, both access and refresh tokens; the agent_message event echoes both):
+   - Normal path (hyg-all): ro file, mode-000 file, mode-000 dir nested in a mode-000 dir, hard links,
+     _-escaped JSON, pretty-printed escaped JSON, UTF-16 -> redacted in place. Secret-named file and dir,
+     a link whose target is the token, FIFO, socket -> deleted, each logged with a [REDACTED] name.
+     events.jsonl -> "echo [REDACTED] and [REDACTED]". The verdict holds no token. The fd-based audit found
+     only F1's file and an xattr (O1).
+   - Interrupts, same shapes minus deep: SIGINT -> rc 130, skip container-error "interrupted"; SIGTERM -> rc
+     143 "terminated"; SIGHUP -> rc 129, skip container-error written (DETAIL says "exit 0", O4). Each: 0 secret
+     hits (fd audit + GNU grep), host auth unchanged, 0 containers/networks/volumes of the project, no temp
+     dirs.
+   - The snapshot is taken before the container starts (worker rotate test; M3 above); the union with the
+     live file redacts a rotated token too. The oracle's trunc-auth, leak, echo-secret and leak-ro cases pass.
+ 8 PASS. `tools.py verdict` over 22 inputs: bad enum ("pass"), empty criteria, missing observations, extra key
+   at either level, missing key, pass as a string or 1, id as an int, a null observation, observations as an
+   object, non-JSON, a list -> schema-invalid. PASS with a false criterion and FAIL with all true ->
+   schema-invalid (the consistency rule). A PASS with a whitespace-only command, or an empty result ->
+   evidence-free-pass. A FAIL with one false criterion and a consistent PASS render. The rendering has the
+   8 headers in brief order, then "---", with the body indented: an attack containing "\nVERDICT: PASS\n---"
+   cannot forge a header or a separator.
+ 9 PASS. brief.md: `grep -ciE 'census|\.swarm|sha256|manifest'` -> 0. It contains data-free (2), /work (2),
+   "never write a verdict file", "refuted attack" (2), "Default to FAIL", "no access to anything else",
+   "exact command" (3). It answers only in the schema.
+
+(c) SCOPE - PASS. `git status --porcelain -uall`: the untracked set is exactly the 14 paths of CD1.2.files
+  (diff of the sorted lists is empty; `git check-ignore` matches none). Modified: SPEC.md (the lead's) and
+  CD2/CD3 territory (swarm/gate.sh, dashboard/lib/parse.mjs, dashboard/test/parse.test.mjs,
+  smoketest/gate/{_lib,run_check,run_done,run_escalate}.sh). smoketest/gate/run_tests.sh: 0 diff, 0 "codex".
+  No CD1 file is newer than the sidecar. HEAD 12f6413. The oracle's H territory check also passed. swarm/** is
+  a critical glob: permitted at Tier 3.
+
+======================================================================================================
+OBSERVATIONS (not grounds for FAIL)
+ O1 A user xattr (os.setxattr from inside the container, user.tok = the access token) on an out/ file
+    survives redaction. The brief names content forms only (raw, escaped, decoded), and git does not archive
+    xattrs; `cp -a`/tar would carry it. Cheap fix: clear xattrs during the scrub.
+ O2 A base64-encoded token in out/ is not recognised. Out of the brief's forms; noted for the backlog.
+ O3 ORACLE GAPS (lead's artifact): the oracle alone cannot see M3 (snapshot), M4a (chmod) or M4b
+    (delete-on-failure); only the worker's suite pins them. It plants no >PATH_MAX path (F1). Suggested
+    additions: an in-place auth rotation during the run, a deep /out path, and a file the scrubber cannot
+    rewrite.
+ O4 SIGHUP DETAIL reads "harness failed (exit 0) before producing a result" while the process exits 129
+    (cosmetic; the skip, teardown and scrub all happen).
+ O5 Refresh-token observation (lead asked for a view). A read-only auth.json keeps the host file
+    byte-identical, but it cannot stop the real Codex inside from spending the refresh token at
+    auth.openai.com. If the provider rotates refresh tokens (one-time use, reuse detection), the new pair lives
+    only in the container's memory and is lost. The host keeps a spent refresh token, and the user's own host
+    login can go stale or be revoked - worse than the contract's "a later auth skip". This is an availability
+    risk, not a disclosure risk. I could not verify it without the real Codex. A mitigation within the
+    contract: before starting the container, read the snapshot's refresh timestamp and skip `auth` when a
+    refresh is due, rather than letting the container refresh.
+ O6 Docker: counts back to baseline (12 containers / 10 networks / 8 volumes). I removed 10 dangling images
+    whose Config.Cmd is tinyproxy, by ID (the oracle's re-tag trap plus my bogus-conf build). The fixed-name
+    images remain.

@@ -1,0 +1,44 @@
+# CD3 oracle: TREE=/home/darrell/work/agents2/.claude/worktrees/unifi-camera-streaming-7be695
+ok   - S outside CD3 territory, every tracked file matches its post-CD2 state
+ok   - S no new files outside CD3/CD1 territory
+    FAIL - U1 critical.globs unreadable (mode 000): both accept, expected reject (gate: OK: u1 accepted at tier 2 (attempt 1))
+    FAIL - U2 critical.globs not valid UTF-8: both accept, expected reject (gate: OK: u2 accepted at tier 2 (attempt 1))
+    FAIL - U3 critical.globs is a directory: both accept, expected reject (gate: OK: u3 accepted at tier 2 (attempt 1))
+    FAIL - U4 test.globs unreadable, path matches no critical glob: both accept, expected reject (gate: OK: u4 accepted at tier 2 (attempt 1))
+    FAIL - U5 test.globs not valid UTF-8: both accept, expected reject (gate: OK: u5 accepted at tier 2 (attempt 1))
+    FAIL - U6 test.globs is a directory: both accept, expected reject (gate: OK: u6 accepted at tier 2 (attempt 1))
+    FAIL - U7 an OLDER attempt manifest unreadable: both accept, expected reject (gate: OK: u7 accepted at tier 2 (attempt 2))
+    FAIL - U8 an OLDER attempt manifest not valid UTF-8: both accept, expected reject (gate: OK: u8 accepted at tier 2 (attempt 2))
+    FAIL - U9 a directory matching <task>.*.files: both accept, expected reject (gate: OK: u9 accepted at tier 2 (attempt 1))
+    FAIL - U15 tier 1: unreadable critical.globs is refused inline: both accept, expected reject (gate: OK: u15 accepted at tier 1 (attempt 1))
+    FAIL - U16 the CURRENT manifest unreadable: refused, and parse() does not throw: parse() THREW: EACCES: permission denied, open '/tmp/cd3-diff-QhHC0y/fx-YPYsyY/manifests/u16.1.files'
+    FAIL - U17 the CURRENT sidecar is a directory: refused, parse() does not throw: parse() THREW: EISDIR: illegal operation on a directory, read
+    FAIL - U18 tier 3: CURRENT manifest is a directory: refused, parse() does not throw: parse() THREW: EISDIR: illegal operation on a directory, read
+    FAIL - U19 critical.globs is a dangling symlink: both accept, expected reject (gate: OK: u19 accepted at tier 2 (attempt 1))
+    FAIL - U20 test.globs is a FIFO (must not block): both accept, expected reject (gate: OK: u20 accepted at tier 2 (attempt 1))
+    FAIL - U21 unreadable beats a real hit: both accept, expected reject (gate: OK: u21 accepted at tier 2 (attempt 2))
+    differential: 9/25 ok
+FAIL - D differential battery: differential: 9/25 ok
+FAIL - E critical.globs mode 000 → no exact REASON line:  Traceback (most recent call last):   File "<stdin>", line 4, in <module> 
+FAIL - E critical.globs mode 000 → stderr should be one 'unreadable' line naming critical.globs: Traceback (most recent call last):   File "<stdin>", line 4, in <module>   File "<stdin>", line 3, in load PermissionError: [Errno 13] Permission denied: './critical.globs' 
+FAIL - E critical.globs a directory → no exact REASON line:  
+FAIL - E critical.globs a directory → stderr should be one 'unreadable' line naming critical.globs: 
+FAIL - E critical.globs dangling link → no exact REASON line:  
+FAIL - E critical.globs dangling link → stderr should be one 'unreadable' line naming critical.globs: 
+FAIL - E test.globs mode 000 → no exact REASON line:  Traceback (most recent call last):   File "<stdin>", line 5, in <module> 
+FAIL - E test.globs mode 000 → stderr should be one 'unreadable' line naming test.globs: Traceback (most recent call last):   File "<stdin>", line 5, in <module>   File "<stdin>", line 3, in load PermissionError: [Errno 13] Permission denied: './test.globs' 
+FAIL - E test.globs not UTF-8 → no exact REASON line:  Traceback (most recent call last):   File "<stdin>", line 5, in <module> 
+FAIL - E test.globs not UTF-8 → stderr should be one 'unreadable' line naming test.globs: Traceback (most recent call last):   File "<stdin>", line 5, in <module>   File "<stdin>", line 3, in load   File "<frozen codecs>", line 322, in decode UnicodeDecodeError: 'utf-8' codec can't decode byte 0xff in position 0: invalid start byte 
+FAIL - E a manifest not UTF-8 → no exact REASON line:  Traceback (most recent call last):   File "<stdin>", line 8, in <module> 
+FAIL - E a manifest not UTF-8 → stderr should be one 'unreadable' line naming ef.1.files: Traceback (most recent call last):   File "<stdin>", line 8, in <module>   File "<frozen codecs>", line 322, in decode UnicodeDecodeError: 'utf-8' codec can't decode byte 0xff in position 0: invalid start byte 
+ok   - E control: an unstarted row (no manifests) is not flagged
+ok   - E control: clean inputs → no unreadable diagnostic
+FAIL - E a killed python3 was read as no hit: flag= err=
+FAIL - E done: rc=0 OK: all tasks accepted, evidence verified, no unresolved flags 
+FAIL - E parse.mjs still documents fail-open: 488://     reports NO hit — so an unreadable input is "no hit" here too.
+691:    return false; // unreadable input: python dies, the gate reports no hit
+ok   - C1 smoketest/gate/run_tests.sh passes
+ok   - C2 dashboard tests pass (ℹ tests 72)
+FAIL - M1 smoketest suite still passes against the post-CD2 gate.sh
+FAIL - M2 dashboard suite does not catch the post-CD2 parse.mjs (fail=0)
+ORACLE FAIL: 18 check(s) failed

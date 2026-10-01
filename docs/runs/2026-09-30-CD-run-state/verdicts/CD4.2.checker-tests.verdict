@@ -1,0 +1,188 @@
+VERDICT: PASS
+CHECKER: checker-tests
+FAMILY: anthropic
+TASK: CD4
+ATTEMPT: 2
+MANIFEST_SHA256: ea20b62611555fa0689133ad401a7241c0fca255de7443cc8b5d3499526fac1e
+---
+Scope of this verdict: CD4.1 criteria (a)-(h) and CD4.2 items 1-4. Every claim
+below comes from a command I ran on a `cp -a` copy of the tree at <scratch>/cd4a2-tests/tree.
+I removed the copy's worktree .git file, then ran `git init` and committed a snapshot.
+Before starting and again before writing this file, `sha256sum -c .swarm/manifests/CD4.2.sha256`
+reported all 11 paths OK. The sidecar hash is ea20b626...fac1e.
+
+(a) PASS. Oracle.
+  cmd: TMPDIR=<scratch> nice -n 10 .swarm/tier3/CD4/accept.sh <copy>   (no flock wrapper)
+  out: 54 lines "ok", 0 "FAIL". Last line "ORACLE PASS", rc=0. This includes
+  "D differential: 79/79 ok", I x3 and F1-F26.
+  The lead's .swarm/tier3/CD4/oracle.2.log also ends "ORACLE PASS" with 54 ok.
+
+(b) PASS. cmd: bash smoketest/gate/run_tests.sh
+  out: "ALL PASS", rc=0, 622 ok lines. The same result holds under LC_ALL=C.
+
+(c) PASS. cmd: node --test dashboard/test/*.test.mjs
+  out: "tests 126, pass 126, fail 0". The same result holds under LC_ALL=C.
+
+(d) PASS for rules 1-9, with one pre-existing finding (F-1 below).
+  Probe 1, my own harness: <scratch>/fuzz.mjs. Every row is ledgered accepted. The gate
+  runs under C, C.UTF-8 and en_US.UTF-8. parse() runs in a child process with a
+  timeout. Covered shapes:
+    - 56 skip-record shapes: U+2003/U+3000/NBSP/NEL/U+1680/BOM in DETAIL, REASON, TASK
+      and ATTEMPT; raw \xff/\x85/\xa0; VT/FF/CR; CRLF; NUL at 5 positions; first-match
+      duplicates; indented and lower-case keys; empty files.
+    - Non-regular skip entries: dir, FIFO, mode-000, dangling, loop, link-to-valid,
+      link-to-FIFO, link-to-dir.
+    - 17 Codex verdict-entry shapes: PASS, FAIL, PASS without MANIFEST_SHA256, no ---,
+      bad FAMILY, bad TASK, dangling, loop, dir, FIFO, mode-000, links to PASS/FAIL/FIFO/dir,
+      evidence only at an older attempt.
+    - Other checkers' non-regular entries, judge panels, and two-consecutive-fails.
+  Before trusting the harness I checked that it catches known-bad trees. On M-e it
+  reported LOCALE SPLITs; on M-d(dash) and on a gate without `-L` it reported mismatches.
+    GRID=1 run: rows=936, gate-accepted=396, mismatches=0, locale-splits=0,
+      hangs/throws=0. The grid is tiers 1-3 x {tests,second,codex | tests,second}
+      x every skip shape, plus every verdict-entry shape x 6 skip shapes.
+    Random run, seed 2026: rows=1200, gate-accepted=363, locale-splits=0,
+      hangs/throws=0, mismatches=2 plus 7 more of a second class. Both classes are
+      pre-existing (F-1 and F-2).
+  Probe 2 (rule 7, stats): an independent fixture with hand-computed expectations:
+    - pairs at attempts 0..3, including an attempt-0 Codex FAIL;
+    - a skip-only pair;
+    - an invalid checker-second (FAMILY anthropicx);
+    - a BOM skip, which reads as invalid;
+    - a dotted sibling p4.1;
+    - a verdict and a skip record at one attempt;
+    - a no-change row;
+    - a Codex verdict beyond the ledger attempt.
+    Expected and got "codex: ran 5/6, FAIL 3, same-verdict-as-second 2, codex-only FAIL 2".
+    All six per-task lines matched, e.g. "p2 ... codex=FAIL second=none".
+    The output is byte-identical (cmp) under C, C.UTF-8 and en_US.UTF-8.
+  Probe 3 (rule 9): for 240 grid rows I wrote each row as a single-row ledger and ran
+    `gate.sh check` and `gate.sh done`. same=240, diff=0 (114 accepted).
+
+(e) PASS. Probe: <scratch>/integ.sh, which runs the real swarm/codex-check.sh with the
+  CD1 stub Codex and a fake auth file, taking the docker lock via flock. It covers
+  scenarios pass/quota/fail x tiers 1-3 x {codex named, not named}, checked with the
+  gate and parse().
+  - pass: the harness wrote a verdict with CHECKER checker-codex, FAMILY crossvendor and
+    MANIFEST_SHA256 stamped. The gate accepts at all tiers. The dashboard says accepted,
+    with familiesPassed ["adversarial","anthropic"] (no crossvendor).
+  - quota: the harness wrote a skip record "REASON: quota". The gate and the dashboard
+    accept at all tiers.
+  - fail, tier 1 named: gate "FAIL: i1: checker-codex returned FAIL", dashboard blocked
+    with the same reason.
+  - fail, tier 1 not named: gate OK, dashboard accepted (rule 6).
+  - fail, tiers 2 and 3: gate "dispute needs >=3 judge verdicts", dashboard "open dispute".
+
+(f) PASS. I diffed CLAUDE.md, TIERS.md and README.md against .swarm/tier3/CD4/base-docs
+  with python3 difflib. Every statement in the CD4.1 "Docs" list is present, including:
+    - codex beside second;
+    - the trial rule;
+    - criteria.md, never the census;
+    - the lead never writes a Codex verdict or skip record;
+    - codex.exclude with PLANNING_LOG.md, docs/runs/ and *.png;
+    - the mkdir line creates .swarm/codex;
+    - `codex` joins the attribution mechanisms, and the codex: line is reported verbatim;
+    - .swarm/codex/** is never archived verbatim;
+    - CD3 fail-closed;
+    - the FAMILY list, the EVERY-named-checker exception and the Tier-1 blank-column rule;
+    - re-run codex-check.sh when it records nothing;
+    - README drops "no second vendor" / "not a second vendor", qualifies "authenticates
+      the same way", and removes the "not mirrored" triggers claim.
+  Item 3:
+    - The CLAUDE.md bullet now reads "at Tier 1 only a named one blocks acceptance. At
+      every tier, named or not, it counts toward two consecutive fails and in `stats` ...
+      an unnamed Tier-1 Codex FAIL is ignored by acceptance only".
+    - TIERS.md and the parse.mjs computeDerived comment are corrected the same way.
+  doc_test.sh pins:
+    - The current doc_test.sh against the base docs gives rc=1 with 29 FAIL lines.
+    - The attempt-1 CLAUDE.md/TIERS.md, taken from a scratch copy that carries the
+      attempt-1 phrase, give rc=1 with 4 FAIL lines. These are exactly the item-3 pins.
+    - The tree itself gives ALL PASS.
+
+(g) PASS.
+  - `sha256sum -c .swarm/tier3/CD4/base.sha256` reports all 2049 lines OK. That list
+    covers every non-territory file, including render.mjs, codex-check.sh, start.sh and
+    .claude/agents/*.
+  - git ls-files --others shows no new file outside the territory. The only new files
+    are CD1's untracked harness, which is foreign and already accepted.
+  - The working tree differs from HEAD only in the 11 manifest paths plus the lead's
+    SPEC.md.
+  - Diffing the attempt-1 backup against attempt 2 shows only items 1-3 changed in
+    gate.sh and parse.mjs: skip_field `LC_ALL=C sed`, the tier-1 `-e||-L` invalid-entry
+    check, readVerdictEntry, and comments.
+
+(h) PASS.
+  - The shipped gate suite against base-gate.sh: rc=1, 120 FAIL lines, all 120
+    mentioning codex.
+  - The shipped dashboard suite against base-parse.mjs: 12 of 126 fail, all 12 named
+    "codex ...".
+
+Item 1 PASS. `skip_field` runs both grep and sed under LC_ALL=C.
+  - The shipped "[C.utf8] ..." cases and the dashboard skip-headers test pass.
+  - The grid found 0 locale splits, over U+2003 in DETAIL/REASON/TASK/ATTEMPT, trailing
+    U+2003, NBSP, VT/FF/CR and CRLF.
+Item 2 PASS.
+  Gate at tier 1, codex named:
+    - dangling link, loop, dir, FIFO, mode-000 and no-`---` entries each give "invalid
+      verdict checker-codex", even beside a valid skip. The FIFO case finishes under
+      timeout 30.
+    - Unnamed at tier 1, the entry is ignored.
+  Dashboard:
+    - For dir, FIFO, loop, dangling, link-to-FIFO and mode-000 entries, parse() neither
+      throws nor hangs.
+    - The entry is reported in errors, blocks at tiers 2/3 and at tier 1 when named, and
+      never PASSes. Evidence: the shipped tests and the grid.
+Item 3 PASS. See (f).
+Item 4 PASS. I applied each mutation alone to an rsync copy and ran both shipped
+  suites, under caller en_US.UTF-8 and again under caller C.
+  - M-a (stats loop from a=1): the gate suite fails "codex: stats counts (row, attempt)
+    pairs from attempt 0".
+  - M-b (drop the NUL check in parse.mjs): the dashboard fails "a NUL inside DETAIL
+    makes the skip record invalid: gate rejects ..., dashboard 'accepted'".
+  - M-c (second_at reads VERDICT without load_verdict): the gate suite fails "stats
+    reads an INVALID checker-second beside a Codex FAIL as second=none" plus the summary
+    line.
+  - M-d, gate (drop the tier-1 invalid-entry block): 16 gate FAILs and 7 dashboard
+    fails.
+  - M-d, dash (drop the invalidVerdicts check in codexEvidenceProblem): 7 dashboard
+    fails, including "tier 1 named: an INVALID Codex verdict (no ---) beside a valid
+    skip is refused".
+  - M-e (sed in the caller's locale):
+    - with an en_US caller: 12 gate FAILs and 2 dashboard fails;
+    - with a C caller: still 12 gate FAILs ("[C.utf8] DETAIL:<U+2003> ... want rc 0
+      got 1") plus the dashboard skip-headers test.
+    So the tests set their own UTF-8 locale.
+  - M-f (parseAllVerdicts back to readFileIfExists): 7 dashboard fails. The directory
+    case is an assertion failure ("EISDIR" in the child) and the suite completes all
+    126 tests.
+  - Extra mutants, all killed:
+    - the gate NUL check removed;
+    - `-e` without `-L`;
+    - skipField using .trimStart();
+    - parseCodexSkip opening the entry directly (the FIFO hang is caught by the child
+      timeout).
+
+FINDINGS (backlog; not FAILs)
+F-1 (d / rule 8), pre-existing class.
+  - Repro: a tier-1 row with checks=tests, codex NOT named. Current attempt holds:
+    - checker-tests PASS;
+    - a valid checker-codex FAIL;
+    - two judge verdicts sharing FAMILY anthropic (judge-claude and judge-standards,
+      both OVERRULE).
+  - Result: the gate says "OK: j1 accepted at tier 1". The dashboard says blocked, with
+    "duplicate judge family 'anthropic'".
+  - Cause: parse.mjs `if (hasFail && identityError) quorumHolds = false` applies at
+    tier 1, but the gate never reads judge or unnamed files at tier 1.
+  - The same split happens with an unnamed checker-other FAIL on base-gate/base-parse
+    and on master's gate.sh/parse.mjs. It is not Codex-specific: CD4 only makes Codex
+    FAILs valid, so they now reach it too. The dashboard errs conservative here: it
+    blocks a row the gate accepts.
+  - Classed as out of scope under the CD-x precedent (a pre-existing class for every
+    checker). A fix would change tier-1 behaviour for all checkers, which CD4.2 forbids.
+F-2 (d), pre-existing, not Codex.
+  - Repro: tiers 2/3, no FAIL, judge verdicts with a duplicate family.
+  - Result: the gate refuses ("duplicate judge family") and the dashboard accepts.
+  - Reproduced identically on base-gate/base-parse.
+Observations: the brief's out-of-scope items were not examined for FAIL: FAMILY:<U+2003>
+  header parsing, the trailing-comma checks split, codex-check.sh's "only after task
+  CD4", and start.sh "no second vendor".

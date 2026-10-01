@@ -1,0 +1,45 @@
+# CD1 oracle: TREE=/tmp/claude-1000/-home-darrell-work-agents2--claude-worktrees-unifi-camera-streaming-7be695/480338d9-8e6c-42d1-8681-c9e4d1acdcaf/scratchpad/mutA
+ok   - H positive control: the oracle's host listener answers on 172.17.0.1:33805
+ok   - H positive control: the host listener answers on the host's own address 192.168.1.90
+ok   - A4 the traced run wrote its verdict
+ok   - A4 the trace followed the harness's children (tools.py execs are in it)
+FAIL - A4 no argv carries a secret; only tools.py processes get it in their environment (strace -v)
+#     secret in the environment of a non-tools.py exec: mktemp -d /tmp/cd1-oracle.LBOeFz/k1/htmp/codex-check.XXXXXX
+#     secret in the environment of a non-tools.py exec: chmod 700 /tmp/cd1-oracle.LBOeFz/k1/htmp/codex-check.yGFaYN
+#     secret in the environment of a non-tools.py exec: mkdir /tmp/cd1-oracle.LBOeFz/k1/htmp/codex-check.yGFaYN/out
+#     secret in the environment of a non-tools.py exec: mkdir -p /tmp/cd1-oracle.LBOeFz/k1/htmp/codex-check.yGFaYN/codex-home
+#     secret in the environment of a non-tools.py exec: chmod 700 /tmp/cd1-oracle.LBOeFz/k1/htmp/codex-check.yGFaYN/codex-home
+#     secret in the environment of a non-tools.py exec: realpath /tmp/cd1-oracle.LBOeFz/bin/codex
+#     secret in the environment of a non-tools.py exec: realpath /tmp/cd1-oracle.LBOeFz/fake-auth.json
+#     secret in the environment of a non-tools.py exec: dirname /tmp/cd1-oracle.LBOeFz/bin/codex
+#     secret in the environment of a non-tools.py exec: realpath /tmp/cd1-oracle.LBOeFz/bin/codex-code-mode-host
+#     secret in the environment of a non-tools.py exec: docker compose --env-file
+#     secret in the environment of a non-tools.py exec: /usr/libexec/docker/cli-plugins/docker-compose docker-cli-plugin-metadata
+#     secret in the environment of a non-tools.py exec: /usr/libexec/docker/cli-plugins/docker-compose compose --env-file
+#     secret in the environment of a non-tools.py exec: /usr/libexec/docker/cli-plugins/docker-buildx docker-cli-plugin-metadata
+#     secret in the environment of a non-tools.py exec: /usr/libexec/docker/cli-plugins/docker-buildx bake --file
+#     secret in the environment of a non-tools.py exec: /usr/bin/git -c log.showSignature=false
+#     secret in the environment of a non-tools.py exec: cat /tmp/claude-1000/-home-darrell-work-agents2--claude-worktrees-unifi-camera-streaming-7be695/480338d9-8e6c-42d1-8681-c9e4d1acdcaf/scratchpad/mutA/swarm/codex/brief.md
+#     secret in the environment of a non-tools.py exec: cat
+#     secret in the environment of a non-tools.py exec: wc -l
+#     secret in the environment of a non-tools.py exec: sed s/^/- / /tmp/cd1-oracle.LBOeFz/k1/swarm/codex/T.1/excluded.txt
+#     secret in the environment of a non-tools.py exec: cat /tmp/cd1-oracle.LBOeFz/k1/swarm/codex/T.1.criteria.md
+#     secret in the environment of a non-tools.py exec: timeout 300 tail
+#     secret in the environment of a non-tools.py exec: tail --pid=492320 -f
+#     secret in the environment of a non-tools.py exec: docker inspect -f
+#     secret in the environment of a non-tools.py exec: setsid -w docker
+#     secret in the environment of a non-tools.py exec: docker rm -f
+#     secret in the environment of a non-tools.py exec: timeout 20 /tmp/cd1-oracle.LBOeFz/bin/codex
+#     secret in the environment of a non-tools.py exec: head -n 1
+#     secret in the environment of a non-tools.py exec: /tmp/cd1-oracle.LBOeFz/bin/codex --version
+#     secret in the environment of a non-tools.py exec: ln /tmp/cd1-oracle.LBOeFz/k1/swarm/verdicts/.T.1.checker-codex.verdict.491937 /tmp/cd1-oracle.LBOeFz/k1/swarm/verdicts/T.1.checker-codex.verdict
+#     secret in the environment of a non-tools.py exec: rm -f /tmp/cd1-oracle.LBOeFz/k1/swarm/verdicts/T.1.checker-codex.skip
+#     secret in the environment of a non-tools.py exec: docker ps -aq
+#     secret in the environment of a non-tools.py exec: docker network ls
+#     secret in the environment of a non-tools.py exec: docker volume ls
+#     secret in the environment of a non-tools.py exec: rm -f /tmp/cd1-oracle.LBOeFz/k1/swarm/verdicts/.T.1.checker-codex.verdict.491937
+#     secret in the environment of a non-tools.py exec: chmod -R u+rwX
+#     secret in the environment of a non-tools.py exec: rm -rf /tmp/cd1-oracle.LBOeFz/k1/htmp/codex-check.yGFaYN
+ok   - K a valid last.json, then /out set to mode 000 (unsearchable dir → last.json counts as present) → skip schema-invalid
+ok   - A4 lockout: no secret in the audit dir or the skip record
+excerpt: NFAIL=1

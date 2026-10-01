@@ -1,0 +1,86 @@
+VERDICT: PASS
+CHECKER: checker-second
+FAMILY: adversarial
+TASK: CD4
+ATTEMPT: 3
+MANIFEST_SHA256: d1664d360d514850c6ec0c48a2c3080c55f43f7a3ee18904e42873e4c9034900
+---
+Tree check: `sha256sum -c .swarm/manifests/CD4.3.sha256` all 11 paths OK, before and after (rc=0).
+All work in cp -a copies under the session scratchpad, nice -n 10, sequential; real tree never written
+except this file. No real Codex run; no auth file read.
+
+CD4.3-scope  (only dashboard/test/parse.test.mjs may change)  PASS
+  Attack: some other territory file, or a new file, changed since attempt 2.
+  Cmds: sha256sum -c .swarm/tier3/CD4/a2-territory.sha256 (42 files); sha256sum -c .swarm/manifests/CD4.2.sha256;
+        find dashboard smoketest/gate -type f vs the snapshot.
+  Result: the only FAILED line in both is dashboard/test/parse.test.mjs; no new file in dashboard/ or smoketest/gate/.
+        Deleting the new block (lines 2719-2831) from the current test file reproduces the attempt-2 hash
+        cda4070...079b exactly: the delta is a pure insertion, no existing test touched. parse.mjs, gate.sh,
+        docs byte-identical to attempt 2, so CD4.1/CD4.2 criteria hold as at attempt 2 (oracle re-run below
+        re-asserts them).
+
+CD4.3-tests  (14 `never opens` tests = 7 kinds x {verdict entry, Codex skip record}; CJS child)  PASS
+  Read the code: node -e CJS child; patches fs.openSync + fs.readFileSync, calls syncBuiltinESMExports(),
+  THEN import()s parse.mjs; 20s spawnSync timeout; asserts opens===0, state==='blocked', entry listed invalid /
+  codexSkip===null / mismatch names missing evidence. Does not reuse parseInChild. All 7 kinds present.
+  parse.mjs enumeration: the only readers of *.verdict / *.skip entries are readVerdictEntry and parseCodexSkip
+  (grep of every .verdict/.skip/openSync/readFileSync site); both covered.
+  Baseline: node --test dashboard/test/parse.test.mjs -> 141 pass, 0 fail.
+
+CD4.3-m1 / m2 / m3  PASS  (each alone kills `never opens` tests)
+  m1 (verdict guard deleted)  -> 7 `never opens ... verdict entry` tests fail (all 7 kinds).
+  m2 (guard narrowed to isFIFO||isDirectory) -> exactly 1 fails: "symlink to /dev/null named as a verdict entry".
+  m3 (parseCodexSkip guard deleted) -> 7 `never opens ... skip record` tests fail.
+  Reproduced with an independent harness (mut.py, node --test --test-name-pattern 'never opens').
+
+Adversarial mutation battery (guard-removed or guard-weakened variants of parse.mjs, run against the
+`never opens` tests). KILLED (>=1 test fails) unless noted:
+  A1 guard moved after the open (verdict, skip)            killed (7 each)
+  A2 realpath-then-open, guard removed (verdict, skip)     killed (2 each: FIFO, directory) on this host
+  A5 readFileSync by path, no open (verdict, skip)         killed (7 each)
+  A6 named import { openSync } + syncBuiltinESMExports     killed (7 each)  -> named-import path is counted
+  A7 named import { readFileSync } by path                 killed (7)
+  A9 extra peek-open before the guard (verdict, skip)      killed (7 each)
+  A10 guard skips symlinks / A11 one-hop lstat guard / A13 lstat-allows-symlinks   killed (5 each)
+  A12 guard errors swallowed (dangling/loop opened)        killed (2 each)
+  A4 guard on only FIFO / only dir / only device           killed (3-4 each)
+  Survivors (all reported as observations, none a violation of the written contract; see below):
+  A2c, A2 under symlinked TMPDIR, A3, A4-superset.
+
+Counter itself  PASS
+  Attack: instrumentation misses opens / is vacuous.
+  Result: control test asserts opens>=1 for a regular verdict and a regular skip record. I broke the counter
+  (n += 0) in a copy: exactly the control test fails (14 kind tests stay green vacuously), so the control is
+  what guards vacuity. hit() runs BEFORE the real call, so a failing open (ENOENT/ELOOP on dangling/loop) still
+  counts. A child that fails to produce JSON throws in JSON.parse and fails the test (not a silent pass).
+
+Host dependence  PASS
+  mkfifo status is asserted (a missing mkfifo fails loudly); no sockets (no sun_path limit); no mode-000
+  fixture and no permission-denial fixture, so root is irrelevant; /dev/null missing would degrade that kind to
+  a dangling link (still count 0, no false FAIL). Fixtures live under os.tmpdir(); see observation 2.
+
+Oracle  PASS
+  nice -n 10 .swarm/tier3/CD4/accept.sh <git-init'ed cp -a copy>  (no flock) -> 59 ok, 0 FAIL, final line
+  `ORACLE PASS`, exit 0; the ok/FAIL check list is identical to oracle.3.log.
+  Checks for the wrong reason: ran never-open.mjs directly against m1/m2/m3 mutants: m1 -> 7 verdict kinds
+  FAIL (opens=1); m2 -> only verdict/symlink-to-device FAIL; m3 -> 7 skip kinds FAIL. N2-N4 therefore fail
+  on the intended tests, not a harness error. N0 path-offset (cut -c67-) matches sha256sum's 66-col prefix.
+
+OBSERVATIONS (backlog / no FAIL; each outside the written contract or the user-approved scope)
+ 1. Counter keys on the exact entry path string (the brief's wording: "calls whose path argument is the entry's
+    path"). A mutant that guards plain FIFO/dir but resolves symlinks first and opens the target
+    (A2c: `if (lstat.isSymbolicLink()) filePath = fs.realpathSync(filePath)`) opens the symlink->FIFO target
+    (verified with an all-paths counter: it opened ...verdict.target) while every `never opens` test stays
+    green (14/14). Contrived; outside the specified counting rule.
+ 2. Host dependence of the realpath variant: with TMPDIR reached through a symlink (macOS-like), the whole-file
+    realpath-then-open mutant (A2) survives all 14 (verified: TMPDIR=<symlink dir>). On this host /tmp has no
+    symlink component, so A2 is killed here. m1/m2/m3 are still killed under the symlinked TMPDIR.
+ 3. A guard covering FIFO + directory + character device (A4-superset) survives: sockets and block devices are
+    not among the seven approved kinds.
+ 4. A3 (lstat in place of stat in the guard) passes all 141 tests: it opens nothing non-regular, but it refuses
+    a symlink to a regular verdict/skip file that the gate's `[[ -f ]]` accepts; no test pins that
+    symlink->regular is still read. Not a never-opens violation; backlog candidate.
+ 5. The control test's name ("codex: the opens counter sees ...") does not contain the words `never opens`, so
+    `--test-name-pattern 'never opens'` runs the 14 kind tests without the vacuity control (the full suite and
+    the oracle run it). The brief requires the kind tests to carry the phrase; the control is an extra.
+ 6. readPyLines (CD3 globs reader) has the same guard shape and untested gap: out of scope (backlog, CD-ab).

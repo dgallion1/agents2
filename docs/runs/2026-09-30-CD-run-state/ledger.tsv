@@ -1,0 +1,5 @@
+# task_id	tier	checks	status	attempt	worker	reason
+CD1	3	tests,second	accepted	4	worker-coder	gate-ok-tier3-attempt-4-both-gates
+CD2	3	tests,second	accepted	1	worker-coder	gate-ok-tier3-attempt-1-both-gates
+CD3	3	tests,second	accepted	1	worker-coder	gate-ok-tier3-attempt-1-both-gates
+CD4	3	tests,second	accepted	3	worker-coder	gate-ok-tier3-attempt-3-both-gates

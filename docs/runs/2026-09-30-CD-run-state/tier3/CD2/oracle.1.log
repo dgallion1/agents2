@@ -1,0 +1,14 @@
+# CD2 oracle: TREE=/home/darrell/work/agents2/.claude/worktrees/unifi-camera-streaming-7be695
+ok   - S render.mjs byte-identical to base
+ok   - S only CD2-territory files changed (CD1 territory and SPEC.md ignored)
+ok   - D differential: 20/20 ok
+ok   - E1 a checker-cast OVERRULE no longer sets a FAIL aside (escalate-scan flags two-consecutive-fails)
+ok   - E2 a judge-cast FAIL does not count toward two-consecutive-fails
+ok   - E3 stats ignores a judge-cast FAIL
+ok   - E4 done refuses a mis-paired verdict, naming the rule
+ok   - C1 smoketest/gate/run_tests.sh passes
+ok   - C2 dashboard tests pass (ℹ tests 72)
+ok   - C3 demo fixture parses with no new errors
+ok   - M1 smoketest suite fails against the base gate.sh (41 FAIL lines)
+ok   - M2 dashboard suite fails against the base parse.mjs (6 failing)
+ORACLE PASS

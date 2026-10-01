@@ -1,0 +1,80 @@
+FAIL - X1 tier 2 named: a Codex PASS alongside real PASSes accepts: both reject, expected accept (gate: FAIL: x1: invalid verdict x1.1.checker-codex.verdict: x1.1.checker-codex.verdict: invalid FAMILY 'crossvendor')
+FAIL - X2 tier 2: a Codex FAIL counts (no panel) → refused as a dispute: gate FAIL should mention 'dispute': FAIL: x2: invalid verdict x2.1.checker-codex.verdict: x2.1.checker-codex.verdict: invalid FAMILY 'crossvendor'
+FAIL - X3 tier 2: a Codex FAIL overruled by a real panel → accepted: both reject, expected accept (gate: FAIL: x3: invalid verdict x3.1.checker-codex.verdict: x3.1.checker-codex.verdict: invalid FAMILY 'crossvendor')
+FAIL - X4 tier 2 named, no Codex evidence → refused: gate FAIL should mention 'missing checker-codex evidence': FAIL: x4: missing PASS from checker-codex (attempt 1)
+FAIL - X5 tier 2 named: a valid 'no-exclude-policy' skip record is evidence → accepted: both reject, expected accept (gate: FAIL: x5: missing PASS from checker-codex (attempt 1))
+FAIL - X5 tier 2 named: a valid 'no-criteria' skip record is evidence → accepted: both reject, expected accept (gate: FAIL: x5: missing PASS from checker-codex (attempt 1))
+FAIL - X5 tier 2 named: a valid 'no-evidence' skip record is evidence → accepted: both reject, expected accept (gate: FAIL: x5: missing PASS from checker-codex (attempt 1))
+FAIL - X5 tier 2 named: a valid 'no-codex' skip record is evidence → accepted: both reject, expected accept (gate: FAIL: x5: missing PASS from checker-codex (attempt 1))
+FAIL - X5 tier 2 named: a valid 'docker-unavailable' skip record is evidence → accepted: both reject, expected accept (gate: FAIL: x5: missing PASS from checker-codex (attempt 1))
+FAIL - X5 tier 2 named: a valid 'unsafe-tree' skip record is evidence → accepted: both reject, expected accept (gate: FAIL: x5: missing PASS from checker-codex (attempt 1))
+FAIL - X5 tier 2 named: a valid 'fingerprint-mismatch' skip record is evidence → accepted: both reject, expected accept (gate: FAIL: x5: missing PASS from checker-codex (attempt 1))
+FAIL - X5 tier 2 named: a valid 'container-error' skip record is evidence → accepted: both reject, expected accept (gate: FAIL: x5: missing PASS from checker-codex (attempt 1))
+FAIL - X5 tier 2 named: a valid 'auth' skip record is evidence → accepted: both reject, expected accept (gate: FAIL: x5: missing PASS from checker-codex (attempt 1))
+FAIL - X5 tier 2 named: a valid 'quota' skip record is evidence → accepted: both reject, expected accept (gate: FAIL: x5: missing PASS from checker-codex (attempt 1))
+FAIL - X5 tier 2 named: a valid 'timeout' skip record is evidence → accepted: both reject, expected accept (gate: FAIL: x5: missing PASS from checker-codex (attempt 1))
+FAIL - X5 tier 2 named: a valid 'schema-invalid' skip record is evidence → accepted: both reject, expected accept (gate: FAIL: x5: missing PASS from checker-codex (attempt 1))
+FAIL - X5 tier 2 named: a valid 'evidence-free-pass' skip record is evidence → accepted: both reject, expected accept (gate: FAIL: x5: missing PASS from checker-codex (attempt 1))
+FAIL - X5 tier 2 named: a valid 'secret-leak' skip record is evidence → accepted: both reject, expected accept (gate: FAIL: x5: missing PASS from checker-codex (attempt 1))
+FAIL - X5 tier 2 named: a valid 'codex-error' skip record is evidence → accepted: both reject, expected accept (gate: FAIL: x5: missing PASS from checker-codex (attempt 1))
+FAIL - X6 a skip with an unknown REASON is not evidence: gate FAIL should mention 'missing checker-codex evidence': FAIL: x6: missing PASS from checker-codex (attempt 1)
+FAIL - X7 a skip whose TASK disagrees with its name: gate FAIL should mention 'missing checker-codex evidence': FAIL: x7: missing PASS from checker-codex (attempt 1)
+FAIL - X7b a skip whose ATTEMPT disagrees with its name: gate FAIL should mention 'missing checker-codex evidence': FAIL: x7b: missing PASS from checker-codex (attempt 1)
+FAIL - X8 a skip with an empty DETAIL: gate FAIL should mention 'missing checker-codex evidence': FAIL: x8: missing PASS from checker-codex (attempt 1)
+FAIL - X8b a skip with no DETAIL line: gate FAIL should mention 'missing checker-codex evidence': FAIL: x8b: missing PASS from checker-codex (attempt 1)
+FAIL - X8c a skip record that is a directory (never opened): gate FAIL should mention 'missing checker-codex evidence': FAIL: x8c: missing PASS from checker-codex (attempt 1)
+FAIL - X8d a skip record that is a FIFO (never opened, no hang): gate FAIL should mention 'missing checker-codex evidence': FAIL: x8d: missing PASS from checker-codex (attempt 1)
+FAIL - X8f a mode-000 skip record (unreadable → absent, parse() never throws): gate FAIL should mention 'missing checker-codex evidence': FAIL: x8f: missing PASS from checker-codex (attempt 1)
+FAIL - X8e first-match headers: a valid REASON first, a bogus one later → valid: both reject, expected accept (gate: FAIL: x8e: missing PASS from checker-codex (attempt 1))
+FAIL - X9 BOTH a Codex verdict and a skip record → refused: refused as 'invalid FAMILY' — the pre-CD4 reason: FAIL: x9: invalid verdict x9.1.checker-codex.verdict: x9.1.checker-codex.verdict: invalid FAMILY 'crossvendor'
+FAIL - X10 tier 3: a Codex PASS does not supply the second lane: gate FAIL should mention 'famil': FAIL: x10: invalid verdict x10.1.checker-codex.verdict: x10.1.checker-codex.verdict: invalid FAMILY 'crossvendor'
+FAIL - X11 tier 2: a Codex PASS does not stand in for a missing checker-second: gate FAIL should mention 'checker-second': FAIL: x11: invalid verdict x11.1.checker-codex.verdict: x11.1.checker-codex.verdict: invalid FAMILY 'crossvendor'
+FAIL - X12 tier 2: checks = codex only is refused like a blank column: gate FAIL should mention 'requires named checkers': FAIL: x12: invalid verdict x12.1.checker-codex.verdict: x12.1.checker-codex.verdict: invalid FAMILY 'crossvendor'
+FAIL - X13 tier 1: checks = codex only is refused like a blank column: gate FAIL should mention 'requires named checkers': FAIL: x13: invalid verdict checker-codex: x13.1.checker-codex.verdict: invalid FAMILY 'crossvendor'
+FAIL - X14 tier 1: tests + codex, both PASS → accepted: both reject, expected accept (gate: FAIL: x14: invalid verdict checker-codex: x14.1.checker-codex.verdict: invalid FAMILY 'crossvendor')
+FAIL - X15 tier 1: a named Codex FAIL → refused: gate FAIL should mention 'checker-codex returned FAIL': FAIL: x15: invalid verdict checker-codex: x15.1.checker-codex.verdict: invalid FAMILY 'crossvendor'
+FAIL - X16 codex NOT named, tier 2: a Codex FAIL still counts: gate FAIL should mention 'dispute': FAIL: x16: invalid verdict x16.1.checker-codex.verdict: x16.1.checker-codex.verdict: invalid FAMILY 'crossvendor'
+ok   - X17 codex NOT named, tier 1: an unnamed Codex FAIL is ignored (gate accepts, dashboard 'accepted')
+ok   - X18 codex NOT named, tier 2: a skip record is ignored (gate accepts, dashboard 'accepted')
+FAIL - X19 tier 3: tests + second + codex, all PASS → accepted: both reject, expected accept (gate: FAIL: x19: invalid verdict x19.1.checker-codex.verdict: x19.1.checker-codex.verdict: invalid FAMILY 'crossvendor')
+FAIL - X20 a Codex PASS without MANIFEST_SHA256 → refused: gate FAIL should mention 'MANIFEST_SHA256': FAIL: x20: invalid verdict x20.1.checker-codex.verdict: x20.1.checker-codex.verdict: invalid FAMILY 'crossvendor'
+FAIL - X21 codex NOT named, tier 2: a Codex PASS is loaded, not invalid: both reject, expected accept (gate: FAIL: x21: invalid verdict x21.1.checker-codex.verdict: x21.1.checker-codex.verdict: invalid FAMILY 'crossvendor')
+FAIL - X22 tier 3 named + a valid skip → accepted (an outage never blocks): both reject, expected accept (gate: FAIL: x22: missing PASS from checker-codex (attempt 1))
+FAIL - X23 tier 3 named, no Codex evidence: gate FAIL should mention 'missing checker-codex evidence': FAIL: x23: missing PASS from checker-codex (attempt 1)
+FAIL - X24 tier 3: a Codex FAIL → refused as a dispute: gate FAIL should mention 'dispute': FAIL: x24: invalid verdict x24.1.checker-codex.verdict: x24.1.checker-codex.verdict: invalid FAMILY 'crossvendor'
+FAIL - X25 tier 3: a Codex FAIL overruled by a panel → accepted: both reject, expected accept (gate: FAIL: x25: invalid verdict x25.1.checker-codex.verdict: x25.1.checker-codex.verdict: invalid FAMILY 'crossvendor')
+FAIL - X26 tier 3: checks = codex only: gate FAIL should mention 'requires named checkers': FAIL: x26: invalid verdict x26.1.checker-codex.verdict: x26.1.checker-codex.verdict: invalid FAMILY 'crossvendor'
+FAIL - X27 tier 1 named + a valid skip → accepted: both reject, expected accept (gate: FAIL: x27: missing verdict from checker-codex (attempt 1))
+FAIL - X28 tier 1 named, no Codex evidence: gate FAIL should mention 'missing checker-codex evidence': FAIL: x28: missing verdict from checker-codex (attempt 1)
+FAIL - X29 tier 1: both a verdict and a skip → refused: refused as 'invalid FAMILY' — the pre-CD4 reason: FAIL: x29: invalid verdict checker-codex: x29.1.checker-codex.verdict: invalid FAMILY 'crossvendor'
+FAIL - X30 tier 1: an invalid skip is not evidence: gate FAIL should mention 'missing checker-codex evidence': FAIL: x30: missing verdict from checker-codex (attempt 1)
+FAIL - X31 evidence only at an OLDER attempt does not count: gate FAIL should mention 'missing checker-codex evidence': FAIL: x31: missing PASS from checker-codex (attempt 2)
+FAIL - X32 tier 2: a Codex PASS never makes up the second lane (second on the same lane): gate FAIL should mention 'lane': FAIL: x32: invalid verdict x32.1.checker-codex.verdict: x32.1.checker-codex.verdict: invalid FAMILY 'crossvendor'
+FAIL - X33 tier 3, codex NOT named: an unnamed Codex PASS is no lane: gate FAIL should mention 'famil': FAIL: x33: invalid verdict x33.1.checker-codex.verdict: x33.1.checker-codex.verdict: invalid FAMILY 'crossvendor'
+FAIL - X34 checker-codex with FAMILY adversarial → invalid: both accept, expected reject (gate: OK: x34 accepted at tier 2 (attempt 1))
+ok   - X35 checker-tests with FAMILY crossvendor → invalid (gate rejects, dashboard 'blocked')
+FAIL - X36 named: a FAIL overruled by a panel still needs Codex evidence: both accept, expected reject (gate: OK: x36 accepted at tier 2 (attempt 1))
+FAIL - X37 DETAIL:<U+2003> is a non-empty DETAIL (valid skip): both reject, expected accept (gate: FAIL: x37: missing PASS from checker-codex (attempt 1))
+FAIL - X38 REASON:<U+2003>quota is no known reason: gate FAIL should mention 'missing checker-codex evidence': FAIL: x38: missing PASS from checker-codex (attempt 1)
+FAIL - X39 TASK:<U+2003>x39 does not match the filename: gate FAIL should mention 'missing checker-codex evidence': FAIL: x39: missing PASS from checker-codex (attempt 1)
+FAIL - X40 DETAIL: <U+00A0> (NBSP after a space) is non-empty (valid skip): both reject, expected accept (gate: FAIL: x40: missing PASS from checker-codex (attempt 1))
+FAIL - X40b REASON:<U+3000>auth, tier 1 named: gate FAIL should mention 'missing checker-codex evidence': FAIL: x40b: missing verdict from checker-codex (attempt 1)
+FAIL - X41 tier 1 named: a DANGLING-symlink Codex verdict beside a valid skip: gate FAIL should mention 'invalid verdict checker-codex': FAIL: x41: missing verdict from checker-codex (attempt 1)
+FAIL - X42 tier 1 named: a DIRECTORY named as the Codex verdict beside a valid skip: parse() THREW: EISDIR: illegal operation on a directory, read
+ok   - X43 tier 1 named: an INVALID Codex verdict (no ---) beside a valid skip (gate rejects, dashboard 'blocked')
+FAIL - X44 tier 1 named: a FIFO named as the Codex verdict (never opened, no hang): parse() HUNG (killed after 20 s)
+ok   - X44b tier 1 NOT named: a dangling Codex verdict entry is ignored (gate accepts, dashboard 'accepted')
+FAIL - X45 a NUL inside DETAIL: gate FAIL should mention 'missing checker-codex evidence': FAIL: x45: missing PASS from checker-codex (attempt 1)
+FAIL - X46 a NUL on a line that is no header: gate FAIL should mention 'missing checker-codex evidence': FAIL: x46: missing PASS from checker-codex (attempt 1)
+FAIL - X37b DETAIL:<VT> strips to empty (invalid): gate FAIL should mention 'missing checker-codex evidence': FAIL: x37b: missing PASS from checker-codex (attempt 1)
+FAIL - X38b REASON: quota<U+2003> (trailing, never stripped): gate FAIL should mention 'missing checker-codex evidence': FAIL: x38b: missing PASS from checker-codex (attempt 1)
+FAIL - X39b ATTEMPT:<U+2003>1: gate FAIL should mention 'missing checker-codex evidence': FAIL: x39b: missing PASS from checker-codex (attempt 1)
+FAIL - X41b tier 1 named: a dangling-symlink Codex verdict and NO skip: gate FAIL should mention 'invalid verdict checker-codex': FAIL: x41b: missing verdict from checker-codex (attempt 1)
+FAIL - X42b tier 1 named: a symlink-LOOP Codex verdict beside a valid skip: parse() THREW: ELOOP: too many symbolic links encountered, open '/tmp/cd4-diff-hFBwPy/fx-rUG3oM/verdicts/x42b.1.checker-codex.verdict'
+FAIL - X43b tier 1 named: a MODE-000 Codex verdict beside a valid skip: parse() THREW: EACCES: permission denied, open '/tmp/cd4-diff-hFBwPy/fx-Mul574/verdicts/x43b.1.checker-codex.verdict'
+FAIL - X42c tier 2 named: a DIRECTORY named as the Codex verdict: parse() THREW: EISDIR: illegal operation on a directory, read
+FAIL - X44c tier 3 NOT named: a FIFO named as the Codex verdict: parse() HUNG (killed after 20 s)
+FAIL - X47 tier 2: a DIRECTORY named as another checker's verdict: parse() THREW: EISDIR: illegal operation on a directory, read
+FAIL - X48 tier 2: a FIFO named as another checker's verdict: parse() HUNG (killed after 20 s)
+FAIL - X49 tier 2: a MODE-000 regular file named as another checker's verdict: parse() THREW: EACCES: permission denied, open '/tmp/cd4-diff-hFBwPy/fx-oNEyWV/verdicts/x49.1.checker-other.verdict'
+differential: 5/79 ok

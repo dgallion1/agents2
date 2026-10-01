@@ -1,0 +1,26 @@
+# CD3 oracle: TREE=/home/darrell/work/agents2/.claude/worktrees/unifi-camera-streaming-7be695
+ok   - S outside CD3 territory, every tracked file matches its post-CD2 state
+ok   - S no new files outside CD3/CD1 territory
+ok   - D differential: 25/25 ok
+ok   - E critical.globs mode 000 → flag REASON: critical-glob-unreadable
+ok   - E critical.globs mode 000 → one stderr line naming critical.globs
+ok   - E critical.globs a directory → flag REASON: critical-glob-unreadable
+ok   - E critical.globs a directory → one stderr line naming critical.globs
+ok   - E critical.globs dangling link → flag REASON: critical-glob-unreadable
+ok   - E critical.globs dangling link → one stderr line naming critical.globs
+ok   - E test.globs mode 000 → flag REASON: critical-glob-unreadable
+ok   - E test.globs mode 000 → one stderr line naming test.globs
+ok   - E test.globs not UTF-8 → flag REASON: critical-glob-unreadable
+ok   - E test.globs not UTF-8 → one stderr line naming test.globs
+ok   - E a manifest not UTF-8 → flag REASON: critical-glob-unreadable
+ok   - E a manifest not UTF-8 → one stderr line naming ef.1.files
+ok   - E control: an unstarted row (no manifests) is not flagged
+ok   - E control: clean inputs → no unreadable diagnostic
+ok   - E a killed python3 evaluator → critical-glob-unreadable
+ok   - E done refuses an accepted row with unreadable globs, naming the reason
+ok   - E parse.mjs no longer says unreadable input means no hit
+ok   - C1 smoketest/gate/run_tests.sh passes
+ok   - C2 dashboard tests pass (ℹ tests 114)
+ok   - M1 smoketest suite fails against the post-CD2 gate.sh, on the new unreadable tests (97 FAIL lines)
+ok   - M2 dashboard suite fails against the post-CD2 parse.mjs, on unreadable tests (40 failing)
+ORACLE PASS

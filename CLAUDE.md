@@ -12,10 +12,11 @@ verification machinery redundant. What changed and why:
 - **Tier 2 defaults to ONE verifier.** The 2026-08-26 retro showed every real
   catch came from the oracle or a checker — never from redundant generation —
   and the surviving defects were spec-level (rounding paths, threshold
-  sources, surface enumeration), not capability-level. With all lanes on
+  sources, surface enumeration), not capability-level. With every lane on
   Claude since 2026-08-19, a same-family adversarial second opinion on a
-  routine task adds little. `checker-second` is now RESERVED for tasks
-  touching the documented defect-history surfaces (see Tier 2).
+  routine task adds little (the Codex trial, below, adds a cross-vendor
+  one). `checker-second` is now RESERVED for tasks touching the documented
+  defect-history surfaces (see Tier 2).
 - **What is deliberately NOT weakened:** the Tier-3 oracle discipline, the
   mechanical gate, and non-author verification. Those catch the brief's own
   errors and the lead's own optimism — failure modes no model strength fixes.
@@ -24,18 +25,23 @@ verification machinery redundant. What changed and why:
   the user verbatim (since 2026-09-18 a first-attempt FAIL the judge panel
   overruled counts as clean — a checker false alarm is not a worker miss —
   and the report includes escalations and an mtime-based elapsed span).
+  The last line, `codex: ran n/m, FAIL k, same-verdict-as-second j,
+  codex-only FAIL c`, is the Codex trial's measurement: report the `codex:`
+  line verbatim too.
   Decision rule agreed with the user: if first attempts
   are ~all clean over ~10 tasks, the process shrinks further next run; if
   oracle/checker failures persist on first attempts, the catches were never
   about model strength and the machinery stays.
 - Record every catch this run in SPEC.md "Rulings" with WHICH mechanism
-  caught it (census / oracle / primary checker / second checker / judge /
-  gate) — that attribution is the experiment's real output.
+  caught it (census / oracle / primary checker / second checker / codex /
+  judge / gate) — that attribution is the experiment's real output.
 - Record in the run record the model IDs the subagents actually ran on (the
   `model` field in their transcripts), not the frontmatter alias. `sonnet`
   ran `claude-sonnet-5` through 2026-09-27 and `claude-sonnet-5-5` first
   appears 2026-09-29; a before/after comparison must not mix a model change
-  with a process change.
+  with a process change. Never archive `.swarm/codex/**` to `docs/runs/`
+  verbatim: it holds the Codex event stream, proxy log and file lists of a
+  copy of the tree. Record the outcome and the `codex:` line instead.
 
 ## Phase 0 — Constitution before code
 Before any build work, write the contract and get user sign-off. The
@@ -53,6 +59,11 @@ ceremony scales with the run; the sign-off gate does not.
   already carries one, reuse it — do not write a per-run copy.
 - `SOURCES.md` — only when content is migrated or quoted, mapping every
   content block to its canonical source.
+- `.swarm/codex.exclude` — every run writes it, even an empty one: one glob
+  per line of repo paths that must never reach a Codex copy, so a later
+  Codex check always has a written policy (without it the check skips
+  `no-exclude-policy`). budget2 runs list `PLANNING_LOG.md`; agents2 runs
+  list `docs/runs/` and `*.png`.
 
 ## Superpowers skills — front half only (2026-09-18)
 The `superpowers` plugin stays enabled and yields to this document (its
@@ -114,7 +125,7 @@ by the user. Tier decides how it is verified; a mechanical gate decides when it
 is accepted. In Phase 0, also create the run directory and ledger:
 
 ```bash
-mkdir -p .swarm/verdicts .swarm/manifests .swarm/flags .swarm/tier3 .swarm/census
+mkdir -p .swarm/verdicts .swarm/manifests .swarm/flags .swarm/tier3 .swarm/census .swarm/codex
 # ledger.tsv columns (TAB-separated):
 #   task_id  tier  checks  status  attempt  worker  reason
 ```
@@ -148,6 +159,12 @@ Add a `Tier` column to SPEC.md's task table and draft `.swarm/critical.globs`.
   the ledger's `attempt` column (bump it on every re-dispatch or the trigger
   stays silent), and the next scan clears a flag automatically once the
   tier is raised — no manual deletion.
+- The critical-glob trigger fails CLOSED: a `critical.globs`, `test.globs` or
+  task manifest that is PRESENT but unreadable (not a regular file, not
+  valid UTF-8, permission denied) escalates exactly like a hit, with the
+  reason `critical-glob-unreadable` and one diagnostic line on stderr. Only
+  an ABSENT file keeps its old meaning (no `critical.globs` — no trigger;
+  no `test.globs` — the compiled-in default test globs).
 
 You never transcribe a verdict. Workers write manifests; checkers and judges
 write verdict files. You read evidence and update ledger status only.
@@ -178,11 +195,13 @@ Worker → the mechanical checker(s) named in the ledger `checks` column
 (`checker-content`, `checker-a11y` or `checker-tests`) → `gate.sh check` →
 accept. The `checks` column is load-bearing at every tier: a `-` or blank
 column hard-fails (since 2026-09-18 at Tier 1 too — it used to accept the
-row with zero verdicts).
+row with zero verdicts). `codex` is never a named checker: a column naming
+only `codex` is refused exactly like a blank one, at every tier.
 
 ### Tier 2 — named verifier(s) + judge panel on disputes (LEAN, 2026-08-31)
 Worker builds once. Then the checker(s) named in the ledger `checks` column
-run; **every named checker must PASS**. The default is ONE primary verifier
+run; **every named checker must PASS** (`codex` is never one: see the Codex
+lane). The default is ONE primary verifier
 (`checker-tests` for code, `checker-a11y` / `checker-content` for UI and
 content), which asks "does this meet the criteria?" and must cite the command
 proving each one — a PASS without commands is not evidence, send it back.
@@ -199,7 +218,8 @@ a dual-lane task exactly as before the experiment — when the task touches a
 `checker-second` asks "what would make this wrong?" and defaults to FAIL on
 ambiguity. When `second` is named, the gate mechanically requires the PASSes
 to span two lanes (`checker-a11y`+`checker-content` are both `anthropic` and
-do NOT satisfy it).
+do NOT satisfy it). Wherever `second` is named, also name `codex` beside
+`second` (the Codex trial, below).
 
 Any FAIL is a dispute. Default resolution is **CONCEDE**: treat the FAIL as
 upheld and send the task back to the worker. Dispatch the three judges —
@@ -212,8 +232,10 @@ precisely: once any FAIL exists at the attempt, judge votes REPLACE the
 named-checker PASS requirement; the panel needs ≥3 verdicts, each with a
 unique judge identity AND a unique lane, and a strict OVERRULE majority —
 ties uphold. Valid `FAMILY` values are `anthropic`, `adversarial`, `impact`
-(plus `glm`/`local`, accepted only so pre-2026-08-19 verdicts still validate
-— never write them).
+and `crossvendor` (the Codex checker's lane: valid only with
+`checker-codex`, and `checker-codex` only with it), plus `glm`/`local`
+(accepted only so pre-2026-08-19 verdicts still validate — never write
+them).
 
 ### Tier 3 — oracle-first, then full dual-lane (NOT leaned)
 Blind N-version was dropped (user decision 2026-08-26): across the budget2
@@ -241,10 +263,42 @@ replication can never audit the lead. What remains is the oracle discipline:
 4. Run the full dual-checker verification — primary verifier AND
    `checker-second`, judge panel on disputes. Tier 3 is exempt from the lean
    experiment: name every checker in the `checks` column (at least the
-   primary and `second`), and `gate.sh check` requires a PASS from EVERY
-   named checker AND PASSes spanning both lanes at the current attempt (a
-   named checker that never ran fails the row, 2026-09-18). Irreversible
-   work keeps the pre-2026-08-31 rigor.
+   primary and `second`, with `codex` beside `second`), and `gate.sh check`
+   requires a PASS from EVERY named checker (`codex` is never one) AND
+   PASSes spanning both lanes at the current attempt, a Codex PASS being no
+   lane (a named checker that never ran fails the row, 2026-09-18).
+   Irreversible work keeps the pre-2026-08-31 rigor.
+
+### The Codex lane — trial (run CD)
+Codex, another vendor's model, runs ALONGSIDE `checker-second`, never instead
+of it. Name `codex` in `checks` beside `second` on every Tier-3 task and on
+every Tier-2 task that names `second`. The trial rule: a Codex FAIL counts,
+a Codex PASS never does, and an outage never blocks.
+- A `checker-codex` FAIL is a FAIL. At Tiers 2/3 it opens the dispute path
+  (concede, or the judge panel) whether or not `codex` is named; at Tier 1
+  only a named one blocks acceptance. At every tier, named or not, it counts
+  toward two consecutive fails and in `stats`, like any checker FAIL: an
+  unnamed Tier-1 Codex FAIL is ignored by acceptance only.
+- A `checker-codex` PASS satisfies nothing: no named-checker requirement and
+  no lane (the Tier-2 `second` span and the Tier-3 two-lane rule ignore it),
+  so Claude's checkers still decide acceptance. It still carries the
+  `MANIFEST_SHA256` the script stamps.
+- Naming `codex` only demands evidence of presence: the CURRENT attempt must
+  hold exactly one outcome, a valid `checker-codex` verdict OR a valid
+  `checker-codex.skip` record. `gate.sh` refuses a row with neither
+  (`missing checker-codex evidence (attempt N)`) or with both; evidence at
+  an older attempt does not count.
+- How: once the worker's manifest and `.sha256` exist, the lead writes
+  `.swarm/codex/<t>.<a>.criteria.md` — the same criteria the Claude checkers
+  get, never the census — then runs `swarm/codex-check.sh <t> <a>` (Docker;
+  a data-free copy of the tree, minus the built-in exclusions and the
+  `.swarm/codex.exclude` globs). It writes exactly one of
+  `verdicts/<t>.<a>.checker-codex.verdict` or `.skip`. The lead never writes
+  a Codex verdict or skip record, nor edits one.
+- If `swarm/codex-check.sh` cannot record an outcome (exit 1, or a killed
+  run), re-run it: a row naming `codex` needs a record. A verdict is never
+  replaced, so re-checking a FAIL needs a new attempt; a skip record is
+  replaced by the new outcome.
 
 ### Disputes in practice (2026-08-29, first panel use)
 - The lead may CONCEDE an uncontested FAIL — treating it as an implicit
@@ -353,5 +407,7 @@ Before declaring done, in this order:
 - Lead session: judgment tier only (planning, specs, review, adjudication).
 - Do not use the lead model for mechanical tasks a worker can do.
 - Prefer `worker-local` (Haiku) when the task is high-volume, low-judgment.
-- All agents run on Claude; there is no gateway and no local endpoint. Model
-  choice per agent lives in `.claude/agents/*.md` frontmatter.
+- Every subagent runs on Claude; there is no gateway and no local endpoint.
+  Model choice per agent lives in `.claude/agents/*.md` frontmatter. The one
+  other vendor is the Codex lane, a script the lead runs (not an agent), in
+  trial.

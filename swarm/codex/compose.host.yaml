@@ -1,0 +1,11 @@
+# Overlay, used only when an executable codex-code-mode-host sits beside the
+# Codex binary: the bundled CLI runs every shell command through it (SPEC
+# ruling CD-f). Without it no command can run and any verdict is worthless.
+services:
+  checker:
+    volumes:
+      - type: bind
+        source: ${CD_CODEX_HOST:?set by swarm/codex-check.sh}
+        target: /opt/codex/codex-code-mode-host
+        read_only: true
+        bind: {create_host_path: false}

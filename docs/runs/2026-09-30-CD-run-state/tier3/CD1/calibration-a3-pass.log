@@ -1,0 +1,162 @@
+# CD1 oracle: TREE=/tmp/claude-1000/-home-darrell-work-agents2--claude-worktrees-unifi-camera-streaming-7be695/480338d9-8e6c-42d1-8681-c9e4d1acdcaf/scratchpad/lead-cd1-proto3
+ok   - H positive control: the oracle's host listener answers on 172.17.0.1:33601
+ok   - H positive control: the host listener answers on the host's own address 192.168.1.90
+ok   - B brief.md names the data-free copy at /work
+ok   - B brief.md asks for evidence per criterion
+ok   - B brief.md never mentions a census, .swarm/verdicts or re-hashing
+ok   - P exit 0
+ok   - P wrote a verdict and no skip record
+ok   - P VERDICT: PASS
+ok   - P CHECKER: checker-codex
+ok   - P FAMILY: crossvendor
+ok   - P TASK/ATTEMPT
+ok   - P MANIFEST_SHA256 = sha256 of the sidecar
+ok   - P CODEX_MODEL: gpt-6-astra
+ok   - P CODEX_VERSION from the binary
+ok   - P '---' separator
+ok   - P evidence: every criterion id with its result marker
+ok   - P evidence: attack, command, result, observations
+ok   - P the stub's flat records and last.json are kept in out/
+ok   - P /work holds exactly the data-free copy
+ok   - P files.txt == the copy, byte-order sorted
+ok   - P excluded.txt == every excluded path, byte-order sorted
+ok   - P the code-mode host beside CODEX_BIN is mounted, read-only, and /opt/codex holds only the two
+ok   - P exec bit and symlink preserved
+ok   - P codex flag exec
+ok   - P codex flag --dangerously-bypass-approvals-and-sandbox
+ok   - P codex flag --ephemeral
+ok   - P codex flag --ignore-rules
+ok   - P codex flag --skip-git-repo-check
+ok   - P codex flag --json
+ok   - P -m gpt-6-astra
+ok   - P -C /work
+ok   - P --output-schema /schema/verdict.schema.json
+ok   - P -o /out/last.json
+ok   - P no codex sandbox flag — the container is the sandbox
+ok   - P runs as 1000:1000
+ok   - P CODEX_HOME=/codex-home, HOME=/tmp/home
+ok   - P HTTPS_PROXY=http://proxy:8888
+ok   - P no module cache for a non-Go tree
+ok   - P CODEX_HOME holds exactly auth.json + config.toml
+ok   - P config.toml is empty
+ok   - P auth.json is the given CODEX_AUTH
+ok   - P auth.json is mounted read-only (ruling CD-j)
+ok   - P no host path visible in the container
+ok   - P prompt carries the criteria
+ok   - P prompt carries brief.md
+ok   - P prompt lists the excluded paths (About this copy)
+ok   - P prompt never mentions a census
+ok   - P a host service on the docker host is unreachable
+ok   - P NO host address (gateway, LAN, tailnet, bridges) reachable on the listener port or 8080 (ruling CD-l)
+ok   - P non-allowlisted host refused
+ok   - P chatgpt.com reachable through the proxy
+ok   - P auth.openai.com reachable through the proxy
+ok   - P api.openai.com reachable through the proxy
+ok   - P lookalike chatgpt.com.evil.invalid refused
+ok   - P the suffix lookalike is refused BY THE FILTER (proxy.log), not just unresolvable
+ok   - P lookalike evilchatgpt.com refused
+ok   - P CONNECT through the proxy to port 80 of an allowed host refused
+ok   - P plain-HTTP request through the proxy to a non-allowlisted host refused
+ok   - P no direct egress bypassing the proxy
+ok   - P proxy.log records the allowed host
+ok   - P proxy.log records the denied host as refused
+ok   - P events.jsonl captured
+ok   - P no secret in any audit file
+ok   - G wrote a FAIL verdict
+ok   - G GOMODCACHE=/gomodcache, GOPROXY=off
+ok   - G module cache mounted read-only
+ok   - G the module cache is a subset — none of the user's own modules
+ok   - G the subset is small (a zero-dependency module needs ~nothing)
+ok   - G go build works offline in the container
+ok   - G go.mod and main.go are in the copy
+ok   - K no exclude policy → skip no-exclude-policy
+ok   - K no criteria → skip no-criteria
+ok   - K no sidecar → skip no-evidence
+ok   - K no Codex binary → skip no-codex
+ok   - K no auth file → skip auth
+ok   - K docker unreachable → skip docker-unavailable
+ok   - K absolute symlink → skip unsafe-tree
+ok   - K symlink escaping upward → skip unsafe-tree
+ok   - K symlink into an excluded path → skip unsafe-tree
+ok   - K dangling symlink → skip unsafe-tree
+ok   - K directory symlink → skip unsafe-tree
+ok   - K tree is not a git work tree → skip unsafe-tree
+ok   - K content drift → skip fingerprint-mismatch
+ok   - K fingerprinted-deleted path present → skip fingerprint-mismatch
+ok   - K manifest path missing from the copy → skip fingerprint-mismatch
+ok   - K unparseable sidecar line → skip fingerprint-mismatch
+ok   - K manifest path with no sidecar line → skip fingerprint-mismatch
+ok   - K usage limit (error event) → skip quota
+ok   - K usage limit on stderr only → skip quota
+ok   - K quota outranks auth → skip quota
+ok   - K expired login → skip auth
+ok   - K codex crash → skip codex-error
+ok   - K 'quota'/'429' in an ordinary event is not quota → skip codex-error
+ok   - K exit 0 without last.json → skip codex-error
+ok   - K timeout → skip timeout
+ok   - K schema: bad verdict, empty criteria → skip schema-invalid
+ok   - K schema: missing observations → skip schema-invalid
+ok   - K schema: extra key → skip schema-invalid
+ok   - K Codex could not run commands (a FAIL that must not count) → skip codex-error
+ok   - K the same words in an ordinary event do not void a verdict
+ok   - K PASS with a failed criterion (ruling CD-j) → skip schema-invalid
+ok   - K FAIL with every criterion passing (ruling CD-j) → skip schema-invalid
+ok   - K a container that tries to rewrite auth.json still cannot hide a leak → skip secret-leak
+ok   - K trunc-auth: the container could not write auth.json, and the host file is unchanged
+ok   - K trunc-auth: no secret anywhere in the audit dir or the skip record
+ok   - K a secret in a read-only file or a mode-000 folder in /out ends up nowhere
+ok   - K PASS without a command → skip evidence-free-pass
+ok   - K an auth secret in last.json → skip secret-leak
+ok   - K secret-leak: no secret anywhere in the audit dir or the skip record
+ok   - R an event carrying a secret: events.jsonl is DROPPED (never redacted), listed in dropped.txt; the verdict is still written
+ok   - R a verdict replaces a stale skip record
+ok   - R an existing verdict is never replaced (no run, nothing written)
+ok   - K a stale out/last.json is never reused → skip codex-error
+ok   - R the sidecar's 'hash *path' form is accepted
+ok   - R a symlink named 'data' is excluded, never followed, not unsafe
+ok   - R no arguments → exit 2
+ok   - R non-integer attempt → exit 2, nothing written
+ok   - A3 the deep-path attack really planted a secret (relative walk past PATH_MAX)
+ok   - A3 ...and it is never kept; the verdict is written
+ok   - A3 the audit out/ holds only flat regular files
+ok   - A3 symlinks and sub-folders planted in /out are not kept
+ok   - A3 dropped.txt names each not-kept entry
+ok   - A3 an entry NAMED with a secret is not kept, and its name never appears anywhere
+ok   - A3 a secret spelled as a \u-escaped JSON key → that file dropped
+ok   - A3 a UTF-16LE secret → that file dropped
+ok   - A3 UTF-16BE, a partially escaped secret, and an escaped secret in an event → all dropped
+ok   - A3 a secret smuggled into the proxy log (as a hostname) → proxy.log dropped
+ok   - A3 exactly 64 files kept when more are offered
+ok   - A3 1 048 576 bytes is kept, 1 048 577 is not
+ok   - K last.json is a symlink (never followed) → skip schema-invalid
+ok   - K last.json over 4 MiB → skip schema-invalid
+ok   - A3 a secret inside a long error message never reaches the skip DETAIL
+ok   - A3 keep-or-drop runs on skip paths too (the stub's clean records are kept)
+ok   - A3 /out is mounted from the run's PRIVATE temp dir, never the audit dir
+ok   - A3 /schema holds only verdict.schema.json
+ok   - A3 dropped.txt is written (possibly empty) on a clean run
+ok   - A3 no skip DETAIL carries Codex's words or a host path (all K scenarios)
+ok   - A3 last_refresh 7.5 days ago (Z form) → skip auth before any container
+ok   - A3 the freshness DETAIL is the exact sentence
+ok   - A3 last_refresh 6.5 days ago → proceeds
+ok   - A3 access token expiring in 600 s (< timeout 300 + 600) → skip auth before any container
+ok   - A3 access token expiring in 1300 s (> timeout 300 + 600) → proceeds
+ok   - A3 an auth file with no secret at all → skip auth before any container
+ok   - A3 verdicts/ cannot be created → exit 1, nothing written
+ok   - A3 an existing verdict: nothing run, the audit dir untouched
+ok   - A3 rotation: the harness's own checker container came up
+ok   - A3 DURING the run no file in the private temp dir holds an auth secret (no snapshot on disk)
+ok   - A3 rotation: the OLD secret (read before the run) still yields secret-leak
+ok   - A3 rotation: a file holding the NEW secret is dropped (post-run union)
+ok   - A3 TERM then TERM (the second lands in cleanup) after the secret was planted: planted=yes, no secret in the audit dir, verdicts or skip; private temp dir removed
+ok   - A3 INT then HUP after the secret was planted: planted=yes, no secret in the audit dir, verdicts or skip; private temp dir removed
+ok   - A3 HUP after the secret was planted: planted=yes, no secret in the audit dir, verdicts or skip; private temp dir removed
+ok   - H no containers left behind by any trappable run
+ok   - H no networks left behind by any trappable run
+ok   - H no per-run images left behind
+ok   - A3 SIGKILL after the secret was planted: the audit dir holds no secret
+ok   - H the real ~/.codex/auth.json is untouched
+ok   - H the fixed-name images exist
+ok   - H every run removed its private temp dir
+#   (no git base in TREE — territory check skipped; prototype run)
+ORACLE PASS

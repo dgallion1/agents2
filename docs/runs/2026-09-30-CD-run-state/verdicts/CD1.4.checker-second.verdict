@@ -1,0 +1,92 @@
+VERDICT: PASS
+CHECKER: checker-second
+FAMILY: adversarial
+TASK: CD1
+ATTEMPT: 4
+MANIFEST_SHA256: 30dfd820354e25db12349b5d50593151c7ed930996d649e494a0b08390eea0fe
+---
+Method: sha256sum -c on CD1.4.sha256 before and after = all 16 paths OK, sidecar hash as above. All work in an rsync copy
+(<scratch>/cd1a4-second/tree) plus fake-docker shims; real Docker only under the shared flock, niced, one job at a time; own
+leftovers swept by project name (none remain). Never the real Codex or real auth file (fake auth, stub only).
+Baseline for "what changed": a pristine attempt-3 copy of the harness from the attempt-3 second-checker scratch dir.
+diff a3 -> a4: swarm/codex-check.sh = exactly item 1 (pys prefix assignment), item 3 (shield/compose_shielded + 8 shielded call
+sites), item 4 (have_last elif), CD-t (kill -0 poll + status wait) and their comments; swarm/codex/tools.py = safe_path/SAFE_PATH
++ docstring only; every other file under swarm/codex/** byte-identical; stub-codex gains only the lockout scenario.
+
+CRITERION 1 (no secret in any argv, no global export): PASS
+ Attack: every route a secret could take to an argv or to a non-tools.py environment.
+ - strace -f -v -e trace=execve,execveat of a full real-container run (oracle A4) and of my own fake-docker run on a Go tree
+   (covers go env / go mod download): smoketest/codex/trace_check.py -> "ok 557 557 2" (557 execs, 2 carry the secret in their
+   environment, both tools.py: copy and keep); no argv carries it. Oracle check "A4 no argv carries a secret..." ok.
+ - Mutant: pys() back to "env CD_SECRETS=..." -> unit suite FAILS 3 (A4-1 x3). Mutant killed.
+ - Static: only SECRETS_JSON="" / SECRETS_JSON="$r1" / the pys prefix assignment; export lines carry CD_* paths only.
+ - Here-strings: bash 5.2.21 spills a here-string to a 0600 tmp file only at >= 65536 bytes (probed 3000..70000); a real auth
+   file's secret list is far smaller (known backlog item, not an item-1 scope issue).
+ - E2BIG (over 128 KiB env string) fails closed (container-error), not open.
+ Observation O1 (not a FAIL, see below): an exported SECRETS_JSON in the CALLER's environment survives bash's export attribute.
+ Repro: env SECRETS_JSON=x strace ... bash swarm/codex-check.sh T 1 -> trace_check reports the secret in the environment of
+ mktemp, git, docker, cat, ... (same for pre-exported res / r1). Needs a same-named exported variable supplied by the caller;
+ /proc/<pid>/environ is owner-only (0400), unlike cmdline. Fix would be declare +x / unset of those names at the top.
+
+CRITERION 2 (DETAIL path rule at the one choke point, every code): PASS
+ Attack: every code x every path shape, in bash and Python, from every source.
+ - safe_path() probed on 40 shapes: /etc/shadow, ../../x, src/../x, ./src/x, src//x, src/x/, ".", "..", "", 200 vs 201 bytes,
+   "...", "src/.../x", a/./b, non-ASCII, space, tab, newline, CR, NUL, backslash, tilde, colon, secret (raw) inside a path,
+   fullwidth and Arabic-Indic digits. Accepts only plain [A-Za-z0-9._-] segments; "..." and ".hidden" correctly still accepted
+   (only "." and ".." segments are banned); 200 ok, 201 rejected.
+ - tools.py copy driven directly with CD_SECRETS set: noline x 25 shapes, missing x 25, drift x 5 raw shapes, deletedexists x 4,
+   plus linkedparent, cannotcopy and symlink (non-ASCII, space, secret-named, 201-byte, "-rf", ".x" names). Every hostile shape
+   -> 3-field skip (no path); plain ones -> path appended. The only callers of safe_path: skip() (line 194).
+ - Bash side: fail() appends $3 only from step 2's python output; no other DETAIL producer takes a path.
+ - Mutants: drop the ./.. segment test -> unit FAIL 8; widen SAFE_PATH back to [A-Za-z0-9._/-]+ -> unit FAIL 6. Killed.
+
+CRITERION 3 (teardown survives process-group signals): PASS
+ Attack: group barrages at EVERY teardown phase, several signal mixes, PATH without setsid, unshielded calls, real Docker.
+ - Fake docker with default (Go-like) signal dispositions, harness as its own group leader, barrage landed at the START of each
+   of the 12 post-run docker calls (main-flow inspect/rm, then cleanup: stop container, compose logs, compose down, ps, rm,
+   network ls, network rm, volume ls, volume rm): TERMx3 0.1 s, INT+TERMx3 0.1 s, HUP+INT+TERM 0.05 s. Every cleanup-phase call
+   (K>=4) finished (no "unfinished"), 12 calls each time, rc 0, skip recorded, private dir gone. K=1..2 (main-flow docker inspect,
+   not teardown) die and give rc 143 as designed.
+ - Barrage during the python keep step: keep runs with INT/TERM/HUP = SIG_IGN, run finishes rc 0 with verdict and kept last.json.
+ - Real Docker, barrage TERMx3 (0.05 s) during the cleanup "docker rm -f -v <name>" and during "compose logs": hit, rc 130,
+   nothing left of the project, proxy.log 857 bytes captured. Positive control: a mutant with compose logs unshielded gives
+   proxy.log = 0 bytes under the same probe (discriminating); unshielded stop-container is absorbed by the later sweeps.
+ - Unshielded docker calls in the script: only main-flow (info, build, up, run, inspect), the watchdog's docker kill and none
+   in cleanup/teardown. Mutants (compose down / stop / volume rm / logs unshielded) each killed by the A4-3 unit test.
+ - PATH without setsid: SHIELD=0, every teardown call still issued directly (they die under a barrage, as the brief allows:
+   "run the call directly - never skip a teardown step").
+
+CRITERION 4 (chmod-000 label fix): PASS
+ Attack: other modes, nonzero exit, absent last.json, mode ever changed.
+ - Fake docker plays the container (writes last.json into $CD_OUT, then chmod): mode 000/200/400/600 -> skip schema-invalid
+   (no verdict); 100/300 -> searchable: verdict PASS, unlistable out/ dropped whole ("the private output dir could not be
+   listed"); 500/700 -> verdict, files kept; no last.json + 000 -> schema-invalid (cannot rule it out), no last.json + 700 ->
+   codex-error; exit 3 + 000 -> codex-error; all rc 0, private dir removed.
+ - strace of chmod/fchmodat: the harness never chmods /out before step 7; the only chmod touching it is the final
+   "chmod -R u+rwX $TMP" immediately before rm -rf (present in attempt 3 unchanged, needed to delete an unsearchable dir,
+   after keep-or-drop). Oracle lockout check ok.
+
+CD-t (kill -0 poll then wait): PASS
+ - Bash semantics probe: exit codes 0/1/7/130/143, a SIGKILLed child (137) and a background FUNCTION with redirections all come
+   back through the status-collecting wait; 200 short-lived jobs, no zombie hang.
+ - Barrage (iii) INT then TERMx3 0.1 s against a blocked "compose run", signal landing at a random point in the 0.2 s cycle:
+   24/24 exit 130; INT,TERM gap 0.02 20/20 130; HUP then INT 10/10 129.
+ - Watchdog/timeout and normal runs: the oracle's hang/timeout and pass cases ok; latency <= 0.2 s per run.
+ Observation O2: INT and TERM with NO gap (back-to-back) gave 143 in 3/30; the brief pins 0.1 s, so not graded.
+
+REGRESSION / ACCEPTANCE:
+ (a) oracle re-run from a copy: ORACLE PASS, 193 ok, 0 FAIL (the lead's 194 includes the git-territory check that needs .git,
+     skipped in a copy). A first run of mine showed groups (ii)/(iii) failing with rc 0/143: invalid, my launch was a
+     non-interactive background job so SIGINT was inherited as ignored (harness SigIgn=...6); relaunched as a normal background
+     task, (ii) and (iii) pass. Flag: the oracle/harness INT barrages are only valid when INT is not ignored at entry.
+ (b) CODEX_TESTS=unit: ALL PASS (141 ok); full Docker suite: ALL PASS (297 ok, 0 FAIL).
+ (c) territory: only smoketest/codex/**, swarm/codex-check.sh, swarm/codex/**; gate.sh, dashboard/**, smoketest/gate/** and SPEC.md
+     are foreign (CD2/CD3/lead) and were not graded.
+
+OBSERVATIONS (backlog, none outside-scope-graded):
+ O1 inherited export of SECRETS_JSON / res / r1 (above). O2 zero-gap INT+TERM 10% TERM-first. O3 SIGQUIT is not trapped (a group
+ SIGQUIT kills the harness without cleanup; outside INT/TERM/HUP). O4 cleanup's chmod -R of the private dir touches out/'s mode
+ after keep-or-drop (deletion only). O5 the poll loop relies on GNU fractional sleep; a missing/failing sleep would spin hot.
+ O6 without setsid a group barrage can kill the teardown's docker calls (brief-sanctioned fallback). O7 >= 64 KiB here-string
+ spills to a 0600 temp file (pre-existing backlog). O8 a pre-set SHIELD detection uses "setsid -w true": with setsid present but no
+ /usr/bin/true the shield silently falls back to direct calls.

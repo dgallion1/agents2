@@ -1,0 +1,83 @@
+VERDICT: PASS
+CHECKER: checker-tests
+FAMILY: anthropic
+TASK: CD3
+ATTEMPT: 1
+MANIFEST_SHA256: 84b2af7cedcde0cd87b7adf7e81fc52fb99b77da98d780606b600b1c77f76b2b
+---
+Tree identity: `sha256sum -c .swarm/manifests/CD3.1.sha256` -> 7/7 OK, checked at the start and again just before writing this verdict.
+All runs were in a private copy, D=scratchpad/cd3-tests.iBWwGz: rsync of TREE without .git/.swarm. The 7 CD3 files in the copy match TREE by sha256. Nothing in TREE was written except this file.
+
+(a) PASS. Command: `accept.sh TREE` -> rc=0, and the last line is `ORACLE PASS`. It printed 24 ok lines, including "D differential: 25/25 ok", M1 "97 FAIL lines" and M2 "40 failing". The lead's oracle.1.log also ends ORACLE PASS.
+  Not vacuous. `accept.sh` was run against 11 mutant copies, one at a time. The unmutated copy passes (rc=0, ORACLE PASS). Every mutant gives rc=1 and ORACLE FAIL. "caught by" names the oracle sections that failed.
+   - fifo_gate. Gate: the S_ISREG/fstat checks are removed and the open blocks, so a FIFO is opened. Caught by D (U20 gate ETIMEDOUT), C1, C2.
+   - fifo_both_nonblock. Regular-file checks removed in the gate AND in parse.mjs, O_NONBLOCK kept. Caught by D ("U20 ... both accept, expected reject"), C1, C2.
+   - locale_gate. Gate uses fdopen without encoding=, i.e. the locale default. Caught by D (U25 under LC_ALL=C), C1, C2.
+   - hitwins_gate. Gate returns HIT before checking for problems. Caught by D (U21: the FAIL line says critical-glob) and C1.
+   - hitwins_parse. parse.mjs lets a hit win over an unreadable manifest. Caught by D (U21 dashboard reason) and C2.
+   - killed_nohit_gate. Gate reads any unexpected python exit status as no hit. Caught by E (killed python3) and C1.
+   - parse_throws. parseManifest reverted to readFileIfExists. Caught by D (U16 EACCES, U18 EISDIR: "parse() THREW") and C2.
+   - order_gate. Gate checks that critical.globs is readable before looking at manifests. Caught by E (unstarted row flagged) and C1.
+   - nodiag_gate. The stderr diagnostic is removed. Caught by D, 6 E checks, C1, C2.
+   - failopen_parse. parse.mjs returns none when an input is unreadable. Caught by D (10/25) and C2 (33 fail).
+   - token_gate. Gate emits the plain critical-glob token when an input is unreadable. Caught by D, 8 E checks, C1, C2.
+
+(b) PASS. Command: `bash smoketest/gate/run_tests.sh` in the copy -> rc=0. Output: 7x "ALL PASS", 383 ok lines, 0 FAIL.
+
+(c) PASS. Command: `node --test dashboard/test/*.test.mjs` in the copy -> rc=0. Output: "tests 114, pass 114, fail 0, skipped 0". The mode-000 cases ran because the run is non-root (uid 1000).
+
+(d) PASS. The rule and all eight pinned semantics hold. Evidence from my own harnesses in D:
+  - matrix.mjs against the new gate and parse -> "matrix: ok=1131 fail=0".
+    - Inputs: critical.globs, test.globs, the CURRENT manifest (t.2.files), an OLDER manifest (t.1.files), and a dot-prefix sibling (t.1.x.1.files).
+    - Kinds: mode 000, invalid UTF-8, directory, dangling link, symlink loop, FIFO. All at tiers 1, 2 and 3.
+    - At tiers 1 and 2, for every combination:
+      - `check` gives rc=1, and the stdout FAIL line has exactly "escalation trigger (critical-glob-unreadable)" with no plain critical-glob token.
+      - stderr is exactly one line, containing "unreadable" and naming the offending basename.
+      - `escalate-scan` writes a flag whose whole content is "TARGET_TIER: <tier+1>\nREASON: critical-glob-unreadable\n", plus one stderr line.
+      - `check` still refuses after the flag exists.
+      - `done` gives rc=1 and names critical-glob-unreadable.
+      - parse() does not throw. Its state is not accepted, and its mismatch is "escalation trigger (critical-glob-unreadable)".
+    - At tier 3: never blocked inline and no flag written. Gate and parse agree.
+    - Also covered:
+      - A real hit plus an unreadable OLD manifest, SIB manifest or test.globs (mode000 / badutf8 / fifo), at tiers 1 and 2: the token is critical-glob-unreadable only (pinned 4).
+      - Two unreadable inputs: only the first, critical.globs, is named (pinned 6).
+      - Unstarted rows with every broken kind: no flag and nothing on stderr (pinned 1).
+      - python3 missing (127), killed (137), exit 0, exit 1: all unreadable at tiers 1 and 2, one line of the form "evaluator failed (python3 exit status N)" (pinned 5).
+    - The same harness run against the frozen base gate and parse printed 154 FAILs before it hung at "T1 CUR fifo": base parse() blocks on a FIFO. So the harness does discriminate.
+  - clean.mjs -> "clean equivalence: 29/29 identical".
+    - It compares new against frozen base, byte for byte, on 29 clean fixtures, 17 of them with a hit. Each fixture has 7 rows (tiers 1/2/3 × accepted/checking, plus one pending).
+    - Compared per fixture: `check` for each row (rc, stdout, stderr), a parse() dump, `done`, `escalate-scan` output and flag files, parse after the scan, and `done` after the scan.
+    - The fixtures cover: default and custom test.globs, empty test.globs, the `**/` and `/**` candidates, BOM and CRLF, CR-only lines, comments, whitespace, form feed and NBSP, fnmatch brackets and case, non-ASCII paths, a dot-prefix sibling hit, symlinked globs and manifests, no manifests dir, an empty manifest.
+    - No stderr "unreadable" on any clean fixture.
+  - Locale (pinned 3). A valid UTF-8 BOM/CRLF/non-ASCII hit gives "flag: t -> tier 3 (critical-glob)" from the new gate under en_US.UTF-8, under LC_ALL=C with PYTHONUTF8=0, under POSIX with PYTHONIOENCODING=ascii, and under C.UTF-8. The base gate gave a UnicodeDecodeError traceback (fail-open) under C and POSIX.
+  - sidecar.mjs -> "36/36" (pinned 7). The CURRENT manifest and the sidecar, each in all 6 kinds at tiers 1, 2 and 3: parse() runs in a child process with a timeout, never throws or blocks, and derived state agrees with `gate.sh check`. Every manifest case at tiers 1/2 names the token in both the gate and the dashboard.
+  - Device (pinned 2). critical.globs, test.globs or a manifest symlinked to /dev/zero gives "(not a regular file)", unreadable in both gate and parse, and nothing hangs.
+  - Absent critical.globs, together with a FIFO test.globs, a non-UTF-8 manifest and a directory manifest: no flag and empty stderr. parse() reports no unreadable (pinned 1).
+  - Comments (pinned 8). grep shows the base "reports NO hit" and "python dies, the gate reports no hit" comments are gone. The reason lists in gate.sh escalation_reasons (l.493-502) and parse.mjs (l.767-770) now include critical-glob-unreadable.
+  - Consumers of the reason, read in full: gate.sh escalation_reasons (called by check_task, cmd_escalate_scan, and done via check_task), parse.mjs escalationReasons -> computeDerived, and render.mjs l.169/296. render.mjs prints flag.reason verbatim; it has no token map. No other evaluator copy exists: grep across the repo, then read of codex-check.sh, TIERS.md, CLAUDE.md, README. The docs are CD4's job (G14).
+  - Worker extension (manifests/ present but not a listable directory is unreadable). mandir.mjs: modes 000, 300 and 100, a regular file, and a dangling link all give critical-glob-unreadable in the gate and in parse, and they agree. Absent and mode 500 behave as before.
+    Ruling: compatible fail-closed hardening, recorded as an OBSERVATION and not a FAIL. From a directory that cannot be listed, "no entry matches <task>.*.files" cannot be established, and the Rule's "failing to read for any other reason" covers that. Base parse() threw EACCES/ENOTDIR in two of these cases.
+
+(e) PASS.
+  - In a copy with only swarm/gate.sh replaced by base-gate.sh: run_tests.sh -> rc=1, with 97 FAIL lines (55 + 36 + 6 FAILED).
+    - All of them are in the CD3 sections (run_check.sh l.584+, run_escalate.sh l.185+, run_done.sh l.208+).
+    - The 2 whose labels do not say "unreadable" are "the refusal is the flag's escalation-pending message" (run_check l.642, the CD3 unreadable->flag path) and "readable inputs: nothing on stderr" (base traceback under LC_ALL=C).
+  - In a copy with only dashboard/lib/parse.mjs replaced by base-parse.mjs: node --test -> rc=1, "tests 114, pass 74, fail 40".
+    - 39 of the failing tests are "unreadable, fail closed (...)" tests.
+    - The 40th is the existing differential. Its failing fixture is e19 "critical.globs that is not valid UTF-8" (agreement-only, present at HEAD).
+    - The sidecar-FIFO test failed with ETIMEDOUT: base blocks.
+  - Each of my 11 mutants is caught by C1 and/or C2, i.e. by the shipped tests.
+  - The frozen bases are genuine: sha256(base-gate.sh)=b91dd968... and sha256(base-parse.mjs)=be7767a7... equal CD2.1.sha256 and base.sha256.
+
+(f) PASS.
+  - The non-CD3 lines of base.sha256 were checked against TREE with `sha256sum --quiet -c` -> "ALL OK (2037 paths)".
+  - The 9 CD3-territory entries: 7 differ from base, and they are exactly the 7 paths in CD3.1.files. smoketest/gate/agents_test.sh and run_tests.sh are unchanged.
+  - `git ls-files --others --exclude-standard` lists nothing outside swarm/codex-check.sh, swarm/codex/, smoketest/codex/ (CD1, foreign).
+  - `git diff --name-only HEAD` also lists SPEC.md, which is the lead's and matches base.sha256.
+  - CD3.1.sha256 re-hashes OK against TREE.
+
+OBSERVATIONS (backlog, not FAILs):
+ O1. A consequence of the manifests/ extension: when manifests/ cannot be listed or is not a directory (a regular file or a dangling link at that path), escalate-scan flags EVERY ledger row, including a pending row with no manifests ("flag: u -> tier 3 (critical-glob-unreadable)"). For the regular-file and dangling-link cases this departs from the literal parenthetical in pinned 1 ("a row that has not started is never flagged"). There is also a mode-100 (x-only) manifests/ where base could still accept a tier-1/2 row and the new gate refuses it. All of these are corrupt .swarm layouts. The lead should decide whether to pin it.
+ O2. A python3 replacement that exits 12 with no stdout produces "gate: critical-glob evaluation unreadable: " with an empty detail. Only a shim can do this; the real evaluator always prints a path or "evaluator failed".
+ O3. At tier 3 the diagnostic line is still printed on stderr at check and escalate-scan, although nothing is blocked. This is consistent with "one line per unreadable evaluation".
+ O4. Pre-existing and fixed here: base parse() blocks forever on a FIFO at the CURRENT manifest (readFileSync). Pre-existing and unchanged: invalid UTF-8 in the CURRENT manifest at tier 3 gives the gate FAIL "manifest path '\xff' has no fingerprint line"; parse agrees.

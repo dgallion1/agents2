@@ -1,0 +1,115 @@
+# CD1 oracle: TREE=/tmp/claude-1000/-home-darrell-work-agents2--claude-worktrees-unifi-camera-streaming-7be695/480338d9-8e6c-42d1-8681-c9e4d1acdcaf/scratchpad/cd1-me
+ok   - H positive control: the oracle's host listener answers on 172.17.0.1:43805
+ok   - B brief.md names the data-free copy at /work
+ok   - B brief.md asks for evidence per criterion
+ok   - B brief.md never mentions a census, .swarm/verdicts or re-hashing
+ok   - P exit 0
+ok   - P wrote a verdict and no skip record
+ok   - P VERDICT: PASS
+ok   - P CHECKER: checker-codex
+ok   - P FAMILY: crossvendor
+ok   - P TASK/ATTEMPT
+ok   - P MANIFEST_SHA256 = sha256 of the sidecar
+ok   - P CODEX_MODEL: gpt-6-astra
+ok   - P CODEX_VERSION from the binary
+ok   - P '---' separator
+ok   - P evidence: every criterion id with its result marker
+ok   - P evidence: attack, command, result, observations
+ok   - P the stub's records kept in out/stub, and last.json in out/
+ok   - P /work holds exactly the data-free copy
+ok   - P files.txt == the copy, byte-order sorted
+ok   - P excluded.txt == every excluded path, byte-order sorted
+ok   - P the code-mode host beside CODEX_BIN is mounted, read-only, and /opt/codex holds only the two
+ok   - P exec bit and symlink preserved
+ok   - P codex flag exec
+ok   - P codex flag --dangerously-bypass-approvals-and-sandbox
+ok   - P codex flag --ephemeral
+ok   - P codex flag --ignore-rules
+ok   - P codex flag --skip-git-repo-check
+ok   - P codex flag --json
+ok   - P -m gpt-6-astra
+ok   - P -C /work
+ok   - P --output-schema /schema/verdict.schema.json
+ok   - P -o /out/last.json
+ok   - P no codex sandbox flag — the container is the sandbox
+ok   - P runs as 1000:1000
+ok   - P CODEX_HOME=/codex-home, HOME=/tmp/home
+ok   - P HTTPS_PROXY=http://proxy:8888
+ok   - P no module cache for a non-Go tree
+ok   - P CODEX_HOME holds exactly auth.json + config.toml
+ok   - P config.toml is empty
+ok   - P auth.json is the given CODEX_AUTH
+ok   - P no host path visible in the container
+ok   - P prompt carries the criteria
+ok   - P prompt carries brief.md
+ok   - P prompt lists the excluded paths (About this copy)
+ok   - P prompt never mentions a census
+ok   - P a host service on the docker host is unreachable
+ok   - P non-allowlisted host refused
+ok   - P chatgpt.com reachable through the proxy
+ok   - P auth.openai.com reachable through the proxy
+ok   - P api.openai.com reachable through the proxy
+ok   - P lookalike chatgpt.com.evil.invalid refused
+ok   - P lookalike evilchatgpt.com refused
+ok   - P CONNECT to port 80 of an allowed host refused
+ok   - P plain-HTTP request to a non-allowlisted host refused
+ok   - P no direct egress bypassing the proxy
+ok   - P proxy.log records the allowed host
+ok   - P proxy.log records the denied host as refused
+ok   - P events.jsonl captured
+ok   - P no secret in any audit file
+ok   - G wrote a FAIL verdict
+ok   - G GOMODCACHE=/gomodcache, GOPROXY=off
+ok   - G module cache mounted read-only
+ok   - G the module cache is a subset — none of the user's own modules
+ok   - G the subset is small (a zero-dependency module needs ~nothing)
+ok   - G go build works offline in the container
+ok   - G go.mod and main.go are in the copy
+ok   - K no exclude policy → skip no-exclude-policy
+ok   - K no criteria → skip no-criteria
+ok   - K no sidecar → skip no-evidence
+ok   - K no Codex binary → skip no-codex
+ok   - K no auth file → skip auth
+ok   - K docker unreachable → skip docker-unavailable
+ok   - K absolute symlink → skip unsafe-tree
+ok   - K symlink escaping upward → skip unsafe-tree
+ok   - K symlink into an excluded path → skip unsafe-tree
+ok   - K dangling symlink → skip unsafe-tree
+ok   - K directory symlink → skip unsafe-tree
+ok   - K tree is not a git work tree → skip unsafe-tree
+ok   - K content drift → skip fingerprint-mismatch
+ok   - K fingerprinted-deleted path present → skip fingerprint-mismatch
+ok   - K manifest path missing from the copy → skip fingerprint-mismatch
+ok   - K unparseable sidecar line → skip fingerprint-mismatch
+ok   - K manifest path with no sidecar line → skip fingerprint-mismatch
+ok   - K usage limit (error event) → skip quota
+ok   - K usage limit on stderr only → skip quota
+ok   - K quota outranks auth → skip quota
+ok   - K expired login → skip auth
+ok   - K codex crash → skip codex-error
+ok   - K 'quota'/'429' in an ordinary event is not quota → skip codex-error
+ok   - K exit 0 without last.json → skip codex-error
+ok   - K timeout → skip timeout
+ok   - K schema: bad verdict, empty criteria → skip schema-invalid
+ok   - K schema: missing observations → skip schema-invalid
+ok   - K schema: extra key → skip schema-invalid
+ok   - K Codex could not run commands (a FAIL that must not count) → skip codex-error
+ok   - K the same words in an ordinary event do not void a verdict
+ok   - K PASS without a command → skip evidence-free-pass
+FAIL - K an auth secret in last.json → want skip secret-leak, got rc=0 skip='' verdict=yes :: 
+FAIL - K secret-leak: the secret is redacted from out/ and the audit files
+FAIL - R a secret echoed in an event is redacted, the run still yields its verdict
+ok   - R a verdict replaces a stale skip record
+ok   - R an existing verdict is never replaced (no run, nothing written)
+ok   - K a stale out/last.json is never reused → skip codex-error
+ok   - R the sidecar's 'hash *path' form is accepted
+ok   - R a symlink named 'data' is excluded, never followed, not unsafe
+ok   - R no arguments → exit 2
+ok   - R non-integer attempt → exit 2, nothing written
+ok   - H the real ~/.codex/auth.json is untouched
+FAIL - H no containers left behind
+FAIL - H no networks left behind
+ok   - H no per-run images left behind
+ok   - H the fixed-name images exist
+#   (no git base in TREE — territory check skipped; prototype run)
+ORACLE FAIL: 5 check(s) failed

@@ -1,0 +1,111 @@
+VERDICT: PASS
+CHECKER: checker-second
+FAMILY: adversarial
+TASK: CD4
+ATTEMPT: 2
+MANIFEST_SHA256: ea20b62611555fa0689133ad401a7241c0fca255de7443cc8b5d3499526fac1e
+---
+Tree check: `sha256sum -c .swarm/manifests/CD4.2.sha256` -> 11/11 OK at the start and again
+before writing this verdict; sidecar hash equals the MANIFEST_SHA256 above. All work was done in
+`cp -a` copies under the scratchpad (uid 1000, non-root, so the mode-000 fixtures were live).
+No real Codex was run; nothing under ~/.codex was read.
+
+Item 1 - skip-record headers locale-proof (PASS)
+  Attack: Unicode/ASCII whitespace in every header and position, CRLF/CR line ends, NUL, raw
+  invalid UTF-8 bytes, BOM, duplicate/reversed headers, key prefixes, non-regular and mode-000
+  skip files, under LC_ALL=C, C.UTF-8 and en_US.UTF-8, each compared with the dashboard's
+  derived.state and with `gate.sh done`.
+  Commands: my own differential fuzz (fuzz.mjs, 'skip' mode) 300 scenarios seed 101 (70 accepted)
+  + 250 seed 7; a dedicated leading-byte matrix (lead.mjs: 19 leading byte strings x 4 headers x
+  tiers 1/2 = 152 scenarios, incl. raw 0x85, 0xa0, 0x1c-0x1f, VT, FF, CR, BOM, U+1680, U+2003,
+  U+3000) -> 0 gate/dashboard splits, 0 locale splits, 0 stats-locale splits.
+  Power check: the same fuzz against the attempt-1 behaviour (copy with `sed` back in the
+  caller's locale) reports LOCALE-SPLIT on DETAIL:<U+2003> and REASON:<U+2003>quota, so the fuzz
+  can see the defect it is hunting. (My first generator was buggy - it produced only NUL files;
+  found by that power check and fixed before any result above was taken.)
+  gate.sh:219 skip_field = `LC_ALL=C grep -a -m1 ... | LC_ALL=C sed`; parse.mjs skipField strips
+  /^[ \t\n\v\f\r]+/ only. The 15-reason set in gate.sh equals the set in parse.mjs and the brief.
+
+Item 2 - non-regular/unreadable verdict entry is INVALID, both sides (PASS)
+  Gate tier 1, codex named: `[[ -e || -L ]]` then `-f` then load_verdict; message is
+  "invalid verdict checker-codex: ...". Kinds tried: dangling link, loop, directory, FIFO, mode
+  000 (valid content), symlink to FIFO, symlink to directory, symlink to a valid verdict, wrong
+  FAMILY, empty, garbage, no `---`; each with and without a valid skip beside it; unnamed tier 1
+  still ignores them. Dashboard: readVerdictEntry (lstat, stat, O_NONBLOCK open, fstat).
+  Commands: fuzz 'entry' 200 scenarios seed 21 (34 accepted); fuzz 'other' (the same kinds plus a
+  socket, applied to checker-tests / checker-second / checker-other / judge-* entries, tiers
+  1-3) 200 scenarios seed 55 -> 0 mismatches, 0 throws, 0 hangs (20 s child timeout), `done`
+  == `check` everywhere. Race: a background loop atomically renaming a FIFO and a regular file
+  over verdicts/*.verdict and *.skip while parse() ran 150 times in children -> 0 hang, 0 throw.
+  Power check: against the Md-dash and Md-gate3 mutants the same fuzz reports MISMATCH.
+  Attempt-2 escalation fuzz (fuzz2.mjs: ledger attempts 2-3, previous-attempt Codex/tests/second
+  FAILs, judge panels, invalid/dir Codex FAILs, current Codex verdict/skip/dir/none, tiers 1-3,
+  named and unnamed) 420 scenarios (seeds 9, 33) -> 0 mismatches, 0 done-mismatches.
+  Checks-column variants (cols.mjs, 192 scenarios: duplicates, spaces, case, `codex` only, `-`,
+  `checker-codex`, trailing comma) -> only the trailing-comma split differs (see observations).
+
+Item 3 - the docs sentence (PASS)
+  python3 difflib of CLAUDE.md / TIERS.md / README.md / doc_test.sh against
+  `.swarm/tier3/CD4/base-docs/`; the diff was read statement by statement. CLAUDE.md "The Codex
+  lane - trial" bullet 1 now says a Codex FAIL opens the dispute path at tiers 2/3 named or not,
+  blocks at tier 1 only when named, and at every tier counts toward two consecutive fails and in
+  `stats` ("ignored by acceptance only"); TIERS.md says the same; the parse.mjs comment (1163-
+  1166) says it. Checked against the code: gate.sh escalation_reasons/has_fail_at and stats count
+  an unnamed tier-1 Codex FAIL (run_check.sh u1 case, and fuzz2). The statements about
+  codex-check.sh (verdict never replaced, a skip record replaced; no-exclude-policy skip) match
+  its header. No false statement found. `grep` for "no second vendor / all lanes on Claude /
+  not mirrored" leaves only swarm/start.sh (out of scope, known backlog).
+
+Item 4 - shipped tests kill M-a..M-f (PASS)
+  Each mutation applied alone to a copy; both shipped suites run
+  (`bash smoketest/gate/run_tests.sh`, `node --test dashboard/test/*.test.mjs`):
+    M-a stats pairs from attempt 1        -> gate suite FAIL (1): "stats counts (row, attempt)
+                                             pairs from attempt 0"
+    M-b parse.mjs drops NUL check         -> node suite fail 1
+    M-c invalid checker-second read valid -> gate suite FAIL (3)
+    M-d gate: drop the tier-1 load_verdict-> gate FAIL 7, node fail 2
+    M-d gate: `-e || -L` -> `-e`          -> gate FAIL 5, node fail 3
+    M-d dashboard: drop invalidVerdicts   -> node fail 7
+    M-e sed back in caller's locale       -> gate FAIL 12, node fail 2
+    M-f parseAllVerdicts opens non-regular-> node fail 7 of 126 (no cancelled, suite not thrown)
+  My own mutants, all killed: skip_field also strips trailing whitespace (node 1); dashboard
+  skipField uses \s (node 2); dashboard last-match (node 1); gate drops -m1 (gate 1, node 1);
+  gate drops NUL check (gate 8, node 1); gate NUL check replaced by a \x01 grep (gate 8, node 1);
+  NUL check only on header lines (node 1); Codex PASS counted as a lane in gate (gate 7, node 1)
+  and in dashboard (node 2); tier-1 named Codex FAIL check removed (gate 2, node 1).
+  One survivor, behaviourally equivalent: deleting the redundant `[[ -f "$vf" ]] || fail` line
+  in codex_evidence_or_fail - load_verdict's own first line is the same `-f` test, so the row is
+  still refused "invalid verdict checker-codex" and the FIFO is still never opened.
+  Test hygiene: the U+2003 fixtures are printf `\xe2\x80\x83` / String.fromCodePoint; the gate
+  tests set LC_ALL themselves (C.UTF-8, falling back to en_US.UTF-8); FIFO cases run under
+  `timeout 30`; mode-000 cases are gated on non-root only.
+
+Oracle (a)
+  `nice -n 10 .swarm/tier3/CD4/accept.sh <copy>` on a fresh `git init` copy: 54 ok, 0 FAIL,
+  last line ORACLE PASS (differential 79/79, stats T checks, integration I pass/quota/fail with
+  the stub Codex, F1-F26, C1 run_tests, C2 126 dashboard tests, M1/M2). Same counts as
+  oracle.2.log. The differential does fail for the right reason against the attempt-1 behaviour
+  (power checks above), so none of the D/T/F checks I exercised is vacuous.
+
+(d)/(g) scope: the attempt-1 -> attempt-2 delta (diffed against the lead's a2bak copy) is exactly
+  the two gate edits (LC_ALL=C on sed; the tier-1 `-e||-L` entry test), readVerdictEntry and its
+  call site, and comments; nothing else changed in behaviour. Manifest (11 paths) equals the set
+  of modified territory files; `git status` shows no other modified or untracked territory file.
+
+Observations (none is a FAIL; all outside the written scope)
+  1. Verdict-header parsing is still locale-dependent in the gate (`field_of` runs `sed` in the
+     caller's locale): FAMILY:<U+2003>crossvendor style headers are read differently under C and
+     UTF-8, and differ from the dashboard's .trim(). Explicitly out of scope (CD-h class).
+  2. Trailing comma in the checks column (`tests,codex,`): gate accepts, dashboard blocks - the
+     known pre-existing split, explicitly out of scope. Spaces / case / duplicates in the column
+     agree on both sides.
+  3. The gate opens a skip record by name after `-f`; a FIFO swapped in between the two would
+     block the gate (same pattern as load_verdict for every verdict). parse() is immune
+     (O_NONBLOCK + fstat). Unrealistic for a swarm dir; not required by the brief.
+  4. Under a mode-000 verdict the gate's own `grep` prints a "Permission denied" line to stderr
+     (pre-existing, load_verdict does not silence it); exit codes and verdicts are unaffected.
+  5. swarm/codex-check.sh header still says "only after task CD4" and swarm/start.sh still says
+     "no second vendor" (the lead's known backlog).
+  6. The shipped gate suite leaks ~1 mktemp dir per case into TMPDIR (newswarm has no cleanup;
+     the same line is in HEAD) - pre-existing.
+  7. TIERS.md line 53 has an odd hard wrap ("blocks. `codex` / only demands ...") - cosmetic.

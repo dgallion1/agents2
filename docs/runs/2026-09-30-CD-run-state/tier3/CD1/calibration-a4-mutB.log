@@ -1,0 +1,24 @@
+# CD1 oracle: TREE=/tmp/claude-1000/-home-darrell-work-agents2--claude-worktrees-unifi-camera-streaming-7be695/480338d9-8e6c-42d1-8681-c9e4d1acdcaf/scratchpad/mutB
+ok   - H positive control: the oracle's host listener answers on 172.17.0.1:32937
+ok   - H positive control: the host listener answers on the host's own address 192.168.1.90
+ok   - K an ABSOLUTE manifest path with no sidecar line → skip fingerprint-mismatch
+ok   - A4 ...its DETAIL does not carry the absolute path
+ok   - K /etc/hostname in the manifest, no sidecar line → skip fingerprint-mismatch
+ok   - A4 ...its DETAIL does not carry /etc/hostname
+ok   - K an escaping manifest path, no sidecar line → skip fingerprint-mismatch
+ok   - A4 ...its DETAIL carries no '..'
+ok   - K a manifest path with a '..' segment inside, no sidecar line → skip fingerprint-mismatch
+ok   - A4 ...its DETAIL carries no '..'
+ok   - K an inner-'..' manifest path whose file is missing (code missing) → skip fingerprint-mismatch
+FAIL - A4 ...its DETAIL carries no '..' (the missing code echoes the raw path)
+ok   - K a './' manifest path with a wrong hash (code drift) → skip fingerprint-mismatch
+FAIL - A4 ...its DETAIL carries no './' segment (the drift code echoes the raw path)
+ok   - K an empty-segment manifest path, no sidecar line → skip fingerprint-mismatch
+ok   - A4 ...its DETAIL carries no '//'
+ok   - K a trailing-slash manifest path, no sidecar line → skip fingerprint-mismatch
+ok   - A4 ...its DETAIL carries no trailing-slash path
+ok   - K a 201-byte manifest path, no sidecar line → skip fingerprint-mismatch
+ok   - A4 ...its DETAIL does not carry the 201-byte path
+ok   - K a secret-bearing manifest path, no sidecar line → skip fingerprint-mismatch
+ok   - A4 ...its DETAIL carries no secret
+excerpt: NFAIL=2
